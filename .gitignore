@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Build output -- regenerate with: cd upstream-calc && npm run build
+upstream-calc/dist/
+
+# Bulk sheet exports kept only as scratch; data/csv/ is the real input
+data/*.xlsx
+data/*.ods
+
+# macOS
+.DS_Store
