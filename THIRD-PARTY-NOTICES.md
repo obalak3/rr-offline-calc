@@ -35,6 +35,7 @@ Kept deliberately small so the diff against upstream stays reviewable:
 | --- | --- |
 | `src/index.template.html` | 4 added lines (one stylesheet link, three script tags) plus one changed line so the dark theme is the default |
 | `src/js/dark-theme-toggle.js` | 1 changed line: default to dark instead of following the OS setting |
+| `src/index.template.html` | mode buttons replaced; they linked to other calculators this project does not build. The Field's format radio is hidden and driven from them instead |
 | `src/js/rr-critko.js` | **new**, mine |
 | `src/js/rr-trainers.js` | **new**, mine |
 | `src/js/data/rr-trainers-data.js` | **new**, generated (see section 2) |

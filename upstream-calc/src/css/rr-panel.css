@@ -294,9 +294,9 @@ body.dark-theme #rr-crit {
 /* Only present in doubles mode. */
 #p3, #p4, .rr-extra-result, .rr-aim, #rr-dbl-combined { display: none; }
 
-/* Our two toggles sit as their own segmented pair beside the mode buttons. */
-.rr-extra-modes { display: inline-block; margin-left: 1.2em; }
-.rr-extra-modes .btn { width: 6em; }
+/* The Pokedex opens a different view rather than choosing a battle format, so
+   it sits slightly apart from the Singles/Doubles pair. */
+.modeSelection .rr-view-btn { margin-left: 1.2em; border-radius: 8px; }
 
 /* .poke-info floats left, so two panels sit side by side in one column unless
    the column is narrowed to a single panel's width. */
@@ -528,3 +528,7 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 
 /* Used by the crit lines for the quieter half of a sentence. */
 .rr-plain { color: var(--rr-muted); opacity: .8; }
+
+/* One place to choose the format: the buttons by the title. The Field's own
+   pair still exists and still works, it just is not shown twice. */
+.rr-field-format { display: none !important; }

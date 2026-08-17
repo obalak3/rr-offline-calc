@@ -68,6 +68,11 @@ npm install      # once, needs network
 npm run build    # produces upstream-calc/dist/
 ```
 
+`npm run build` from the repo root does the same and then prunes everything the
+page does not use, which is most of what upstream ships: four other
+calculators' pages, their data and controls, the engine's test suite, and
+minified bundles nothing loads. That takes `dist/` from 13 MB to 5.6 MB.
+
 Then open `upstream-calc/dist/index.html`. **No server required** — the trainer
 data is loaded as a plain script, specifically so the page works from `file://`
 when you have no network at all.

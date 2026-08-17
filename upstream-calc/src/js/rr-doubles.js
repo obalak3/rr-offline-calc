@@ -644,7 +644,12 @@ var RRDoubles = (function () {
 		$(".rr-aim").toggle(on);
 		$("#rr-dbl-combined").toggle(on);
 		$("body").toggleClass("rr-doubles-on", on);
-		$("#rr-mode-doubles").prop("checked", on);
+		$("#rr-format-doubles").prop("checked", on);
+		$("#rr-format-singles").prop("checked", !on);
+		// Keep the Field's own format radio in step. It is hidden, but
+		// createField reads it and it decides which field options are shown --
+		// Helping Hand and the rest only apply in doubles.
+		$(on ? "#doubles-format" : "#singles-format").prop("checked", true).change();
 		if (typeof RRTrainers !== "undefined" && RRTrainers.setFacing) {
 			// Re-apply under the new capacity: one opponent in singles, two in
 			// doubles, so a leftover second pick cannot linger.
@@ -662,8 +667,10 @@ var RRDoubles = (function () {
 	}
 
 	function bind() {
-		$(document).on("change", "#rr-mode-doubles", function () {
-			setActive($(this).prop("checked"));
+		// The format radios live in the page itself, so they render with the
+		// calculator's own button styling and cannot end up out of order.
+		$(document).on("change", "#rr-format-singles, #rr-format-doubles", function () {
+			setActive($("#rr-format-doubles").prop("checked"));
 		});
 
 		$(document).on("click", ".rr-tgt", function (event) {
@@ -733,15 +740,6 @@ var RRDoubles = (function () {
 
 	$(function () {
 		if (typeof RRCritKO === "undefined") return;
-		// Built like the calculator's own mode buttons -- a visually hidden
-		// checkbox plus a .btn label -- so it picks up the same styling, hover
-		// and checked states in both themes instead of looking bolted on.
-		$(".modeSelection").append(
-			'<span class="rr-extra-modes">' +
-				'<input class="mode visually-hidden" type="checkbox" id="rr-mode-doubles" />' +
-				'<label class="btn btn-left" for="rr-mode-doubles" ' +
-					'title="Two Pokemon a side">Doubles</label>' +
-			'</span>');
 		bind();
 	});
 

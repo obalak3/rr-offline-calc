@@ -279,7 +279,7 @@ var RRDex = (function () {
 		if (on === active) return;
 		active = on;
 		$("body").toggleClass("rr-dex-on", on);
-		$("#rr-mode-dex").prop("checked", on);
+		$("#rr-view-dex").prop("checked", on);
 		if (!on) return;
 		build();
 		$("#rr-dex").show();
@@ -294,7 +294,7 @@ var RRDex = (function () {
 	}
 
 	function bind() {
-		$(document).on("change", "#rr-mode-dex", function () {
+		$(document).on("change", "#rr-view-dex", function () {
 			setActive($(this).prop("checked"));
 		});
 		$(document).on("click", "#rr-dex-back", function () {
@@ -325,10 +325,6 @@ var RRDex = (function () {
 	}
 
 	$(function () {
-		$(".modeSelection").find(".rr-extra-modes").addBack().last().append(
-			'<input class="mode visually-hidden" type="checkbox" id="rr-mode-dex" />' +
-			'<label class="btn btn-right" for="rr-mode-dex" ' +
-				'title="Browse every Pokemon in the game">Pokédex</label>');
 		bind();
 	});
 
