@@ -115,9 +115,9 @@ for the IV that reproduces the printed value. That is a genuine cross-check:
 it independently validates the level, nature, and EV parsing for every block it
 can check.
 
-Current state: **185 of 196 checkable Pokémon reconcile exactly (94.4%)**.
+Current state: **184 of 196 checkable Pokémon reconcile exactly (93.9%)**.
 
-The 11 that don't are known and expected, not silent failures:
+The 12 that don't are known and expected, not silent failures:
 
 | Case | Why |
 | --- | --- |
@@ -125,6 +125,7 @@ The 11 that don't are known and expected, not silent failures:
 | SOUPERCELL ×6 | A level-250 joke boss whose printed Speed assumes you're level 85 |
 | Ghost Marowak | Special-cased in-game |
 | Koga's Greninja | Off by exactly 1 |
+| Brendan's Sceptile-Mega | Hidden Power needs an even Speed IV, the printed Speed an odd one |
 
 They are flagged with `speedVerified: false` in the data and default to 31 IVs.
 
