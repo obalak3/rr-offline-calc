@@ -559,3 +559,22 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 	text-transform: uppercase; font-size: .8em; letter-spacing: .5px;
 	opacity: .7;
 }
+
+/* ------------------------------------------------------------ speed tiers */
+
+#rr-panel .rr-speed { margin: 2px 0 9px; }
+#rr-panel .rr-speed-head {
+	font-size: 10px; font-weight: 700; text-transform: uppercase;
+	letter-spacing: .4px; color: var(--rr-muted); margin-bottom: 3px;
+}
+#rr-panel .rr-speed-rows { display: flex; flex-wrap: wrap; gap: 4px; }
+#rr-panel .rr-speed-row {
+	border: 1px solid var(--rr-line); border-radius: 4px;
+	padding: 1px 7px; font-size: 11px; white-space: nowrap;
+}
+#rr-panel .rr-speed-row.rr-you {
+	border-color: var(--rr-accent); background: var(--rr-accent-soft); font-weight: 700;
+}
+#rr-panel .rr-speed-row.rr-faster { color: var(--rr-accent); border-color: var(--rr-accent); }
+#rr-panel .rr-speed-note { font-size: 11px; color: var(--rr-accent); margin-top: 4px; }
+#rr-panel .rr-speed-note.rr-speed-ok { color: var(--rr-muted); }

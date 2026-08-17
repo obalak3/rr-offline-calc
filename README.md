@@ -45,7 +45,13 @@ you're standing in front of without guessing which section it's in.
 and turned on out of the box; the calculator's own toggle still works, and an
 explicit choice is still respected.
 
-**7. Automatic field effects.** 59 battles carry notes like permanent sandstorm
+**7. Speed order.** Who moves first, for the whole enemy team at once, using
+real final Speed — Choice Scarf, Tailwind, paralysis, weather abilities and
+boosts all counted. When something outruns you it says what it would take to
+turn that around ("needs 64 Speed EVs"), or tells you plainly that it is out of
+reach.
+
+**8. Automatic field effects.** 59 battles carry notes like permanent sandstorm
 or omni-boosted opponents; selecting one sets the weather, terrain, and stat
 boosts to match. Toggleable, and the panel says which notes it couldn't apply.
 

@@ -379,6 +379,147 @@
 		return result.text || "not a KO";
 	}
 
+	// ---------------------------------------------------------- speed tiers
+
+	/**
+	 * Final Speed, not the raw stat: Choice Scarf, Tailwind, paralysis, weather
+	 * abilities and boosts all change who actually moves first, and the engine
+	 * already knows how. Falls back to the raw stat if it ever stops exporting.
+	 */
+	function finalSpeed(pokemon, field, side) {
+		if (!pokemon) return 0;
+		try {
+			if (typeof calc.getFinalSpeed === "function") {
+				return calc.getFinalSpeed(calc.Generations.get(gen), pokemon, field, side);
+			}
+		} catch (e) { /* fall through */ }
+		return pokemon.stats ? pokemon.stats.spe : 0;
+	}
+
+	/** The Speed stat a Pokemon reaches with a given EV investment. */
+	function speedWith(pokemon, evs, natureMod) {
+		var base = pokemon.species.baseStats.spe;
+		var iv = pokemon.ivs.spe === undefined ? 31 : pokemon.ivs.spe;
+		var raw = Math.floor((2 * base + iv + Math.floor(evs / 4)) * pokemon.level / 100) + 5;
+		return Math.floor(raw * natureMod);
+	}
+
+	/**
+	 * The Speed this Pokemon would actually end up with at a given investment.
+	 *
+	 * Has to go through getFinalSpeed rather than the raw stat, or the advice
+	 * ignores everything that matters: a paralysed Pokemon was told it needed
+	 * "0 Speed EVs" to outrun something twice its speed, because the raw stat
+	 * cleared the bar while the halved one did not. Cloning keeps rawStats from
+	 * construction, so it is overwritten before asking.
+	 */
+	function speedAt(mine, evs, natureMod, field, side) {
+		var probe;
+		try {
+			probe = mine.clone();
+		} catch (e) {
+			return speedWith(mine, evs, natureMod);
+		}
+		probe.rawStats.spe = speedWith(mine, evs, natureMod);
+		return finalSpeed(probe, field, side);
+	}
+
+	/**
+	 * What it would take to outspeed a target: the fewest EVs at the current
+	 * nature, or the same under a Speed-boosting nature, or neither.
+	 */
+	function speedAdvice(mine, target, field, side) {
+		if (!mine || !mine.species) return "";
+		var current = mine.nature && calc.NATURES && calc.NATURES[mine.nature];
+		var mod = 1;
+		if (current) {
+			if (current[0] === "spe") mod = 1.1;
+			else if (current[1] === "spe") mod = 0.9;
+		}
+		var have = mine.evs.spe || 0;
+		var ev;
+		for (ev = 0; ev <= 252; ev += 4) {
+			if (speedAt(mine, ev, mod, field, side) > target) {
+				if (ev <= have) return "";   // already fast enough; something else is
+				return "needs " + ev + " Speed EVs";
+			}
+		}
+		if (mod < 1.1) {
+			for (ev = 0; ev <= 252; ev += 4) {
+				if (speedAt(mine, ev, 1.1, field, side) > target) {
+					return "needs a +Speed nature and " + ev + " EVs";
+				}
+			}
+		}
+		return "cannot outspeed it as things stand";
+	}
+
+	/**
+	 * Who moves first. The damage calculator never answers this, and it decides
+	 * more fights than damage does.
+	 */
+	function speedPanel(battle) {
+		if (typeof createPokemon !== "function" || !battle) return "";
+		var mine;
+		try {
+			mine = createPokemon($("#p1"));
+		} catch (e) {
+			return "";
+		}
+		if (!mine || !mine.name) return "";
+
+		var field;
+		try {
+			field = createField();
+		} catch (e) {
+			field = new calc.Field();
+		}
+
+		var rows = [{
+			name: mine.name, speed: finalSpeed(mine, field, field.attackerSide), you: true
+		}];
+		for (var i = 0; i < battle.team.length; i++) {
+			var foe = enemyPokemon(battle, battle.team[i]);
+			if (!foe) continue;
+			rows.push({
+				name: battle.team[i].species,
+				speed: finalSpeed(foe, field, field.defenderSide),
+				you: false
+			});
+		}
+		if (rows.length < 2) return "";
+		rows.sort(function (a, b) { return b.speed - a.speed; });
+
+		var faster = [];
+		for (i = 0; i < rows.length; i++) {
+			if (!rows[i].you && rows[i].speed > rows[0].speed) faster.push(rows[i]);
+		}
+		var yourSpeed = 0;
+		for (i = 0; i < rows.length; i++) if (rows[i].you) yourSpeed = rows[i].speed;
+
+		var html = '<div class="rr-speed"><div class="rr-speed-head">Speed order</div>' +
+			'<div class="rr-speed-rows">';
+		var threat = null;
+		for (i = 0; i < rows.length; i++) {
+			var beatsYou = !rows[i].you && rows[i].speed > yourSpeed;
+			if (beatsYou && !threat) threat = rows[i];
+			html += '<span class="rr-speed-row' + (rows[i].you ? " rr-you" : "") +
+				(beatsYou ? " rr-faster" : "") + '">' +
+				'<b>' + rows[i].speed + "</b> " + esc(rows[i].name) +
+				(rows[i].you ? " (you)" : "") + "</span>";
+		}
+		html += "</div>";
+
+		if (threat) {
+			var advice = speedAdvice(mine, threat.speed, field, field.attackerSide);
+			html += '<div class="rr-speed-note">' + esc(threat.name) +
+				" moves first" + (advice ? " &mdash; " + esc(advice) : "") + "</div>";
+		} else {
+			html += '<div class="rr-speed-note rr-speed-ok">You outspeed the whole team</div>';
+		}
+		return html + "</div>";
+	}
+
 	// -------------------------------------------------------------- render
 
 	/**
@@ -613,7 +754,7 @@
 				(mon.item ? '<span class="rr-ci">@ ' + esc(mon.item) + '</span>' : "") +
 				'</button>';
 		}
-		html += '</div><div id="rr-matrix"></div>';
+		html += '</div><div id="rr-speed"></div><div id="rr-matrix"></div>';
 		return html;
 	}
 
@@ -811,6 +952,9 @@
 		rendering = true;
 		try {
 			$("#rr-crit").html(critBox());
+			// Speed depends on the attacker's nature, EVs, item and the field,
+			// all of which can change without the battle changing.
+			if (currentBattle) $("#rr-speed").html(speedPanel(currentBattle));
 		} finally {
 			rendering = false;
 		}
@@ -837,6 +981,7 @@
 			$("#rr-detail").html(detailPanel());
 			$("#rr-team").html(teamBar());
 			markChips();
+			$("#rr-speed").html(currentBattle ? speedPanel(currentBattle) : "");
 			$("#rr-matrix").html(currentBattle ? matrixTable(currentBattle) : "");
 			$("#rr-crit").html(critBox());
 		} finally {
@@ -980,13 +1125,24 @@
 			if (!rendering) $("#rr-crit").html(critBox());
 		});
 
+		// Speed follows any edit to your Pokemon or the field.
+		$(document).on("change keyup", "#p1 input, #p1 select, " +
+			".field-info input, .field-info select", function () {
+			if (!rendering && currentBattle) {
+				$("#rr-speed").html(speedPanel(currentBattle));
+			}
+		});
+
 		// Keep the crit box in step with the calculator's own recalculation.
 		if (typeof window.performCalculations === "function") {
 			var original = window.performCalculations;
 			window.performCalculations = function () {
 				var out = original.apply(this, arguments);
 				try {
-					if (!rendering) $("#rr-crit").html(critBox());
+					if (!rendering) {
+						$("#rr-crit").html(critBox());
+						if (currentBattle) $("#rr-speed").html(speedPanel(currentBattle));
+					}
 				} catch (e) { /* never let our panel break the calculator */ }
 				return out;
 			};

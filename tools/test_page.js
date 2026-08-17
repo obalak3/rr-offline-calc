@@ -226,6 +226,29 @@ function run() {
 		check('damage matrix rendered', matrix.length > 0,
 			`got ${matrix.length} rows`);
 
+		// ------------------------------------------------------ speed tiers
+		{
+			const rows = window.document.querySelectorAll('#rr-speed .rr-speed-row');
+			check('speed order lists you and the enemy team',
+				rows.length === firstBattle.team.length + 1,
+				`got ${rows.length} for a team of ${firstBattle.team.length}`);
+			check('your own row is marked',
+				window.document.querySelectorAll('#rr-speed .rr-you').length === 1);
+
+			// Sorted fastest first.
+			const speeds = [...rows].map(r => parseInt(r.textContent, 10));
+			const sorted = speeds.every((s, i) => i === 0 || speeds[i - 1] >= s);
+			check('speed order is sorted', sorted, speeds.join(', '));
+
+			// Speed must follow the field and the Pokemon, not just the battle.
+			const before = window.document.querySelector('#rr-speed .rr-you').textContent;
+			$('#p1 .item').val('Choice Scarf').trigger('change');
+			const after = window.document.querySelector('#rr-speed .rr-you').textContent;
+			check('Choice Scarf changes the reported speed', before !== after,
+				`${before.trim()} -> ${after.trim()}`);
+			$('#p1 .item').val('').trigger('change');
+		}
+
 		// ------------------------------------------------- Story Order view
 		const orderTab = [...window.document.querySelectorAll('#rr-segments .rr-seg')]
 			.find(b => b.getAttribute('data-seg') === 'order');
