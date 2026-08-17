@@ -18,14 +18,14 @@ as they land.
       | Earthquake alone vs one | 1 | 180 (full) |
       | Stone Edge (single target) | 1 | unaffected |
       `RRCritKO.targetsHit` / `fieldForMove`.
-- [ ] **4-slot UI**: two of mine, two of theirs.
-- [ ] **Empty / fainted slots**, giving 2v1 and 1v1. Spread damage must follow
+- [x] **4-slot UI**: two of mine, two of theirs.
+- [x] **Empty / fainted slots**, giving 2v1 and 1v1. Spread damage must follow
       the table above as slots empty.
-- [ ] **The core question**: "if he uses X and Y onto my Mienshao, does it die?"
+- [x] **The core question**: "if he uses X and Y onto my Mienshao, does it die?"
       Show the worst-case enemy move pair per target, plus the full grid.
-- [ ] **Auto-assign**: the 19 battles the sheet flags `BATTLE EFFECT: DOUBLES`
+- [x] **Auto-assign**: the 19 battles the sheet flags `BATTLE EFFECT: DOUBLES`
       should open in this mode with both enemy slots filled.
-- [ ] Reuse the trainer panel's level scaling and Minimal Grinding Mode rather
+- [x] Reuse the trainer panel's level scaling and Minimal Grinding Mode rather
       than duplicating them.
 
 ## Notes
@@ -35,3 +35,15 @@ as they land.
 - `allAdjacentFoes` (Rock Slide, Heat Wave) hits opponents only.
   `allAdjacent` (Earthquake, Surf, Discharge) also hits your own partner —
   which is why a 2v1 Earthquake keeps its penalty while a 2v1 Rock Slide does not.
+
+## Verified in the browser
+
+Sabrina's `BATTLE EFFECT: DOUBLES` battle auto-fills all four slots. Against
+Hatterene + Indeedee-F it reports, for a level 50 Mienshao:
+
+    Mienshao 140 HP -- guaranteed OHKO, 292.9 - 517.1%
+    Hatterene Expanding Force + Indeedee-F Expanding Force
+
+Emptying one opponent slot switches the header to `2v1` and restores full
+spread damage: Dazzling Gleam 16.8 - 29.7% -> 22.2 - 39.5%, and the "spread"
+tag disappears. Single-target moves are unchanged.

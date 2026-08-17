@@ -46,7 +46,9 @@
 		{re: /PERMANENT GRASSY TERRAIN/, terrain: "grassy", label: "Grassy Terrain"},
 		{re: /PERMANENT MISTY TERRAIN/, terrain: "misty", label: "Misty Terrain"},
 		{re: /PERMANENT PSYCHIC TERRAIN/, terrain: "psychic", label: "Psychic Terrain"},
-		{re: /OMNI-?BOOSTED/, statBoost: true, label: "enemy +1 all stats"}
+		{re: /OMNI-?BOOSTED/, statBoost: true, label: "enemy +1 all stats"},
+		// Handled by the Double Battle view below, not by a field control.
+		{re: /DOUBLES/, doubles: true, label: "doubles (see Double Battle)"}
 	];
 
 	var data = null;
@@ -56,6 +58,7 @@
 	var currentBattle = null;
 	var currentMon = -1;
 	var lastEffects = {applied: [], unhandled: []};
+	var battleListeners = [];
 
 	// ------------------------------------------------------------- storage
 
@@ -779,6 +782,9 @@
 			currentMon = -1;
 			lastEffects = applyBattleEffects(currentBattle);
 			render();
+			for (var i = 0; i < battleListeners.length; i++) {
+				try { battleListeners[i](currentBattle); } catch (e) { /* isolate */ }
+			}
 		});
 
 		$("#rr-detail").on("click", ".rr-chip", function () {
@@ -845,6 +851,26 @@
 			};
 		}
 	}
+
+	/** True when the sheet flags this battle as a double battle. */
+	function isDoublesBattle(battle) {
+		if (!battle || !battle.effects) return false;
+		return /DOUBLES/i.test(battle.effects.join(" "));
+	}
+
+	// Read-only surface for rr-doubles.js. Deliberately small: the doubles view
+	// reuses this panel's current battle, saved team and Pokemon construction,
+	// so level scaling and Minimal Grinding Mode stay defined in one place.
+	window.RRTrainers = {
+		getBattle: function () { return currentBattle; },
+		getTeam: function () { return team; },
+		getPrefs: function () { return prefs; },
+		buildEnemy: enemyPokemon,
+		resolveLevel: resolveLevel,
+		levelLabel: levelLabel,
+		isDoubles: isDoublesBattle,
+		onBattleChange: function (fn) { battleListeners.push(fn); }
+	};
 
 	$(function () {
 		if (typeof RR_TRAINER_DATA === "undefined") return;
