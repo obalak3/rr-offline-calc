@@ -1,0 +1,29 @@
+{
+  "private": true,
+  "repository": "github:smogon/damage-calc",
+  "license": "MIT",
+  "dependencies": {
+    "@pkmn/data": "^0.8.8",
+    "@pkmn/dex": "^0.8.8",
+    "@pkmn/sim": "^0.8.8",
+    "@pkmn/smogon": "^0.5.4"
+  },
+  "devDependencies": {
+    "@pkmn/eslint-config": "^2.1.0",
+    "@types/node": "^18.11.17",
+    "@typescript-eslint/eslint-plugin": "^5.7.0",
+    "eslint": "^8.4.1",
+    "eslint-plugin-import": "^2.25.3",
+    "typescript": "^4.5.4"
+  },
+  "scripts": {
+    "lint": "eslint --cache src --ext ts",
+    "fix": "eslint --fix src --ext ts",
+    "compile": "tsc -p .",
+    "build": "npm run compile",
+    "test": "true",
+    "prepare": "npm run build",
+    "pretest": "npm run build",
+    "posttest": "npm run lint"
+  }
+}
