@@ -736,6 +736,7 @@
 			$("#rr-battles").html(battleList());
 			$("#rr-detail").html(detailPanel());
 			$("#rr-team").html(teamBar());
+			markChips();
 			$("#rr-matrix").html(currentBattle ? matrixTable(currentBattle) : "");
 			$("#rr-crit").html(critBox());
 		} finally {
@@ -799,6 +800,14 @@
 			currentMon = -1;
 			facing = [];
 			applyLevelCap(currentBattle);
+			// Put the lead on the field straight away. Doubles already did this
+			// for its two slots; leaving singles empty until a chip was clicked
+			// was just an inconsistency.
+			if (currentBattle && currentBattle.team.length) {
+				facing = [0];
+				currentMon = 0;
+				loadEnemy(currentBattle, currentBattle.team[0]);
+			}
 			lastEffects = applyBattleEffects(currentBattle);
 			render();
 			for (var i = 0; i < battleListeners.length; i++) {

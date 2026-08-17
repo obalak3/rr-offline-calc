@@ -51,6 +51,19 @@ virtualConsole.on('error', (msg) => {
 	scriptErrors.push('console.error: ' + msg);
 });
 
+/**
+ * Records every resource the page asks for, so we can prove it never reaches
+ * off-machine. "Works offline" is otherwise an assumption, not a fact.
+ */
+const requested = [];
+class RecordingLoader extends ResourceLoader {
+	fetch(url, options) {
+		requested.push(url);
+		return super.fetch(url, options);
+	}
+}
+const recorder = new RecordingLoader({strictSSL: false});
+
 // The page is served over loopback rather than opened as file://, because
 // jsdom treats file:// as an opaque origin and then localStorage -- which both
 // the theme toggle and the saved team rely on -- does not exist.
@@ -73,12 +86,13 @@ const server = http.createServer((req, res) => {
 let dom = null;
 let ran = false;
 
+let base = null;
 server.listen(0, '127.0.0.1', () => {
-	const base = `http://127.0.0.1:${server.address().port}/`;
+	base = `http://127.0.0.1:${server.address().port}/`;
 	dom = new JSDOM(fs.readFileSync(indexPath, 'utf8'), {
 		url: base + 'index.html',
 		runScripts: 'dangerously',
-		resources: new ResourceLoader({strictSSL: false}),
+		resources: recorder,
 		virtualConsole,
 		pretendToBeVisual: true,
 		beforeParse(w) {
@@ -283,6 +297,14 @@ function run() {
 		} else {
 			check('found a battle with EVs', false, 'none in dataset');
 		}
+
+		// -------------------------------------------------------- offline
+		// Every request must stay on the local server. Anything else means the
+		// page would break, hang or leak on a plane.
+		const offsite = requested.filter(u => !u.startsWith(base));
+		check('page makes no off-machine requests', offsite.length === 0,
+			offsite.slice(0, 5).join('\n        '));
+		console.log(`        ${requested.length} resource requests, all local`);
 
 		// ------------------------------------------------------ no errors
 		check('no unexpected script errors', scriptErrors.length === 0,

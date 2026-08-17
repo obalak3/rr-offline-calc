@@ -328,85 +328,73 @@ body.dark-theme #rr-crit {
 
 /* --------------------------------------------------------- double battle */
 
-/* The extra panels only exist in doubles mode. */
-#p3, #p4, .rr-aimrow, #rr-dbl-sums { display: none; }
+/* Only present in doubles mode. */
+#p3, #p4, .rr-extra-result, .rr-aim, #rr-dbl-combined { display: none; }
 
-#rr-mode-doubles {
-	margin-left: 8px;
-	cursor: pointer;
-	font: inherit;
+#rr-mode-doubles { margin-left: 8px; cursor: pointer; font: inherit; }
+#rr-mode-doubles.rr-on { background: #b4472e; border-color: #b4472e; color: #fff; }
+body.dark-theme #rr-mode-doubles.rr-on {
+	background: #ff7a4d; border-color: #ff7a4d; color: #000;
 }
-#rr-mode-doubles.rr-on {
-	background: #b4472e;
-	border-color: #b4472e;
-	color: #fff;
-}
-body.dark-theme #rr-mode-doubles.rr-on { background: #ff7a4d; border-color: #ff7a4d; color: #000; }
-
-.rr-aimrow {
-	display: flex; align-items: center; gap: 5px;
-	margin-top: 6px; padding-top: 6px;
-	border-top: 1px solid rgba(128, 128, 128, .35);
-}
-.rr-aiml {
-	font-size: 10px; text-transform: uppercase; letter-spacing: .4px;
-	opacity: .65;
-}
-.rr-tgt {
-	font: inherit; font-size: 11px; cursor: pointer;
-	border: 1px solid rgba(128, 128, 128, .5);
-	background: transparent; color: inherit;
-	border-radius: 4px; padding: 1px 7px;
-}
-.rr-tgt.rr-on { background: #b4472e; border-color: #b4472e; color: #fff; }
-body.dark-theme .rr-tgt.rr-on { background: #ff7a4d; border-color: #ff7a4d; color: #000; }
-
-#rr-dbl-sums {
-	margin: 10px 0;
-	font-size: 12px;
-	border: 1px solid rgba(128, 128, 128, .4);
-	border-radius: 6px;
-	padding: 7px 10px;
-}
-#rr-dbl-sums .rr-fmt { font-weight: 700; color: #b4472e; }
-body.dark-theme #rr-dbl-sums .rr-fmt { color: #ff7a4d; }
-#rr-dbl-sums .rr-fmt i { font-style: normal; font-weight: 400; font-size: 10px; opacity: .7; }
-#rr-dbl-sums .rr-sum {
-	display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-	padding: 3px 6px; margin-top: 4px;
-	border: 1px solid transparent; border-radius: 4px;
-}
-#rr-dbl-sums .rr-sum.rr-danger { border-color: #b4472e; background: rgba(180, 71, 46, .12); }
-body.dark-theme #rr-dbl-sums .rr-sum.rr-danger { border-color: #ff7a4d; background: rgba(255, 122, 77, .12); }
-#rr-dbl-sums .rr-st { font-weight: 700; min-width: 110px; }
-#rr-dbl-sums .rr-sd { font-variant-numeric: tabular-nums; }
-#rr-dbl-sums .rr-sk { font-weight: 700; color: #b4472e; min-width: 80px; }
-body.dark-theme #rr-dbl-sums .rr-sk { color: #ff7a4d; }
-#rr-dbl-sums .rr-sf { opacity: .7; font-size: 11px; }
-#rr-dbl-sums .rr-note { opacity: .7; }
 
 /* .poke-info floats left, so two panels sit side by side in one column unless
    the column is narrowed to a single panel's width. */
 body.rr-doubles-on .panel { width: 32em; }
 body.rr-doubles-on .poke-info { float: none; clear: both; margin-bottom: 8px; }
 
-.rr-aimrow { flex-wrap: wrap; }
-.rr-aiml { flex: 0 0 auto; margin-right: 2px; }
-
-.rr-aimrow .rr-aiml { white-space: nowrap; overflow: visible; }
-
-#rr-panel .rr-chip { position: relative; }
-#rr-panel .rr-chip .rr-slot {
-	position: absolute; top: -6px; right: -6px;
-	background: var(--rr-accent); color: #fff;
-	border-radius: 50%; width: 15px; height: 15px;
-	font-size: 9px; line-height: 15px; text-align: center; font-weight: 700;
+/* Four move lists wrap into 1 | 2 over 3 | 4, mirroring the panels below. */
+body.rr-doubles-on .move-result-subgroup {
+	min-height: 8.5em;
+	margin-bottom: .5em;
 }
-body.dark-theme #rr-panel .rr-chip .rr-slot { color: #000; }
 
-#rr-panel .rr-cap-tag {
-	font-size: 10px; font-weight: 700;
-	color: var(--rr-accent);
-	border: 1px solid var(--rr-accent);
-	border-radius: 3px; padding: 0 4px; margin-left: 4px;
+/* Target buttons live on the move row itself. */
+.rr-aim { margin-left: .6em; white-space: nowrap; }
+.rr-aim .rr-tgt {
+	font: inherit; font-size: .8em; cursor: pointer;
+	border: 1px solid rgba(128, 128, 128, .55);
+	background: transparent; color: inherit;
+	border-radius: 4px; padding: 0 .45em; margin-left: .25em;
+	opacity: .75;
+}
+.rr-aim .rr-tgt:hover { opacity: 1; border-color: #b4472e; }
+.rr-aim .rr-tgt.rr-on {
+	background: #b4472e; border-color: #b4472e; color: #fff; opacity: 1;
+}
+body.dark-theme .rr-aim .rr-tgt.rr-on {
+	background: #ff7a4d; border-color: #ff7a4d; color: #000;
+}
+
+#rr-dbl-combined {
+	clear: both;
+	margin: .5em 0 0;
+	font-size: .95em;
+}
+#rr-dbl-combined .rr-comb-head {
+	font-weight: 700; color: #b4472e; margin-bottom: .25em;
+}
+body.dark-theme #rr-dbl-combined .rr-comb-head { color: #ff7a4d; }
+#rr-dbl-combined .rr-comb-head i {
+	font-style: normal; font-weight: 400; font-size: .85em; opacity: .7;
+}
+#rr-dbl-combined .rr-comb {
+	padding: 2px 6px; margin-top: 2px;
+	border-left: 3px solid transparent;
+}
+#rr-dbl-combined .rr-comb.rr-lethal {
+	border-left-color: #b4472e; background: rgba(180, 71, 46, .12); font-weight: 600;
+}
+body.dark-theme #rr-dbl-combined .rr-comb.rr-lethal {
+	border-left-color: #ff7a4d; background: rgba(255, 122, 77, .12);
+}
+#rr-dbl-combined .rr-comb-none { opacity: .6; font-size: .9em; }
+
+/* The move each Pokemon will use in the combined result. */
+body.rr-doubles-on .move-result-group label.btn.rr-using {
+	border-color: #b4472e;
+	box-shadow: inset 0 0 0 1px #b4472e;
+}
+body.dark-theme.rr-doubles-on .move-result-group label.btn.rr-using {
+	border-color: #ff7a4d;
+	box-shadow: inset 0 0 0 1px #ff7a4d;
 }

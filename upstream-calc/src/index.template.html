@@ -9,20 +9,8 @@
     <link type="text/css" rel="stylesheet" href="./css/vendor/bootstrap.css" />
     <link type="text/css" rel="stylesheet" href="./css/dark-theme.css" id="dark-theme-styles">
     <link type="text/css" rel="stylesheet" href="./css/rr-panel.css?">
-    <!-- Global site tag (gtag.js) - Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-26211653-3"></script>
-    <script>
-        window.dataLayer = window.dataLayer || [];
-        function gtag(){dataLayer.push(arguments);}
-        gtag('js', new Date());
-
-        gtag('config', 'UA-26211653-3');
-
-        window.onerror = function(err, uri, line) {
-            gtag('event', 'exception', {'description': uri + ':' + line + ': ' + err});
-            return false;
-        };
-    </script>
+    <!-- Google Analytics removed: it is an external request that cannot
+         succeed offline, and it reported to the upstream site's property. -->
     <!-- Immediately loads the dark theme in order to reduce FOIT -->
     <script>
         /*
@@ -39,19 +27,9 @@
 
 <body class="dark-theme">
 
-<nav><div class="header"><div class="header-inner">
-    <ul class="nav">
-        <li><a class="button nav-first" href="//pokemonshowdown.com"><img src="./img/pokemonshowdownbeta.png" alt="Pok&eacute;mon Showdown! (beta)" /> Home</a></li>
-        <li><a class="button" href="//dex.radicalred.net">Pok&eacute;dex</a></li>
-        <li><a class="button" href="//replay.pokemonshowdown.com/">Replays</a></li>
-        <li><a class="button" href="//pokemonshowdown.com/ladder/">Ladder</a></li>
-        <li><a class="button nav-last" href="//pokemonshowdown.com/forums/">Forum</a></li>
-    </ul>
-    <ul class="nav nav-play">
-        <li><a class="button greenbutton nav-first nav-last" href="//play.radicalred.net/">Play</a></li>
-    </ul>
-    <div style="clear:both"></div>
-</div></div></nav>
+<!-- Upstream site nav removed: its logo and links belong to the Radical
+     Red Showdown site, and keeping them here would imply affiliation. The
+     calculator's own credits remain at the bottom of the page. -->
 <div class="wrapper">
 
     <div aria-label="Settings" role="region">
