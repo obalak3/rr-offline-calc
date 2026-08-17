@@ -49,18 +49,36 @@ Emptying one opponent slot switches the header to `2v1` and restores full
 spread damage: Dazzling Gleam 16.8 - 29.7% -> 22.2 - 39.5%, and the "spread"
 tag disappears. Single-target moves are unchanged.
 
-## UI shape (revised after first attempt)
+## UI shape (final)
 
-The first version listed all 16 move combinations per target. Too much text and
-too much to read. Replaced with a board that mirrors the calculator's own
-layout:
+Two earlier attempts built a separate panel below the calculator. Wrong: the
+request was for the calculator *itself* to become a 2v2.
 
-- Two columns, You and Opponent, second Pokemon stacked under the first.
-- Each card: a species dropdown, target buttons naming the two opposing
-  Pokemon, and its moves with damage and KO chance against the current target.
-- Click a move to choose it; click a target to redirect. Until you click,
-  each Pokemon shows its hardest-hitting move against its current target,
-  so the board is useful before any input (defaulting to slot 0 would sit on
-  Trick Room and say nothing).
-- One summary line per Pokemon being attacked: combined damage and KO chance,
-  and which moves produced it. Nothing else.
+A **Doubles** button sits with the mode buttons. Switching it on adds Pokemon 3
+under Pokemon 1 and Pokemon 4 under Pokemon 2 -- real panels with every control
+the originals have -- and moves Import/Export below them. Each panel gains a
+target row naming the two opposing Pokemon; a summary line per attacked Pokemon
+reports the combined damage and KO chance. Selecting a battle the sheet flags
+DOUBLES switches the mode on and loads the first two opponents; selecting a
+single battle switches it back off.
+
+### What made this awkward
+
+The calculator wires everything up once, at startup, for the panels present
+then. A panel created later inherits none of it, and each gap is silent:
+
+- `select2` is attached inside `$(document).ready`, so the extra panels are
+  stamped from markup captured at parse time, before that runs. Cloning the
+  live panels instead drags along broken widget state and loses form values.
+- The move, ability, item and type dropdowns are filled in the gen-change
+  handler, so a new panel's selects are empty. Options are copied across from
+  the live original.
+- The set-selector's change handler is bound directly, so new panels get their
+  own `applySet`, which also populates the forme list -- `createPokemon` reads
+  the species from there whenever a species has alternate formes, and returns a
+  null name if it is empty.
+- The move-selector handler is bound the same way. Its effects are *not*
+  cosmetic: `getMoveDetails` reads `.move-bp` and `.move-type` back out as
+  overrides, so a move row still reading "???" calculates the wrong damage.
+  Verified after the fix: Expanding Force 80 Psychic, Hyper Voice 90 Normal,
+  and the summary agrees with a direct engine call.

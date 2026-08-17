@@ -1,37 +1,47 @@
 /**
- * rr-doubles.js -- a double battle board.
+ * rr-doubles.js -- double battle mode for the calculator itself.
  *
- * Laid out like the calculator itself: your side on the left, theirs on the
- * right, with the second Pokemon stacked under the first. Each card lists its
- * moves with the damage they would do to that card's current target; click a
- * move to choose it, and the summary shows what the chosen moves do together.
+ * Switching this on turns the page into a 2v2: a second Pokemon panel appears
+ * under each of the originals, so you configure all four the same way you
+ * configure one, with every control the calculator normally gives you. Each
+ * panel gets a target picker, and a summary reports what the chosen moves do
+ * together.
  *
- * The point is the combined result. Two attacks on one Pokemon are not a sum
- * of averages -- each rolls damage and crits independently, so the chance the
- * total is lethal is a convolution (RRCritKO.koChancesMulti).
+ * The extra panels are stamped from the pristine markup of the originals,
+ * captured at parse time. That timing matters: the calculator wires select2 on
+ * to those panels inside $(document).ready, and this file's top-level code runs
+ * before any ready handler, so the capture is clean. Cloning the live panels
+ * instead drags along broken widget state and loses form values.
  *
- * Any slot can be empty, giving 2v1 and 1v1. That changes real numbers: the
- * spread penalty follows how many Pokemon a move actually hits, not the
- * format, so a Rock Slide into a lone target hits full while an Earthquake
- * still hits soft if the attacker's own partner is alive (RRCritKO.targetsHit).
- *
- * Slots come from window.RRTrainers, so level scaling, Minimal Grinding Mode
- * and the enemy dataset stay defined in the trainer panel alone.
+ * The combined result is the reason this exists. Two attacks on one Pokemon are
+ * not a sum of averages: each rolls damage and crits independently, so the
+ * chance the total is lethal is a convolution (RRCritKO.koChancesMulti). Empty
+ * slots give 2v1, where spread moves that now reach a single target deal full
+ * damage (RRCritKO.targetsHit).
  */
-/* global $, calc, gen, RRCritKO, RRTrainers */
-(function () {
+/* global $, calc, gen, createPokemon, createField, loadDefaultLists,
+          pokedex, setdex, moves, calcHP, calcStats, showFormes,
+          RRCritKO, RRTrainers */
+var RRDoubles = (function () {
 	"use strict";
 
-	var STATS = ["hp", "atk", "def", "spa", "spd", "spe"];
-
-	// pick: index into the source list (null = empty). move: chosen move index.
-	// target: which slot on the other side it is aimed at.
-	// `move: null` means "nothing chosen yet", which auto-selects the hardest
-	// hitting move against the current target. A click pins the choice.
-	var side = {
-		mine: [{pick: 0, move: null, target: 0}, {pick: 1, move: null, target: 1}],
-		theirs: [{pick: 0, move: null, target: 0}, {pick: 1, move: null, target: 0}]
+	// Captured before the calculator has touched these panels. See file header.
+	var PRISTINE = {
+		p1: document.getElementById("p1") ? document.getElementById("p1").outerHTML : null,
+		p2: document.getElementById("p2") ? document.getElementById("p2").outerHTML : null
 	};
+
+	var active = false;
+	var built = false;
+	// Which opposing slot each panel is aiming at, and which move it uses.
+	var aim = {
+		p1: {target: "p2", move: null},
+		p3: {target: "p4", move: null},
+		p2: {target: "p1", move: null},
+		p4: {target: "p3", move: null}
+	};
+
+	var MINE = ["p1", "p3"], THEIRS = ["p2", "p4"];
 
 	function g() {
 		return calc.Generations.get(typeof gen === "number" ? gen : 9);
@@ -44,41 +54,240 @@
 	}
 
 	function pct(value, max) {
-		return (100 * value / max).toFixed(1);
+		return max ? (100 * value / max).toFixed(1) : "0.0";
 	}
 
 	// ------------------------------------------------------------- building
 
-	function myPokemon(member) {
-		if (!member) return null;
-		var evs = {}, ivs = {}, i;
-		for (i = 0; i < STATS.length; i++) {
-			if (member.evs && member.evs[STATS[i]] !== undefined) {
-				evs[STATS[i]] = member.evs[STATS[i]];
-			}
-			if (member.ivs && member.ivs[STATS[i]] !== undefined) {
-				ivs[STATS[i]] = member.ivs[STATS[i]];
+	/**
+	 * Stamp a new panel out of the captured markup, giving every id inside it a
+	 * suffix so nothing collides with the original.
+	 */
+	function makePanel(sourceId, newId, legend) {
+		var html = PRISTINE[sourceId];
+		if (!html) return null;
+		var holder = document.createElement("div");
+		holder.innerHTML = html;
+		var panel = holder.firstChild;
+		panel.id = newId;
+
+		var suffix = "_" + newId;
+		$(panel).find("[id]").each(function () {
+			this.id += suffix;
+		});
+		$(panel).find("label[for]").each(function () {
+			$(this).attr("for", $(this).attr("for") + suffix);
+		});
+		// Radio groups must stay separate per panel or the panels fight.
+		$(panel).find("input[type=radio][name]").each(function () {
+			this.name += suffix;
+		});
+		$(panel).find("legend").text(legend);
+
+		// The calculator fills the move, ability, item, type and nature lists
+		// once, in its gen-change handler at startup. A panel stamped later has
+		// empty dropdowns, so copy the options across from the live original.
+		var src = $("#" + sourceId).find("select").get();
+		var dst = $(panel).find("select").get();
+		for (var i = 0; i < dst.length && i < src.length; i++) {
+			if (dst[i].options.length === 0 && src[i].options.length > 0) {
+				dst[i].innerHTML = src[i].innerHTML;
 			}
 		}
-		var options = {
-			level: member.level || 100,
-			nature: member.nature || "Serious",
-			evs: evs, ivs: ivs,
-			moves: (member.moves || []).slice(0, 4)
-		};
-		if (member.ability) options.ability = member.ability;
-		if (member.item) options.item = member.item;
+		return panel;
+	}
+
+	// The calculator binds its set-selector handler directly at load, so panels
+	// created afterwards never receive it. Rather than reach into jQuery's
+	// internals to copy handlers onto elements select2 has since rearranged,
+	// the new panels get their own filling logic, driven by the same globals.
+	var LEGACY = ["hp", "at", "df", "sa", "sd", "sp"];
+	var FULL = {hp: "hp", at: "atk", df: "def", sa: "spa", sd: "spd", sp: "spe"};
+
+	/**
+	 * Fill in a move's power, type and category.
+	 *
+	 * Not cosmetic: createPokemon reads .move-bp and .move-type back out as
+	 * overrides, so a panel whose move row still says "???" calculates the
+	 * wrong damage. The calculator's own handler does this, but only for the
+	 * panels that existed when it was bound.
+	 */
+	function applyMove(element) {
+		var sel = $(element);
+		var name = sel.val();
+		if (typeof moves === "undefined") return;
+		var move = moves[name] || moves["(No Move)"];
+		if (!move) return;
+		var group = sel.parent();
+		group.children(".move-bp").val(name === "Present" ? 40 : move.bp);
+		group.children(".move-type").val(move.type);
+		group.children(".move-cat").val(move.category);
+		group.children(".move-crit").prop("checked", move.willCrit === true);
+
+		var hits = group.children(".move-hits");
+		if (!hits.length) return;
+		var multi = Array.isArray(move.multihit) ||
+			(!isNaN(move.multihit) && move.multiaccuracy);
+		if (!multi) { hits.empty().hide(); return; }
+		var low = Array.isArray(move.multihit) ? move.multihit[0] : 1;
+		var high = Array.isArray(move.multihit) ? move.multihit[1] : move.multihit;
+		hits.empty();
+		for (var i = low; i <= high; i++) {
+			hits.append('<option value="' + i + '">' + i + " hits</option>");
+		}
+		hits.val(high).show();
+	}
+
+	/** Only assign a select value the select actually offers. */
+	function setIfValid(select, value, fallback) {
+		select.val(!value ? fallback
+			: (select.children("option[value='" + value + "']").length ? value : fallback));
+	}
+
+	/**
+	 * Fill a panel from "Species (Set Name)", the value its selector holds.
+	 */
+	function applySet(panelId) {
+		var panel = $("#" + panelId);
+		var full = panel.find("input.set-selector").val() || "";
+		var cut = full.indexOf(" (");
+		var species = cut > 0 ? full.substring(0, cut) : full;
+		if (typeof pokedex === "undefined" || !pokedex[species]) return false;
+		var dex = pokedex[species];
+		var setName = cut > 0
+			? full.substring(full.indexOf("(") + 1, full.lastIndexOf(")")) : "";
+		var set = (typeof setdex !== "undefined" && setdex[species])
+			? setdex[species][setName] : null;
+
+		panel.find(".analysis").removeAttr("href");
+		panel.find(".type1").val(dex.types[0]);
+		panel.find(".type2").val(dex.types[1] || "");
+		panel.find(".teraType").val(dex.types[0]);
+		panel.find(".boost").val(0);
+		panel.find(".percent-hp").val(100);
+		panel.find(".status").val("Healthy");
+
+		panel.find(".hp .base").val(dex.bs.hp);
+		for (var i = 0; i < LEGACY.length; i++) {
+			panel.find("." + LEGACY[i] + " .base").val(dex.bs[LEGACY[i]]);
+			panel.find("." + LEGACY[i] + " .evs").val(
+				(set && set.evs && set.evs[LEGACY[i]] !== undefined) ? set.evs[LEGACY[i]] : 0);
+			panel.find("." + LEGACY[i] + " .ivs").val(
+				(set && set.ivs && set.ivs[LEGACY[i]] !== undefined) ? set.ivs[LEGACY[i]] : 31);
+		}
+		panel.find(".hp .evs").val((set && set.evs && set.evs.hp !== undefined) ? set.evs.hp : 0);
+		panel.find(".hp .ivs").val((set && set.ivs && set.ivs.hp !== undefined) ? set.ivs.hp : 31);
+		panel.find(".level").val(set && set.level !== undefined ? set.level : 100);
+		panel.find(".nature").val(set && set.nature ? set.nature : "Hardy");
+		setIfValid(panel.find(".ability"),
+			set && set.ability ? set.ability : (dex.abilities ? dex.abilities[0] : ""),
+			dex.abilities ? dex.abilities[0] : "");
+		setIfValid(panel.find(".item"), set && set.item ? set.item : "", "");
+
+		// createPokemon reads the species from the forme dropdown whenever one
+		// exists, so a panel with an unpopulated forme list reports a null name.
+		var formeObj = panel.find(".forme").parent();
+		var baseForme = (dex.baseSpecies && dex.baseSpecies !== species)
+			? pokedex[dex.baseSpecies] : null;
 		try {
-			return new calc.Pokemon(g(), member.species, options);
+			if (dex.otherFormes) {
+				showFormes(formeObj, species, dex, species);
+			} else if (baseForme && baseForme.otherFormes) {
+				showFormes(formeObj, species, baseForme, dex.baseSpecies);
+			} else {
+				formeObj.hide();
+			}
+		} catch (e) { /* no formes is a fine outcome */ }
+
+		var setMoves = (set && set.moves) ? set.moves : [];
+		for (var m = 0; m < 4; m++) {
+			var sel = panel.find(".move" + (m + 1) + " select.move-selector");
+			sel.val(setMoves[m] || "(No Move)");
+			applyMove(sel[0]);
+		}
+		try {
+			if (typeof calcHP === "function") calcHP(panel);
+			if (typeof calcStats === "function") calcStats(panel);
+		} catch (e) { /* stats redraw is cosmetic */ }
+		return true;
+	}
+
+	/** Point one panel at the same set as another, and fill it in. */
+	function copySelection(fromId, toId) {
+		var value = $("#" + fromId + " input.set-selector").val();
+		if (!value) return;
+		var to = $("#" + toId);
+		to.find("input.set-selector").val(value);
+		to.find(".select2-chosen").first().text(value);
+		applySet(toId);
+	}
+
+	function build() {
+		if (built || !PRISTINE.p1 || !PRISTINE.p2) return built;
+
+		var p3 = makePanel("p1", "p3", "Pokémon 3");
+		var p4 = makePanel("p2", "p4", "Pokémon 4");
+		if (!p3 || !p4) return false;
+
+		$("#p1").closest(".panel").append(p3);
+		$("#p2").closest(".panel").append(p4);
+
+		// Give the new panels the same widgets the originals have.
+		try {
+			if (typeof loadDefaultLists === "function") loadDefaultLists();
+		} catch (e) { /* widgets still usable without it */ }
+		try {
+			$("#p3 .move-selector, #p4 .move-selector").select2({
+				dropdownAutoWidth: true,
+				matcher: function (term, text) {
+					return text.toUpperCase().indexOf(term.toUpperCase()) === 0 ||
+						text.toUpperCase().indexOf(" " + term.toUpperCase()) >= 0;
+				}
+			});
+		} catch (e) { /* plain selects are fine too */ }
+
+		// Import / Export belongs below the Pokemon, not between them.
+		$(".poke-import").closest("div[role='region']").appendTo(".wrapper");
+
+		$("#p1, #p2, #p3, #p4").each(function () {
+			$(this).append('<div class="rr-aimrow" data-panel="' + this.id + '"></div>');
+		});
+		$(".wrapper").append('<div id="rr-dbl-sums" class="rr-sums"></div>');
+
+		// Start the new panels on the same Pokemon as the ones above them, so
+		// the mode is usable the moment it is switched on. loadDefaultLists
+		// clears the selectors, so this has to happen after it.
+		copySelection("p1", "p3");
+		copySelection("p2", "p4");
+
+		built = true;
+		return true;
+	}
+
+	// ------------------------------------------------------------- reading
+
+	function panelPokemon(id) {
+		if (!$("#" + id).length) return null;
+		if (id !== "p1" && id !== "p2" && !active) return null;
+		try {
+			var p = createPokemon($("#" + id));
+			return (p && p.name) ? p : null;
 		} catch (e) {
 			return null;
 		}
 	}
 
-	/**
-	 * calc.Pokemon keeps whatever moves array it was handed, so a Pokemon built
-	 * from names holds strings rather than Move objects. Accept either.
-	 */
+	function field() {
+		var f;
+		try {
+			f = typeof createField === "function" ? createField() : new calc.Field();
+		} catch (e) {
+			f = new calc.Field();
+		}
+		f.gameType = "Doubles";
+		return f;
+	}
+
 	function asMove(move) {
 		if (!move) return null;
 		if (typeof move !== "string") return move;
@@ -90,57 +299,18 @@
 		}
 	}
 
-	function baseField() {
-		var field;
-		try {
-			field = typeof window.createField === "function"
-				? window.createField() : new calc.Field();
-		} catch (e) {
-			field = new calc.Field();
-		}
-		field.gameType = "Doubles";
-		return field;
-	}
-
-	/** Everything on the board right now. */
-	function read() {
-		var battle = RRTrainers.getBattle();
-		var team = RRTrainers.getTeam();
-		var state = {battle: battle, mine: [], theirs: [], names: {mine: [], theirs: []}};
-		var i;
-		for (i = 0; i < 2; i++) {
-			var member = side.mine[i].pick === null ? null : team[side.mine[i].pick];
-			state.mine.push(member ? myPokemon(member) : null);
-			state.names.mine.push(member ? member.species : null);
-		}
-		for (i = 0; i < 2; i++) {
-			var mon = (battle && side.theirs[i].pick !== null)
-				? battle.team[side.theirs[i].pick] : null;
-			state.theirs.push(mon ? RRTrainers.buildEnemy(battle, mon) : null);
-			state.names.theirs.push(mon ? mon.species : null);
-		}
-		state.myLiving = state.mine[0] ? (state.mine[1] ? 2 : 1) : (state.mine[1] ? 1 : 0);
-		state.theirLiving = state.theirs[0] ? (state.theirs[1] ? 2 : 1) : (state.theirs[1] ? 1 : 0);
-		return state;
-	}
-
-	/** First living slot on a side, so targets never point at nothing. */
-	function firstLiving(list) {
-		return list[0] ? 0 : (list[1] ? 1 : -1);
-	}
-
-	/** Damage rolls for one attacker's moves against one defender. */
 	function shots(attacker, defender, foes, allies) {
 		if (!attacker || !defender) return [];
-		var field = baseField();
-		var bonus = RRTrainers.getPrefs().focusEnergy ? 2 : 0;
+		var base = field();
+		var bonus = (typeof RRTrainers !== "undefined" &&
+			RRTrainers.getPrefs().focusEnergy) ? 2 : 0;
 		var out = [];
 		for (var i = 0; i < attacker.moves.length; i++) {
 			var move = asMove(attacker.moves[i]);
 			if (!move) { out.push(null); continue; }
 			var spread = RRCritKO.targetsHit(move, foes, allies) >= 2;
-			var moveField = RRCritKO.fieldForMove(field, move, foes, allies);
-			var shot = RRCritKO.shotFor(g(), attacker, defender, move, moveField, bonus);
+			var shot = RRCritKO.shotFor(g(), attacker, defender, move,
+				RRCritKO.fieldForMove(base, move, foes, allies), bonus);
 			if (shot) shot.spread = spread;
 			out.push(shot || {move: move.name, dead: true, spread: spread});
 		}
@@ -158,216 +328,205 @@
 		return "";
 	}
 
-	// --------------------------------------------------------------- render
+	// -------------------------------------------------------------- render
 
-	function card(which, slot, state) {
-		var isMine = which === "mine";
-		var me = state[which][slot];
-		var conf = side[which][slot];
-		var foeList = isMine ? state.theirs : state.mine;
-		var foeNames = isMine ? state.names.theirs : state.names.mine;
-		var foes = isMine ? state.theirLiving : state.myLiving;
-		var allies = (isMine ? state.myLiving : state.theirLiving) - 1;
-
-		var source = isMine ? RRTrainers.getTeam()
-			: (state.battle ? state.battle.team : []);
-		var html = '<div class="rr-card' + (me ? "" : " rr-off") + '">';
-
-		html += '<select class="rr-pick" data-side="' + which + '" data-slot="' + slot + '">' +
-			'<option value="">(empty)</option>';
-		for (var s = 0; s < source.length; s++) {
-			var label = isMine
-				? source[s].species + " Lv" + source[s].level
-				: source[s].species + " Lv" + RRTrainers.resolveLevel(source[s]);
-			html += '<option value="' + s + '"' +
-				(conf.pick === s ? " selected" : "") + '>' + esc(label) + '</option>';
+	function board() {
+		var state = {mon: {}, living: {mine: 0, theirs: 0}};
+		var i;
+		for (i = 0; i < MINE.length; i++) {
+			state.mon[MINE[i]] = panelPokemon(MINE[i]);
+			if (state.mon[MINE[i]]) state.living.mine++;
 		}
-		html += '</select>';
-
-		if (!me) return html + '</div>';
-
-		// Where this Pokemon is pointing.
-		if (conf.target === null || !foeList[conf.target]) {
-			conf.target = firstLiving(foeList);
+		for (i = 0; i < THEIRS.length; i++) {
+			state.mon[THEIRS[i]] = panelPokemon(THEIRS[i]);
+			if (state.mon[THEIRS[i]]) state.living.theirs++;
 		}
-		if (conf.target >= 0 && foes > 0) {
-			html += '<div class="rr-aim">';
-			for (var f = 0; f < 2; f++) {
-				if (!foeList[f]) continue;
-				html += '<button class="rr-tgt' + (conf.target === f ? " rr-on" : "") +
-					'" data-side="' + which + '" data-slot="' + slot +
-					'" data-target="' + f + '">' + esc(foeNames[f]) + '</button>';
-			}
-			html += '</div>';
-		}
-
-		var target = foeList[conf.target];
-		var list = shots(me, target, foes, allies);
-		var maxHP = target ? target.maxHP() : 0;
-
-		// Until the user picks, show the move that threatens this target most:
-		// defaulting to slot 0 can land on Trick Room and say nothing.
-		if (conf.move === null || !list[conf.move] || list[conf.move].dead) {
-			var best = -1, bestMax = 0;
-			for (var b = 0; b < list.length; b++) {
-				if (list[b] && !list[b].dead && list[b].max > bestMax) {
-					bestMax = list[b].max;
-					best = b;
-				}
-			}
-			conf.move = best >= 0 ? best : (conf.move === null ? -1 : conf.move);
-		}
-		html += '<div class="rr-moves">';
-		for (var i = 0; i < list.length; i++) {
-			var shot = list[i];
-			if (!shot) continue;
-			var chosen = conf.move === i;
-			html += '<button class="rr-mv' + (chosen ? " rr-on" : "") +
-				'" data-side="' + which + '" data-slot="' + slot +
-				'" data-move="' + i + '">' +
-				'<span class="rr-mn">' + esc(shot.move) +
-				(shot.spread ? '<i>spread</i>' : "") + '</span>';
-			if (shot.dead) {
-				html += '<span class="rr-md">&mdash;</span>';
-			} else {
-				var solo = RRCritKO.koChancesMulti([shot], target.curHP(), 4);
-				html += '<span class="rr-md">' + pct(shot.min, maxHP) + ' - ' +
-					pct(shot.max, maxHP) + '%</span>' +
-					'<span class="rr-mk">' + esc(koText(solo)) + '</span>';
-			}
-			html += '</button>';
-		}
-		html += '</div></div>';
-		return html;
+		return state;
 	}
 
-	/** What the chosen moves do together, grouped by who they are aimed at. */
-	function summary(state) {
-		var lines = [];
-		var sides = [
-			{from: "theirs", to: "mine", label: "Yours"},
-			{from: "mine", to: "theirs", label: "Theirs"}
-		];
-		for (var s = 0; s < sides.length; s++) {
-			var from = sides[s].from, to = sides[s].to;
-			var attackers = state[from], defenders = state[to];
-			var foes = to === "mine" ? state.myLiving : state.theirLiving;
-			var allies = (from === "mine" ? state.myLiving : state.theirLiving) - 1;
-
-			for (var d = 0; d < 2; d++) {
-				var defender = defenders[d];
-				if (!defender) continue;
-				var incoming = [], labels = [];
-				for (var a = 0; a < 2; a++) {
-					var attacker = attackers[a];
-					var conf = side[from][a];
-					if (!attacker || conf.target !== d) continue;
-					var list = shots(attacker, defender, foes, allies);
-					var shot = list[conf.move];
-					if (!shot || shot.dead) continue;
-					incoming.push(shot);
-					labels.push(state.names[from][a] + " " + shot.move);
-				}
-				if (!incoming.length) continue;
-				var hp = defender.curHP(), maxHP = defender.maxHP();
-				var min = 0, max = 0;
-				for (var k = 0; k < incoming.length; k++) {
-					min += incoming[k].min;
-					max += incoming[k].max;
-				}
-				var chances = RRCritKO.koChancesMulti(incoming, hp, 4);
-				var ko = koText(chances);
-				lines.push('<div class="rr-sum' + (chances[0] > 0 ? " rr-danger" : "") + '">' +
-					'<span class="rr-st">' + esc(defender.name) + '</span>' +
-					'<span class="rr-sd">' + pct(min, maxHP) + ' - ' + pct(max, maxHP) + '%</span>' +
-					'<span class="rr-sk">' + esc(ko || "no KO") + '</span>' +
-					'<span class="rr-sf">' + esc(labels.join(" + ")) + '</span></div>');
-			}
-		}
-		return lines.join("");
+	function opposing(id) {
+		return MINE.indexOf(id) >= 0 ? THEIRS : MINE;
 	}
 
-	function render() {
-		if (!$("#rr-doubles").length) return;
+	function renderAim(state) {
+		var all = MINE.concat(THEIRS);
+		for (var i = 0; i < all.length; i++) {
+			var id = all[i];
+			var row = $(".rr-aimrow[data-panel='" + id + "']");
+			if (!row.length) continue;
+			if (!state.mon[id]) { row.empty(); continue; }
+
+			var foes = opposing(id);
+			// Never leave a Pokemon aiming at an empty slot.
+			if (!state.mon[aim[id].target]) {
+				aim[id].target = state.mon[foes[0]] ? foes[0] : foes[1];
+			}
+			var html = '<span class="rr-aiml">Target</span>';
+			for (var f = 0; f < foes.length; f++) {
+				if (!state.mon[foes[f]]) continue;
+				html += '<button class="rr-tgt' +
+					(aim[id].target === foes[f] ? " rr-on" : "") +
+					'" data-panel="' + id + '" data-target="' + foes[f] + '">' +
+					esc(state.mon[foes[f]].name) + '</button>';
+			}
+			row.html(html);
+		}
+	}
+
+	/**
+	 * One line per Pokemon under attack: what the chosen moves do together.
+	 */
+	function renderSummary(state) {
+		var sums = $("#rr-dbl-sums");
+		if (!sums.length) return;
+		var lines = "";
+		var all = MINE.concat(THEIRS);
+
+		for (var d = 0; d < all.length; d++) {
+			var defId = all[d];
+			var defender = state.mon[defId];
+			if (!defender) continue;
+
+			var attackers = opposing(defId);
+			var isMine = MINE.indexOf(defId) >= 0;
+			var foes = isMine ? state.living.mine : state.living.theirs;
+			var allies = (isMine ? state.living.theirs : state.living.mine) - 1;
+
+			var incoming = [], labels = [];
+			for (var a = 0; a < attackers.length; a++) {
+				var attacker = state.mon[attackers[a]];
+				if (!attacker || aim[attackers[a]].target !== defId) continue;
+				var list = shots(attacker, defender, foes, allies);
+				var pick = aim[attackers[a]].move;
+				if (pick === null || !list[pick] || list[pick].dead) {
+					pick = -1;
+					var bestMax = 0;
+					for (var b = 0; b < list.length; b++) {
+						if (list[b] && !list[b].dead && list[b].max > bestMax) {
+							bestMax = list[b].max; pick = b;
+						}
+					}
+				}
+				if (pick < 0 || !list[pick] || list[pick].dead) continue;
+				incoming.push(list[pick]);
+				labels.push(attacker.name + " " + list[pick].move +
+					(list[pick].spread ? " (spread)" : ""));
+			}
+			if (!incoming.length) continue;
+
+			var min = 0, max = 0;
+			for (var k = 0; k < incoming.length; k++) {
+				min += incoming[k].min; max += incoming[k].max;
+			}
+			var chances = RRCritKO.koChancesMulti(incoming, defender.curHP(), 4);
+			lines += '<div class="rr-sum' + (chances[0] > 0 ? " rr-danger" : "") + '">' +
+				'<span class="rr-st">' + esc(defender.name) + '</span>' +
+				'<span class="rr-sd">' + pct(min, defender.maxHP()) + ' - ' +
+				pct(max, defender.maxHP()) + '%</span>' +
+				'<span class="rr-sk">' + esc(koText(chances) || "no KO") + '</span>' +
+				'<span class="rr-sf">' + esc(labels.join(" + ")) + '</span></div>';
+		}
+
+		var counts = state.living.mine + "v" + state.living.theirs;
+		var note = (state.living.mine < 2 || state.living.theirs < 2)
+			? ' <i>spread moves at full damage</i>' : "";
+		sums.html('<span class="rr-fmt">' + counts + note + '</span>' +
+			(lines || '<span class="rr-note">Give your Pokemon some moves.</span>'));
+	}
+
+	function refresh() {
+		if (!active) return;
 		var state;
 		try {
-			state = read();
+			state = board();
 		} catch (e) {
 			return;
 		}
-		var html = '<div class="rr-board">' +
-			'<div class="rr-col"><div class="rr-colh">You</div>' +
-				card("mine", 0, state) + card("mine", 1, state) + '</div>' +
-			'<div class="rr-col"><div class="rr-colh">Opponent</div>' +
-				card("theirs", 0, state) + card("theirs", 1, state) + '</div>' +
-			'</div>';
-
-		var counts = state.myLiving + "v" + state.theirLiving;
-		var note = (state.myLiving < 2 || state.theirLiving < 2)
-			? ' <i>spread moves at full damage</i>' : "";
-		html += '<div class="rr-sums"><span class="rr-fmt">' + counts + note + '</span>' +
-			summary(state) + '</div>';
-		$("#rr-dbl-body").html(html);
+		renderAim(state);
+		renderSummary(state);
 	}
 
-	// ----------------------------------------------------------------- init
+	/** Load one of the sheet's Pokemon into a panel. */
+	function loadEnemyInto(battle, mon, panelId) {
+		if (!mon || typeof RRTrainers === "undefined" || !RRTrainers.enemySetId) return;
+		var id = RRTrainers.enemySetId(battle, mon);
+		if (!id) return;
+		var panel = $("#" + panelId);
+		panel.find("input.set-selector").val(id);
+		panel.find(".select2-chosen").first().text(id);
+		if (panelId === "p2" || panelId === "p1") {
+			// These carry the calculator's own handler; let it do the work.
+			panel.find("input.set-selector").change();
+		} else {
+			applySet(panelId);
+		}
+	}
+
+	// --------------------------------------------------------------- mode
+
+	function setActive(on) {
+		if (on === active) return;
+		if (on && !build()) return;
+		active = on;
+		$("#p3, #p4").toggle(on);
+		$(".rr-aimrow").toggle(on);
+		$("#rr-dbl-sums").toggle(on);
+		$("body").toggleClass("rr-doubles-on", on);
+		$("#rr-mode-doubles").toggleClass("rr-on", on)
+			.text(on ? "Doubles: on" : "Doubles: off");
+		refresh();
+	}
 
 	function bind() {
-		var root = $("#rr-doubles");
-
-		root.on("change", ".rr-pick", function () {
-			var v = $(this).val();
-			var conf = side[$(this).data("side")][~~$(this).data("slot")];
-			conf.pick = v === "" ? null : ~~v;
-			conf.move = null;
-			render();
+		$(document).on("click", "#rr-mode-doubles", function () {
+			setActive(!active);
+		});
+		$(document).on("change", "#p3 select.move-selector, #p4 select.move-selector",
+			function () {
+				applyMove(this);
+				refresh();
+			});
+		$(document).on("change", "#p3 input.set-selector, #p4 input.set-selector",
+			function () {
+				applySet($(this).closest(".poke-info").attr("id"));
+				refresh();
+			});
+		$(document).on("click", ".rr-tgt", function () {
+			var panel = $(this).data("panel");
+			aim[panel].target = $(this).data("target");
+			aim[panel].move = null;
+			refresh();
+		});
+		// Any edit anywhere in the calculator changes the answer.
+		$(document).on("change keyup", ".poke-info input, .poke-info select, " +
+			".field-info input, .field-info select", function () {
+			if (active) refresh();
 		});
 
-		root.on("click", ".rr-tgt", function () {
-			var conf = side[$(this).data("side")][~~$(this).data("slot")];
-			conf.target = ~~$(this).data("target");
-			conf.move = null;   // strongest move against the new target
-			render();
-		});
-
-		root.on("click", ".rr-mv", function () {
-			side[$(this).data("side")][~~$(this).data("slot")].move =
-				~~$(this).data("move");
-			render();
-		});
-
-		$("#rr-dbl-collapse").click(function () {
-			var body = $("#rr-dbl-body");
-			body.toggle();
-			$(this).text(body.is(":visible") ? "hide" : "show");
-		});
-
-		// Doubles battles arrive ready to use.
-		RRTrainers.onBattleChange(function (battle) {
-			var doubles = battle && RRTrainers.isDoubles(battle);
-			side.theirs[0].pick = battle && battle.team.length > 0 ? 0 : null;
-			side.theirs[1].pick = doubles && battle.team.length > 1 ? 1 : null;
-			side.theirs[0].move = side.theirs[1].move = null;
-			if (doubles) {
-				$("#rr-dbl-body").show();
-				$("#rr-dbl-collapse").text("hide");
-			}
-			render();
-		});
+		if (typeof RRTrainers !== "undefined" && RRTrainers.onBattleChange) {
+			RRTrainers.onBattleChange(function (battle) {
+				var doubles = !!(battle && RRTrainers.isDoubles(battle));
+				setActive(doubles);
+				if (!doubles) return;
+				// Put the first two of the enemy team on the board.
+				loadEnemyInto(battle, battle.team[0], "p2");
+				loadEnemyInto(battle, battle.team[1], "p4");
+				refresh();
+			});
+		}
 	}
 
 	$(function () {
-		if (typeof RRTrainers === "undefined" || typeof RRCritKO === "undefined") return;
-		var host = $("#rr-panel");
-		if (!host.length) return;
-		host.after('<div id="rr-doubles"><div class="rr-head">' +
-			'<span class="rr-title">Double Battle</span>' +
-			'<button id="rr-dbl-collapse">hide</button></div>' +
-			'<div id="rr-dbl-body"></div></div>');
-		var team = RRTrainers.getTeam();
-		side.mine[0].pick = team.length > 0 ? 0 : null;
-		side.mine[1].pick = team.length > 1 ? 1 : null;
+		if (typeof RRCritKO === "undefined") return;
+		$(".modeSelection").append(
+			'<button id="rr-mode-doubles" class="btn" type="button">Doubles: off</button>');
 		bind();
-		render();
 	});
+
+	return {
+		enable: function () { setActive(true); },
+		disable: function () { setActive(false); },
+		isActive: function () { return active; },
+		refresh: refresh
+	};
 })();

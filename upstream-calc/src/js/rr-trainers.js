@@ -866,6 +866,26 @@
 		getTeam: function () { return team; },
 		getPrefs: function () { return prefs; },
 		buildEnemy: enemyPokemon,
+		// Registers the set and returns the id its selector should hold, so the
+		// doubles view can fill its own panels without duplicating EV/level logic.
+		enemySetId: function (battle, mon) {
+			if (!battle || !mon) return null;
+			var set = {
+				level: resolveLevel(mon),
+				nature: mon.nature || "Serious",
+				item: mon.item || "",
+				moves: mon.moves.slice(0, 4),
+				evs: toCalcStats(effectiveEVs(battle, mon)),
+				ivs: toCalcStats(mon.ivs)
+			};
+			if (mon.ability) set.ability = mon.ability;
+			set.isCustomSet = true;
+			if (typeof setdex === "undefined" || !setdex) return null;
+			if (!setdex[mon.species]) setdex[mon.species] = {};
+			var name = battle.trainer + (battle.variant ? " / " + battle.variant : "");
+			setdex[mon.species][name] = set;
+			return mon.species + " (" + name + ")";
+		},
 		resolveLevel: resolveLevel,
 		levelLabel: levelLabel,
 		isDoubles: isDoublesBattle,
