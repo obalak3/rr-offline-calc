@@ -31,7 +31,7 @@
         * It will be truey and incorrectly cause the
         * dark theme to load.
         */
-        if (localStorage.getItem('darkTheme') !== 'true') {
+        if (localStorage.getItem('darkTheme') === 'false') {
             document.getElementById('dark-theme-styles').disabled = true;
         }
     </script>

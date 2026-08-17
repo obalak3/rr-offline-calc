@@ -293,3 +293,35 @@ body.dark-theme #rr-crit {
 
 #rr-panel .rr-battle.rr-nolink { opacity: .55; cursor: default; }
 #rr-panel .rr-seg-order { font-style: italic; }
+
+/* ---------------------------------------------------------- black theme
+   Retint the stock dark theme to true black, and match the panel to it.
+   Only the theme's own variables are overridden, so the calculator's own
+   stylesheet stays untouched and the light theme is unaffected. */
+
+body.dark-theme {
+	--background: #000;
+	--text: #e8e8e8;
+	--fieldset-color: #111;
+	--button-selected: #1d1d1d;
+	--button-hover: #191919;
+}
+
+body.dark-theme #rr-panel,
+body.dark-theme #rr-crit {
+	--rr-bg: #000;
+	--rr-bg-alt: #0e0e0e;
+	--rr-line: #262626;
+	--rr-text: #e8e8e8;
+	--rr-muted: #8b8b8b;
+	--rr-accent: #ff7a4d;
+	--rr-accent-soft: #24120c;
+}
+
+/* The calculator's own table styles wash these out against black, so state
+   the colour rather than inheriting it. */
+.rr-matrix tbody td { color: var(--rr-text); }
+.rr-matrix .rr-plain,
+.rr-matrix .rr-ko { color: var(--rr-muted); }
+.rr-matrix td.rr-kill,
+.rr-matrix td.rr-kill .rr-ko { color: var(--rr-accent); }

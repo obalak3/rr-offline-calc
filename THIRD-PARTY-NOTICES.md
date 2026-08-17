@@ -33,7 +33,8 @@ Kept deliberately small so the diff against upstream stays reviewable:
 
 | File | Change |
 | --- | --- |
-| `src/index.template.html` | 4 added lines: one stylesheet link and three script tags |
+| `src/index.template.html` | 4 added lines (one stylesheet link, three script tags) plus one changed line so the dark theme is the default |
+| `src/js/dark-theme-toggle.js` | 1 changed line: default to dark instead of following the OS setting |
 | `src/js/rr-critko.js` | **new**, mine |
 | `src/js/rr-trainers.js` | **new**, mine |
 | `src/js/data/rr-trainers-data.js` | **new**, generated (see section 2) |

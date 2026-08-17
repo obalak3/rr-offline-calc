@@ -41,7 +41,11 @@ click to swap which one is attacking.
 grouped by level cap, with optional fights marked — so you can find the battle
 you're standing in front of without guessing which section it's in.
 
-**6. Automatic field effects.** 59 battles carry notes like permanent sandstorm
+**6. A black theme by default.** The stock dark theme is retinted to true black
+and turned on out of the box; the calculator's own toggle still works, and an
+explicit choice is still respected.
+
+**7. Automatic field effects.** 59 battles carry notes like permanent sandstorm
 or omni-boosted opponents; selecting one sets the weather, terrain, and stat
 boosts to match. Toggleable, and the panel says which notes it couldn't apply.
 
@@ -173,7 +177,8 @@ upstream-calc/                the vendored MIT calculator
   src/js/rr-trainers.js         trainer panel + team manager   (new, mine)
   src/js/data/rr-trainers-data.js  generated dataset           (new, generated)
   src/css/rr-panel.css          panel styles                   (new, mine)
-  src/index.template.html       +4 lines, the only upstream file touched
+  src/index.template.html       +4 lines, +1 changed (dark by default)
+  src/js/dark-theme-toggle.js   1 changed line (dark by default)
 ```
 
 ---
