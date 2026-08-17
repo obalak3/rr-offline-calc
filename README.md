@@ -37,6 +37,14 @@ Pokémon at once, so you can see the whole fight on one screen.
 **4. A saved team.** Keep up to six of your own Pokémon in `localStorage` and
 click to swap which one is attacking.
 
+**5. A Story Order view.** All 96 story trainers in the order you meet them,
+grouped by level cap, with optional fights marked — so you can find the battle
+you're standing in front of without guessing which section it's in.
+
+**6. Automatic field effects.** 59 battles carry notes like permanent sandstorm
+or omni-boosted opponents; selecting one sets the weather, terrain, and stat
+boosts to match. Toggleable, and the panel says which notes it couldn't apply.
+
 Everything the stock calculator does still works untouched — including picking
 any Pokémon by hand for wild encounters that aren't in the sheet.
 
@@ -77,6 +85,28 @@ speed cross-check (see below). Standard library only, no pip installs.
 
 ---
 
+## Does it know every Pokémon?
+
+Yes, and that is checked rather than assumed. `tools/verify_roster.js` compares
+the bundled calculator against the community Radical Red Pokédex
+([JwowSquared/Radical-Red-Pokedex](https://github.com/JwowSquared/Radical-Red-Pokedex),
+the data behind <https://dex.radicalred.net>) — an independent extraction of the
+same ROM. Two independent sources agreeing means something; the calculator
+agreeing with itself would not.
+
+Result across all **1200 distinct dex entries**: every species is present, base
+stats agree stat-for-stat, and every ability is selectable.
+
+Two documented exceptions: Radical Red gives **Unfezant** and **Jellicent**
+gender-dependent base stats, and the calculator ships only one gender of each
+(Unfezant's female spread, Jellicent's male). Neither appears in any trainer
+battle, so it only matters if one is on your own team — edit the base stats by
+hand in that case. They're allowlisted so any *new* discrepancy still fails.
+
+```bash
+node tools/verify_roster.js
+```
+
 ## How the data is verified
 
 The sheet lists no IVs, but it *does* print each Pokémon's Speed stat. The
@@ -102,6 +132,18 @@ Most Pokémon (595 of 792) have levels that scale to your own — the sheet writ
 these as "Highest Lv" or "Highest Lv -2" for rematch and postgame trainers. Set
 **My highest Lv** in the panel and those resolve automatically.
 
+Every one of the **792 trainer Pokémon** is also loaded through the real page in
+a headless DOM and read back out, checking species, ability, item, level and
+moves against the sheet. All 792 pass. This caught two bugs that unit tests
+could not, both about upstream DOM behaviour rather than arithmetic: abilities
+silently falling back to the species default, and Hidden Power's type being
+rewritten by the calculator.
+
+```bash
+node tools/test_page.js        # panel behaviour, ~30s
+node tools/test_load_all.js    # all 792 Pokemon, ~5min
+```
+
 The crit engine has its own checks:
 
 ```bash
@@ -120,7 +162,11 @@ Worst observed difference: `0`.
 data/csv/                     cached sheet tabs (the extractor's input)
 tools/fetch_sheet.py          refresh the cache (needs network)
 tools/extract_trainers.py     CSV -> trainer dataset, with a validation report
+tools/dump_calc_names.js      export the calculator's canonical name lists
+tools/verify_roster.js        cross-check the roster against the RR Pokedex
 tools/test_critko.js          checks for the crit-aware KO engine
+tools/test_page.js            drives the built page in a headless DOM
+tools/test_load_all.js        loads all 792 trainer Pokemon and verifies them
 upstream-calc/                the vendored MIT calculator
   src/js/rr-critko.js           crit-aware KO probability      (new, mine)
   src/js/rr-trainers.js         trainer panel + team manager   (new, mine)
@@ -137,8 +183,13 @@ upstream-calc/                the vendored MIT calculator
   damage (weather, poison, Leftovers). Those live inside the upstream KO
   routine, which isn't exported piecewise. The stock KO line, which does include
   them, is always shown alongside.
-- Battle effects the sheet notes for some fights (permanent sandstorm, doubles,
-  rain teams) are displayed but **not** auto-applied to the Field section — set
-  those yourself.
+- Weather, terrain and omni-boost effects are applied automatically, but
+  doubles, inverse battles, banned types and mid-battle transformations have no
+  equivalent in the calculator. They're shown and explicitly listed as not
+  applied, rather than silently ignored.
+- Hidden Power's type is fixed by the parity of the six IVs, so a Pokémon
+  carrying it gets the type's canonical IV spread and the Speed IV is fitted
+  within that parity class. One Pokémon (Brendan's Sceptile-Mega) cannot satisfy
+  both; the stated move type wins and it's flagged `speedVerified: false`.
 - The high-crit-ratio move list is maintained by hand in `rr-critko.js`. If
   Radical Red diverges from mainline crit ratios, that's the one place to fix.
