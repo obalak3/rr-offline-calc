@@ -544,6 +544,13 @@ var RRDoubles = (function () {
 		}
 	}
 
+	/** "always crits", "50% crit", or "" at the ordinary 1/24 rate. */
+	function critLabel(rate) {
+		if (rate >= 0.999) return "always crits";
+		if (rate > 1 / 24 + 1e-9) return (rate * 100).toFixed(0) + "% crit";
+		return "";
+	}
+
 	/** What the selected moves aimed at each Pokemon do together. */
 	function renderCombined(state) {
 		var box = $("#rr-dbl-combined");
@@ -560,7 +567,7 @@ var RRDoubles = (function () {
 			var foeCount = isMine ? state.living.mine : state.living.theirs;
 			var allyCount = (isMine ? state.living.theirs : state.living.mine) - 1;
 
-			var incoming = [], labels = [];
+			var incoming = [], labels = [], critNotes = [];
 			for (var a = 0; a < attackers.length; a++) {
 				var attacker = state.mon[attackers[a]];
 				if (!attacker) continue;
@@ -570,6 +577,8 @@ var RRDoubles = (function () {
 				if (targetOf(state, attackers[a], row) !== defId) continue;
 				incoming.push(list[row]);
 				labels.push(targetName(state, attackers[a]) + "'s " + list[row].move);
+				var note = critLabel(list[row].critChance);
+				if (note) critNotes.push(list[row].move + " " + note);
 			}
 			if (incoming.length < 2) continue;
 
@@ -578,11 +587,30 @@ var RRDoubles = (function () {
 				min += incoming[k].min; max += incoming[k].max;
 			}
 			var chances = RRCritKO.koChancesMulti(incoming, defender.curHP(), 4);
+			var noCrit = [];
+			for (var n = 0; n < incoming.length; n++) {
+				noCrit.push({noCrit: incoming[n].noCrit, crit: incoming[n].crit,
+					critChance: 0, hits: incoming[n].hits});
+			}
+			var plainChances = RRCritKO.koChancesMulti(noCrit, defender.curHP(), 4);
+
 			lines += '<div class="rr-comb' + (chances[0] > 0 ? " rr-lethal" : "") + '">' +
 				esc(labels.join(" + ")) + " vs. " + esc(targetName(state, defId)) + ": " +
 				min + "-" + max + " (" + pct(min, defender.maxHP()) + " - " +
 				pct(max, defender.maxHP()) + "%) &mdash; " +
-				esc(koText(chances) || "not a KO") + "</div>";
+				esc(koText(chances) || "not a KO");
+			// One extra line, only when crits actually change the picture or a
+			// move crits more often than the 1/24 baseline.
+			var changed = koText(plainChances) !== koText(chances);
+			if (critNotes.length || changed) {
+				lines += '<div class="rr-comb-crit">' +
+					(critNotes.length
+						? '<b class="rr-crit-flag">' + esc(critNotes.join(", ")) + "</b> "
+						: "") +
+					"without crits: " + esc(koText(plainChances) || "not a KO") +
+					"</div>";
+			}
+			lines += "</div>";
 		}
 
 		var counts = state.living.mine + "v" + state.living.theirs;

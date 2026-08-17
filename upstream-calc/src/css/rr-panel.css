@@ -503,13 +503,11 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
 .rr-dex-title { margin: 0; font-size: 1.3em; }
 #rr-dex-back { width: auto; padding: 4px 12px; margin: 0; }
 
-/* Sits with the calculator's results; a heading keeps it from reading as a
-   stray table dropped into the page. */
-#rr-crit .rr-crit-head {
-	font-size: .8em; font-weight: 700;
-	text-transform: uppercase; letter-spacing: .4px;
-	opacity: .65; margin-bottom: 4px;
-}
+/* Crit information reads as another line of the result, not a separate block. */
+#rr-crit { margin: 2px 0 10px; }
+.rr-critline { font-size: .95em; margin-top: 2px; }
+.rr-critline .rr-plain { opacity: .65; }
+.rr-critline.rr-incoming { opacity: .95; }
 
 /* The panel was taller than its content warranted. */
 #rr-panel .rr-cols { min-height: 0; }
@@ -543,10 +541,14 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
 .rr-crit-rate.rr-crit-always { color: #b4472e; font-weight: 700; text-transform: uppercase; }
 body.dark-theme .rr-crit-rate.rr-crit-high,
 body.dark-theme .rr-crit-rate.rr-crit-always { color: #ff7a4d; }
-#rr-crit .rr-critbox + .rr-critbox { margin-top: 8px; }
+
 
 .rr-crit-flag {
 	font-size: .8em; font-weight: 700; color: #b4472e;
 	text-transform: uppercase; letter-spacing: .3px; margin-left: .3em;
 }
 body.dark-theme .rr-crit-flag { color: #ff7a4d; }
+
+#rr-dbl-combined .rr-comb-crit {
+	font-size: .88em; opacity: .75; margin-top: 1px; padding-left: .2em;
+}

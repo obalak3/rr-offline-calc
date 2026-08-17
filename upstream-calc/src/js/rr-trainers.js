@@ -668,58 +668,103 @@
 		return html;
 	}
 
-	/** One direction of the crit-aware table. */
-	function critTable(attackerSel, defenderSel, swap, label) {
-		var defender;
-		try {
-			defender = createPokemon($(defenderSel));
-		} catch (e) {
-			return "";
+	/**
+	 * How threatening an incoming move is: [turns to a likely kill, its chance].
+	 *
+	 * Ranking on the first turn with any chance at all is misleading -- a 0.02%
+	 * 5HKO would outrank an 87.9% 6HKO. So the first turn where a kill is more
+	 * likely than not is what counts, falling back to any chance at all.
+	 */
+	function threatRank(result) {
+		var n;
+		for (n = 0; n < result.chances.length; n++) {
+			if (result.chances[n] >= 0.5) return [n, result.chances[n]];
 		}
-		if (!defender || !defender.name) return "";
-		var analysis = analysePair(attackerSel, defender, swap);
-		if (!analysis || !analysis.rows.length) return "";
+		for (n = 0; n < result.chances.length; n++) {
+			if (result.chances[n] > 0) return [100 + n, result.chances[n]];
+		}
+		return [999, result.maxTurnDamage / Math.max(result.maxHP, 1)];
+	}
 
-		var html = '<table class="rr-matrix rr-critbox"><thead><tr>' +
-			'<th>' + esc(label) + ": " + esc(analysis.attacker.name) + " vs " +
-			esc(defender.name) + '</th>' +
-			'<th>Damage</th><th>Crit rate</th><th>KO chance (crits included)</th>' +
-			'<th>KO chance (no crits)</th></tr></thead><tbody>';
-		for (var i = 0; i < analysis.rows.length; i++) {
-			var row = analysis.rows[i];
-			var res = row.result;
-			if (!res) {
-				html += '<tr><th>' + esc(row.move) + '</th>' +
-					'<td colspan="4" class="rr-nil">no damage</td></tr>';
-				continue;
-			}
-			// A crit rate above the baseline 1/24 is the thing worth noticing:
-			// Super Luck plus Scope Lens plus a high-ratio move crits every time.
-			var rate = res.critChance;
-			var cls = rate >= 0.999 ? " rr-crit-always"
-				: (rate > 1 / 24 + 1e-9 ? " rr-crit-high" : "");
-			html += '<tr><th>' + esc(row.move) + '</th>' +
-				'<td>' + pct(res.minTurnDamage, res.maxHP) + ' - ' +
-				pct(res.maxTurnDamage, res.maxHP) + '%</td>' +
-				'<td class="rr-crit-rate' + cls + '">' +
-				(rate >= 0.999 ? "always" : (rate * 100).toFixed(1) + "%") + '</td>' +
-				'<td class="rr-kill">' + ladder(res) + '</td>' +
-				'<td class="rr-plain">' + esc(res.textWithoutCrits) + '</td></tr>';
-		}
-		return html + "</tbody></table>";
+	/** "always", "50%", or "" when the rate is the ordinary 1/24. */
+	function critNote(rate) {
+		if (rate >= 0.999) return "always crits";
+		if (rate > 1 / 24 + 1e-9) return (rate * 100).toFixed(0) + "% crit";
+		return "";
 	}
 
 	/**
-	 * Both directions: what you do to them, and what they do to you. The
-	 * incoming half is the point -- it is where you find out that Giovanni's
-	 * Honchkrow crits with every Night Slash.
+	 * Crit information as a line or two under the calculator's own result,
+	 * rather than as separate tables.
+	 *
+	 * The stock result line already gives the crit-free outcome, so what is
+	 * worth adding is the crit rate, what the crits change, and -- the part
+	 * with no home anywhere else -- what the opponent's most dangerous move
+	 * does to you. That is where you find out Giovanni's Honchkrow crits with
+	 * every Night Slash.
 	 */
 	function critBox() {
-		var outgoing = critTable("#p1", "#p2", false, "You");
-		var incoming = critTable("#p2", "#p1", true, "Them");
-		if (!outgoing && !incoming) return "";
-		return '<div class="rr-crit-head">Crit-aware KO chance</div>' +
-			outgoing + incoming;
+		var lines = "";
+
+		// Outgoing: describe whichever move the calculator is detailing.
+		var checked = $("input.result-move:checked").attr("id") || "";
+		var side = checked.indexOf("resultMoveR") === 0 ? "#p2" : "#p1";
+		var other = side === "#p1" ? "#p2" : "#p1";
+		var index = ~~checked.slice(-1) - 1;
+
+		var defender = null;
+		try {
+			defender = createPokemon($(other));
+		} catch (e) {
+			defender = null;
+		}
+		if (defender && defender.name) {
+			var out = analysePair(side, defender, side === "#p2");
+			var row = out && out.rows[index];
+			if (row && row.result) {
+				var note = critNote(row.result.critChance);
+				lines += '<div class="rr-critline"><b>Crit</b> ' +
+					(note || (row.result.critChance * 100).toFixed(1) + "%") +
+					(note ? "" : "") + " &mdash; with crits: " +
+					esc(ladder(row.result)) +
+					' <span class="rr-plain">(without: ' +
+					esc(row.result.textWithoutCrits) + ")</span></div>";
+			}
+		}
+
+		// Incoming: the opponent's single most threatening move.
+		var mine = null;
+		try {
+			mine = createPokemon($("#p1"));
+		} catch (e) {
+			mine = null;
+		}
+		if (mine && mine.name) {
+			var back = analysePair("#p2", mine, true);
+			var worst = null, worstRank = null;
+			if (back) {
+				for (var i = 0; i < back.rows.length; i++) {
+					var r = back.rows[i].result;
+					if (!r) continue;
+					var rank = threatRank(r);
+					if (!worst || rank[0] < worstRank[0] ||
+						(rank[0] === worstRank[0] && rank[1] > worstRank[1])) {
+						worst = back.rows[i];
+						worstRank = rank;
+					}
+				}
+			}
+			if (worst) {
+				var wn = critNote(worst.result.critChance);
+				lines += '<div class="rr-critline rr-incoming"><b>Incoming</b> ' +
+					esc(back.attacker.name) + "'s " + esc(worst.move) +
+					(wn ? ' <b class="rr-crit-flag">' + esc(wn) + "</b>" : "") +
+					" &mdash; " + pct(worst.result.minTurnDamage, worst.result.maxHP) +
+					" - " + pct(worst.result.maxTurnDamage, worst.result.maxHP) +
+					"% &mdash; " + esc(ladder(worst.result)) + "</div>";
+			}
+		}
+		return lines;
 	}
 
 	function teamBar() {
