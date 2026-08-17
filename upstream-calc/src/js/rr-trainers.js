@@ -59,6 +59,9 @@
 	var currentMon = -1;
 	var lastEffects = {applied: [], unhandled: []};
 	var battleListeners = [];
+	var selectionListeners = [];
+	// Which enemy Pokemon are on the field: one index in singles, two in doubles.
+	var facing = [];
 
 	// ------------------------------------------------------------- storage
 
@@ -174,6 +177,11 @@
 
 	// ------------------------------------------------- loading into a slot
 
+	/** The visible text of a panel's set-selector. */
+	function setLabel($slot, id) {
+		$slot.find(".select2-container.set-selector .select2-chosen").first().text(id);
+	}
+
 	/**
 	 * Register a set and select it, letting the page's own handler apply it.
 	 */
@@ -196,12 +204,15 @@
 		// *rendered* select2 label rather than from the input value. Leaving the
 		// label stale makes it read the previous species, conclude we switched
 		// formes, and overwrite the ability with the new species' default. So
-		// update the label before firing change, not after.
-		$slot.find(".select2-chosen").first().text(id);
-		try {
-			$sel.select2("val", id);
-		} catch (e) { /* select2 rebuilds its list lazily; val + change is enough */ }
-		$sel.val(id).change();
+		// update the label before firing change.
+		//
+		// Do NOT ask select2 to set the value: this widget is attached to an
+		// input with no initSelection, so select2 re-renders the label from
+		// nothing and puts the previous text back, which is what left panels
+		// reading "Chillet" while showing another Pokemon's stats.
+		setLabel($slot, id);
+		$sel.change();
+		setLabel($slot, id);
 
 		// Safety net: several upstream paths reset the ability while applying a
 		// set (one of them via a selector typo, ".abilities"), so assert it.
@@ -780,6 +791,7 @@
 		$("#rr-battles").on("click", ".rr-battle", function () {
 			currentBattle = findBattle($(this).data("id"));
 			currentMon = -1;
+			facing = [];
 			lastEffects = applyBattleEffects(currentBattle);
 			render();
 			for (var i = 0; i < battleListeners.length; i++) {
@@ -789,10 +801,7 @@
 
 		$("#rr-detail").on("click", ".rr-chip", function () {
 			if (!currentBattle) return;
-			currentMon = ~~$(this).data("mon");
-			$("#rr-detail .rr-chip").removeClass("rr-on");
-			$(this).addClass("rr-on");
-			loadEnemy(currentBattle, currentBattle.team[currentMon]);
+			chooseEnemy(~~$(this).data("mon"));
 		});
 
 		$("#rr-mgm").change(function () {
@@ -852,6 +861,53 @@
 		}
 	}
 
+	/** How many opponents are on the field at once. */
+	function facingCapacity() {
+		return (typeof window.RRDoubles !== "undefined" &&
+			window.RRDoubles.isActive()) ? 2 : 1;
+	}
+
+	/**
+	 * Click a Pokemon to put it on the field; click it again to take it off.
+	 * In doubles two can be up at once, and the oldest gives way to a third.
+	 */
+	function chooseEnemy(index) {
+		var capacity = facingCapacity();
+		var at = facing.indexOf(index);
+		if (at >= 0 && capacity > 1) {
+			// In doubles a second click takes it back off the field. In singles
+			// there is nothing to take it off for, so clicking just selects.
+			facing.splice(at, 1);
+		} else if (at < 0) {
+			facing.push(index);
+			while (facing.length > capacity) facing.shift();
+		}
+		currentMon = facing.length ? facing[0] : -1;
+
+		if (facing.length) {
+			loadEnemy(currentBattle, currentBattle.team[facing[0]]);
+		}
+		markChips();
+		for (var i = 0; i < selectionListeners.length; i++) {
+			try {
+				selectionListeners[i](currentBattle, facing.slice());
+			} catch (e) { /* isolate */ }
+		}
+	}
+
+	/** Show which chips are on the field, and in which slot. */
+	function markChips() {
+		$("#rr-detail .rr-chip").each(function () {
+			var index = ~~$(this).data("mon");
+			var slot = facing.indexOf(index);
+			$(this).toggleClass("rr-on", slot >= 0);
+			$(this).find(".rr-slot").remove();
+			if (slot >= 0 && facingCapacity() > 1) {
+				$(this).append('<span class="rr-slot">' + (slot + 1) + "</span>");
+			}
+		});
+	}
+
 	/** True when the sheet flags this battle as a double battle. */
 	function isDoublesBattle(battle) {
 		if (!battle || !battle.effects) return false;
@@ -889,7 +945,19 @@
 		resolveLevel: resolveLevel,
 		levelLabel: levelLabel,
 		isDoubles: isDoublesBattle,
-		onBattleChange: function (fn) { battleListeners.push(fn); }
+		onBattleChange: function (fn) { battleListeners.push(fn); },
+		onFacingChange: function (fn) { selectionListeners.push(fn); },
+		getFacing: function () { return facing.slice(); },
+		setFacing: function (list) {
+			// Slices to the current capacity, so leaving doubles drops the
+			// second Pokemon instead of leaving it selected but off the board.
+			facing = list.slice(0, facingCapacity());
+			markChips();
+			if (facing.length && currentBattle) {
+				loadEnemy(currentBattle, currentBattle.team[facing[0]]);
+			}
+		},
+		markChips: markChips
 	};
 
 	$(function () {

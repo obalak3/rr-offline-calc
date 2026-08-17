@@ -394,3 +394,12 @@ body.rr-doubles-on .poke-info { float: none; clear: both; margin-bottom: 8px; }
 .rr-aiml { flex: 0 0 auto; margin-right: 2px; }
 
 .rr-aimrow .rr-aiml { white-space: nowrap; overflow: visible; }
+
+#rr-panel .rr-chip { position: relative; }
+#rr-panel .rr-chip .rr-slot {
+	position: absolute; top: -6px; right: -6px;
+	background: var(--rr-accent); color: #fff;
+	border-radius: 50%; width: 15px; height: 15px;
+	font-size: 9px; line-height: 15px; text-align: center; font-weight: 700;
+}
+body.dark-theme #rr-panel .rr-chip .rr-slot { color: #000; }

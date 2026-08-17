@@ -446,6 +446,15 @@ var RRDoubles = (function () {
 		renderSummary(state);
 	}
 
+	/**
+	 * The visible text of a panel's set-selector. Must be set explicitly: this
+	 * select2 sits on an input with no initSelection, so asking select2 to set
+	 * the value re-renders the label from nothing and restores the old text.
+	 */
+	function setLabel(panel, id) {
+		panel.find(".select2-container.set-selector .select2-chosen").first().text(id);
+	}
+
 	/** Load one of the sheet's Pokemon into a panel. */
 	function loadEnemyInto(battle, mon, panelId) {
 		if (!mon || typeof RRTrainers === "undefined" || !RRTrainers.enemySetId) return;
@@ -453,13 +462,14 @@ var RRDoubles = (function () {
 		if (!id) return;
 		var panel = $("#" + panelId);
 		panel.find("input.set-selector").val(id);
-		panel.find(".select2-chosen").first().text(id);
+		setLabel(panel, id);
 		if (panelId === "p2" || panelId === "p1") {
 			// These carry the calculator's own handler; let it do the work.
 			panel.find("input.set-selector").change();
 		} else {
 			applySet(panelId);
 		}
+		setLabel(panel, id);
 	}
 
 	// --------------------------------------------------------------- mode
@@ -474,6 +484,11 @@ var RRDoubles = (function () {
 		$("body").toggleClass("rr-doubles-on", on);
 		$("#rr-mode-doubles").toggleClass("rr-on", on)
 			.text(on ? "Doubles: on" : "Doubles: off");
+		if (typeof RRTrainers !== "undefined" && RRTrainers.setFacing) {
+			// Re-apply under the new capacity: one Pokemon in singles, two in
+			// doubles, so a leftover second pick cannot linger.
+			RRTrainers.setFacing(RRTrainers.getFacing());
+		}
 		refresh();
 	}
 
@@ -503,12 +518,28 @@ var RRDoubles = (function () {
 			if (active) refresh();
 		});
 
+		if (typeof RRTrainers !== "undefined" && RRTrainers.onFacingChange) {
+			RRTrainers.onFacingChange(function (battle, facing) {
+				if (!active || !battle) return;
+				// The trainer panel loads the first pick into Pokemon 2; the
+				// second belongs in Pokemon 4, and an empty second slot clears it.
+				if (facing.length > 1) {
+					loadEnemyInto(battle, battle.team[facing[1]], "p4");
+				} else {
+					$("#p4 input.set-selector").val("");
+					setLabel($("#p4"), "(empty)");
+				}
+				refresh();
+			});
+		}
+
 		if (typeof RRTrainers !== "undefined" && RRTrainers.onBattleChange) {
 			RRTrainers.onBattleChange(function (battle) {
 				var doubles = !!(battle && RRTrainers.isDoubles(battle));
 				setActive(doubles);
 				if (!doubles) return;
-				// Put the first two of the enemy team on the board.
+				// Start on the first two, then follow whatever is picked.
+				RRTrainers.setFacing([0, 1]);
 				loadEnemyInto(battle, battle.team[0], "p2");
 				loadEnemyInto(battle, battle.team[1], "p4");
 				refresh();

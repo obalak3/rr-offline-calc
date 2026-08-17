@@ -82,3 +82,31 @@ then. A panel created later inherits none of it, and each gap is silent:
   overrides, so a move row still reading "???" calculates the wrong damage.
   Verified after the fix: Expanding Force 80 Psychic, Hyper Voice 90 Normal,
   and the summary agrees with a direct engine call.
+
+## Choosing which two you face
+
+The enemy chip row is now a field selector, not a loader. Clicking a Pokemon
+puts it on the field; in doubles two can be up at once, badged 1 and 2, and a
+third click evicts the oldest. Pick one goes to Pokemon 2, pick two to
+Pokemon 4. In singles clicking simply selects; there is no second slot to take
+a Pokemon off for. Leaving doubles trims the field back to one.
+
+### Fixed here
+
+- **Panels showed the wrong name.** A panel could read "Chillet" while showing
+  Talonflame's stats. The select2 on the set-selector sits on an input with no
+  `initSelection`, so asking select2 to set the value re-renders the label from
+  nothing and restores the previous text. The label is now written directly,
+  before and after the change event -- before, because upstream's forme handler
+  reads the species out of that label.
+- **Selection carried across modes.** Leaving doubles left two Pokemon selected
+  while only one could be on the field, so the next click deselected instead of
+  selecting.
+
+## Still open
+
+- Verify two-slot selection once more end to end; the last run clicked a chip
+  that was already selected, which correctly toggled it off, so the result read
+  as a bug when it was not.
+- My Team still holds the seeded Mienshao/Alakazam test pair; replace with real
+  Pokemon.
