@@ -342,10 +342,17 @@
 		}
 		var generation = calc.Generations.get(gen);
 		var bonus = prefs.focusEnergy ? 2 : 0;
+		// One entry per move slot, including the empty ones. Skipping them would
+		// shift every later move up an index, and callers address these rows by
+		// slot number -- which silently dropped the line for a Pokemon whose
+		// third move was empty.
 		var rows = [];
-		for (var i = 0; i < attacker.moves.length; i++) {
+		for (var i = 0; i < 4; i++) {
 			var move = attacker.moves[i];
-			if (!move || move.name === "(No Move)") continue;
+			if (!move || move.name === "(No Move)") {
+				rows.push({move: "(No Move)", result: null});
+				continue;
+			}
 			var result = null;
 			try {
 				result = RRCritKO.analyse(generation, attacker, defender, move,
@@ -362,18 +369,14 @@
 		return (100 * value / max).toFixed(1);
 	}
 
-	/** "OHKO 7.8% / 2HKO 63.2%" -- the cumulative ladder, crit included. */
+	/**
+	 * The KO result in the calculator's own phrasing ("guaranteed OHKO",
+	 * "63.2% chance to 2HKO"). An earlier compact form -- "2HKO 0.2% / 3HKO
+	 * 100%" -- read backwards and did not match anything else on the page.
+	 */
 	function ladder(result) {
 		if (!result) return "&mdash;";
-		var parts = [];
-		for (var n = 0; n < result.chances.length && parts.length < 3; n++) {
-			var p = result.chances[n];
-			if (p <= 0) continue;
-			var label = n === 0 ? "OHKO" : (n + 1) + "HKO";
-			parts.push(label + " " + (p >= 0.9995 ? "100" : (p * 100).toFixed(1)) + "%");
-			if (p > 0.9995) break;
-		}
-		return parts.length ? parts.join(" / ") : "not a KO";
+		return result.text || "not a KO";
 	}
 
 	// -------------------------------------------------------------- render
@@ -686,7 +689,7 @@
 		return [999, result.maxTurnDamage / Math.max(result.maxHP, 1)];
 	}
 
-	/** "always", "50%", or "" when the rate is the ordinary 1/24. */
+	/** "always crits", "50% crit", or "" at the ordinary 1/24 rate. */
 	function critNote(rate) {
 		if (rate >= 0.999) return "always crits";
 		if (rate > 1 / 24 + 1e-9) return (rate * 100).toFixed(0) + "% crit";
@@ -694,19 +697,45 @@
 	}
 
 	/**
-	 * Crit information as a line or two under the calculator's own result,
-	 * rather than as separate tables.
+	 * One direction of the exchange, as a single sentence.
 	 *
-	 * The stock result line already gives the crit-free outcome, so what is
-	 * worth adding is the crit rate, what the crits change, and -- the part
-	 * with no home anywhere else -- what the opponent's most dangerous move
-	 * does to you. That is where you find out Giovanni's Honchkrow crits with
-	 * every Night Slash.
+	 * Both directions use this same shape, because a bare "28.1% chance to
+	 * OHKO" never said who was hitting whom. Attacker, move and target are
+	 * always named, so the two lines read as a pair.
+	 */
+	function exchangeLine(label, attackerName, moveName, defenderName, result, extra) {
+		var note = critNote(result.critChance);
+		var html = '<div class="rr-critline' + (extra || "") + '">' +
+			'<b class="rr-dir">' + esc(label) + "</b> " +
+			esc(attackerName) + "'s " + esc(moveName) + " vs. " +
+			esc(defenderName) + " &mdash; " +
+			pct(result.minTurnDamage, result.maxHP) + " - " +
+			pct(result.maxTurnDamage, result.maxHP) + "% &mdash; " +
+			esc(result.text);
+		if (note) {
+			html += ' <b class="rr-crit-flag">' + esc(note) + "</b>";
+		} else {
+			html += ' <span class="rr-plain">(crit ' +
+				(result.critChance * 100).toFixed(1) + "%)</span>";
+		}
+		// Only worth saying when the crits actually move the answer.
+		if (result.text !== result.textWithoutCrits) {
+			html += ' <span class="rr-plain">&mdash; without crits: ' +
+				esc(result.textWithoutCrits) + "</span>";
+		}
+		return html + "</div>";
+	}
+
+	/**
+	 * The exchange in both directions, under the calculator's own result.
+	 *
+	 * The incoming half is the one with no home anywhere else, and is where you
+	 * find out that Giovanni's Honchkrow crits with every Night Slash.
 	 */
 	function critBox() {
 		var lines = "";
 
-		// Outgoing: describe whichever move the calculator is detailing.
+		// Outgoing: whichever move the calculator is currently detailing.
 		var checked = $("input.result-move:checked").attr("id") || "";
 		var side = checked.indexOf("resultMoveR") === 0 ? "#p2" : "#p1";
 		var other = side === "#p1" ? "#p2" : "#p1";
@@ -722,17 +751,12 @@
 			var out = analysePair(side, defender, side === "#p2");
 			var row = out && out.rows[index];
 			if (row && row.result) {
-				var note = critNote(row.result.critChance);
-				lines += '<div class="rr-critline"><b>Crit</b> ' +
-					(note || (row.result.critChance * 100).toFixed(1) + "%") +
-					(note ? "" : "") + " &mdash; with crits: " +
-					esc(ladder(row.result)) +
-					' <span class="rr-plain">(without: ' +
-					esc(row.result.textWithoutCrits) + ")</span></div>";
+				lines += exchangeLine(side === "#p1" ? "You" : "Them",
+					out.attacker.name, row.move, defender.name, row.result, "");
 			}
 		}
 
-		// Incoming: the opponent's single most threatening move.
+		// Incoming: the opponent's most threatening move.
 		var mine = null;
 		try {
 			mine = createPokemon($("#p1"));
@@ -754,14 +778,9 @@
 					}
 				}
 			}
-			if (worst) {
-				var wn = critNote(worst.result.critChance);
-				lines += '<div class="rr-critline rr-incoming"><b>Incoming</b> ' +
-					esc(back.attacker.name) + "'s " + esc(worst.move) +
-					(wn ? ' <b class="rr-crit-flag">' + esc(wn) + "</b>" : "") +
-					" &mdash; " + pct(worst.result.minTurnDamage, worst.result.maxHP) +
-					" - " + pct(worst.result.maxTurnDamage, worst.result.maxHP) +
-					"% &mdash; " + esc(ladder(worst.result)) + "</div>";
+			if (worst && side === "#p1") {
+				lines += exchangeLine("Them", back.attacker.name, worst.move,
+					mine.name, worst.result, " rr-incoming");
 			}
 		}
 		return lines;
@@ -952,6 +971,13 @@
 			team.splice(~~$(this).data("i"), 1);
 			save(STORE_TEAM, team);
 			render();
+		});
+
+		// Switching which move the calculator details does not go through
+		// performCalculations, so the crit lines have to follow it directly or
+		// they keep describing the previously selected move.
+		$(document).on("change", "input.result-move", function () {
+			if (!rendering) $("#rr-crit").html(critBox());
 		});
 
 		// Keep the crit box in step with the calculator's own recalculation.

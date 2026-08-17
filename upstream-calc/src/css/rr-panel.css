@@ -552,3 +552,10 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 #rr-dbl-combined .rr-comb-crit {
 	font-size: .88em; opacity: .75; margin-top: 1px; padding-left: .2em;
 }
+
+/* The two directions read as a pair, so the label is fixed width. */
+.rr-critline .rr-dir {
+	display: inline-block; min-width: 3.4em;
+	text-transform: uppercase; font-size: .8em; letter-spacing: .5px;
+	opacity: .7;
+}
