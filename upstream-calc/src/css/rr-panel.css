@@ -532,3 +532,8 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 /* One place to choose the format: the buttons by the title. The Field's own
    pair still exists and still works, it just is not shown twice. */
 .rr-field-format { display: none !important; }
+
+/* The credits carry real attribution now, so they need to be readable. */
+.credits p { max-width: 60em; margin: 0 0 .6em; }
+.credits ul { max-width: 60em; margin: 0 0 .8em; padding-left: 1.2em; }
+.credits li { margin-bottom: .35em; line-height: 1.45; }
