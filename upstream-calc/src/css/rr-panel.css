@@ -403,3 +403,10 @@ body.rr-doubles-on .poke-info { float: none; clear: both; margin-bottom: 8px; }
 	font-size: 9px; line-height: 15px; text-align: center; font-weight: 700;
 }
 body.dark-theme #rr-panel .rr-chip .rr-slot { color: #000; }
+
+#rr-panel .rr-cap-tag {
+	font-size: 10px; font-weight: 700;
+	color: var(--rr-accent);
+	border: 1px solid var(--rr-accent);
+	border-radius: 3px; padding: 0 4px; margin-left: 4px;
+}

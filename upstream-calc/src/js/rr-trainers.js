@@ -53,7 +53,7 @@
 
 	var data = null;
 	var prefs = {mgm: false, myLevel: 100, focusEnergy: false, segment: 0,
-		applyEffects: true};
+		applyEffects: true, followCap: true};
 	var team = [];
 	var currentBattle = null;
 	var currentMon = -1;
@@ -560,7 +560,11 @@
 			return '<div class="rr-empty">Pick a battle to load its team.</div>';
 		}
 		var battle = currentBattle;
+		var cap = levelCapFor(battle);
 		var html = '<div class="rr-detail-head"><b>' + esc(battle.trainer) + '</b>';
+		if (cap !== null) {
+			html += ' <span class="rr-cap-tag">Lv cap ' + cap + '</span>';
+		}
 		if (battle.title) html += ' <span class="rr-bs">' + esc(battle.title) + '</span>';
 		if (battle.variant) html += ' <span class="rr-bv">' + esc(battle.variant) + '</span>';
 		html += '</div>';
@@ -751,6 +755,8 @@
 					'<input type="checkbox" id="rr-mgm" /> Minimal Grinding Mode</label>' +
 				'<label title="Used for rematch and postgame trainers, whose levels track yours">' +
 					'My highest Lv <input type="number" id="rr-mylevel" min="1" max="250" /></label>' +
+				'<label title="Assume you are at the level cap for whichever battle you pick">' +
+					'<input type="checkbox" id="rr-followcap" /> at cap</label>' +
 				'<label title="Focus Energy or Dire Hit: +2 crit stages">' +
 					'<input type="checkbox" id="rr-focus" /> Focus Energy</label>' +
 				'<label title="Set weather, terrain and stat boosts from the ' +
@@ -792,6 +798,7 @@
 			currentBattle = findBattle($(this).data("id"));
 			currentMon = -1;
 			facing = [];
+			applyLevelCap(currentBattle);
 			lastEffects = applyBattleEffects(currentBattle);
 			render();
 			for (var i = 0; i < battleListeners.length; i++) {
@@ -807,6 +814,7 @@
 		$("#rr-mgm").change(function () {
 			prefs.mgm = $(this).prop("checked");
 			save(STORE_PREFS, prefs);
+			reloadFacing();
 			render();
 		});
 
@@ -823,9 +831,17 @@
 			render();
 		});
 
+		$("#rr-followcap").change(function () {
+			prefs.followCap = $(this).prop("checked");
+			save(STORE_PREFS, prefs);
+			applyLevelCap(currentBattle);
+			render();
+		});
+
 		$("#rr-mylevel").on("change input", function () {
 			prefs.myLevel = Math.max(1, Math.min(250, ~~$(this).val() || 100));
 			save(STORE_PREFS, prefs);
+			reloadFacing();
 			render();
 		});
 
@@ -861,6 +877,13 @@
 		}
 	}
 
+	/** Re-apply whoever is on the field, after something changed how they load. */
+	function reloadFacing() {
+		if (!currentBattle || !facing.length) return;
+		loadEnemy(currentBattle, currentBattle.team[facing[0]]);
+		notifyFacing();
+	}
+
 	/** How many opponents are on the field at once. */
 	function facingCapacity() {
 		return (typeof window.RRDoubles !== "undefined" &&
@@ -888,6 +911,10 @@
 			loadEnemy(currentBattle, currentBattle.team[facing[0]]);
 		}
 		markChips();
+		notifyFacing();
+	}
+
+	function notifyFacing() {
 		for (var i = 0; i < selectionListeners.length; i++) {
 			try {
 				selectionListeners[i](currentBattle, facing.slice());
@@ -906,6 +933,56 @@
 				$(this).append('<span class="rr-slot">' + (slot + 1) + "</span>");
 			}
 		});
+	}
+
+	/**
+	 * battle id -> the level cap in force when you fight it.
+	 *
+	 * The caps live on the Trainer Order tab, one per entry, so they reach the
+	 * battles through the same matching the Story Order view uses. Built once
+	 * and reused; a battle the order tab never lists simply has no cap.
+	 */
+	var capByBattle = null;
+
+	function levelCapFor(battle) {
+		if (!battle) return null;
+		if (!capByBattle) {
+			capByBattle = {};
+			var order = data.trainerOrder || [];
+			for (var i = 0; i < order.length; i++) {
+				if (order[i].levelCap === null || order[i].levelCap === undefined) continue;
+				var matched = matchOrderEntry(order[i]);
+				if (matched && capByBattle[matched.id] === undefined) {
+					capByBattle[matched.id] = order[i].levelCap;
+				}
+			}
+		}
+		var cap = capByBattle[battle.id];
+		if (cap !== undefined) return cap;
+		// The Trainer Order tab stops at the Elite Four. The sheet's own notes
+		// put the postgame cap at 100, so use that rather than leaving the
+		// player's level at whatever the last battle happened to set.
+		for (var s = 0; s < data.segments.length; s++) {
+			if (!/postgame/i.test(data.segments[s].name)) continue;
+			var list = data.segments[s].battles;
+			for (var b = 0; b < list.length; b++) {
+				if (list[b].id === battle.id) return 100;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Assume the player is sitting at the cap. Levels for rematch and postgame
+	 * trainers are written relative to your own, so this is what makes those
+	 * battles show real numbers without typing a level in first.
+	 */
+	function applyLevelCap(battle) {
+		var cap = levelCapFor(battle);
+		if (cap === null || !prefs.followCap) return;
+		prefs.myLevel = cap;
+		$("#rr-mylevel").val(cap);
+		save(STORE_PREFS, prefs);
 	}
 
 	/** True when the sheet flags this battle as a double battle. */
@@ -956,6 +1033,10 @@
 			if (facing.length && currentBattle) {
 				loadEnemy(currentBattle, currentBattle.team[facing[0]]);
 			}
+			// Must notify: the second slot lives in the doubles view, so without
+			// this it keeps whatever it had -- which meant Minimal Grinding Mode
+			// zeroed Pokemon 2's EVs and left Pokemon 4's alone.
+			notifyFacing();
 		},
 		markChips: markChips
 	};
@@ -970,6 +1051,7 @@
 		$("#rr-mgm").prop("checked", !!prefs.mgm);
 		$("#rr-focus").prop("checked", !!prefs.focusEnergy);
 		$("#rr-effects").prop("checked", prefs.applyEffects !== false);
+		$("#rr-followcap").prop("checked", prefs.followCap !== false);
 		$("#rr-mylevel").val(prefs.myLevel);
 		bind();
 		render();

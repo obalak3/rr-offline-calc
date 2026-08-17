@@ -103,10 +103,20 @@ a Pokemon off for. Leaving doubles trims the field back to one.
   while only one could be on the field, so the next click deselected instead of
   selecting.
 
+## Level caps
+
+The player is assumed to be sitting at the level cap for whichever battle is
+selected, which is what makes rematch and postgame trainers (whose levels are
+written relative to yours) show real numbers without typing a level first. The
+caps come from the Trainer Order tab and reach battles through the same matching
+the Story Order view uses; the cap is shown next to the trainer's name. An "at
+cap" checkbox turns it off, and the level stays editable either way.
+
+The order tab stops at the Elite Four, so Postgame battles fall back to 100,
+per the sheet's own "Post Game (100)" note. Verified: Brock 15, Misty 27,
+Koga 68, Sabrina 59, Postgame 100. Rematch caps (Brock 59, Erika 68) are the
+sheet's own values, not a mis-mapping.
+
 ## Still open
 
-- Verify two-slot selection once more end to end; the last run clicked a chip
-  that was already selected, which correctly toggled it off, so the result read
-  as a bug when it was not.
-- My Team still holds the seeded Mienshao/Alakazam test pair; replace with real
-  Pokemon.
+- My Team is empty; add real Pokemon to make the numbers meaningful.
