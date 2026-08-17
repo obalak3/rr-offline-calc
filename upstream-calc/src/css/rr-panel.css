@@ -349,7 +349,7 @@ body.dark-theme #rr-doubles {
 
 #rr-doubles .rr-head {
 	display: flex; align-items: center; gap: 10px;
-	padding: 7px 10px;
+	padding: 6px 10px;
 	background: var(--rr-bg-alt);
 	border-bottom: 1px solid var(--rr-line);
 }
@@ -359,40 +359,77 @@ body.dark-theme #rr-doubles {
 	font: inherit; cursor: pointer;
 	border: 1px solid var(--rr-line);
 	background: var(--rr-bg); color: var(--rr-text);
-	border-radius: 4px; padding: 3px 8px;
+	border-radius: 4px; padding: 2px 7px;
 }
 #rr-doubles button:hover { border-color: var(--rr-accent); }
-#rr-doubles .rr-dbl-body { padding: 8px 10px; }
-
-#rr-doubles .rr-dbl-slots { display: flex; gap: 22px; flex-wrap: wrap; }
-#rr-doubles .rr-dbl-side { display: flex; align-items: center; gap: 6px; }
 #rr-doubles select {
-	font: inherit;
+	font: inherit; width: 100%;
 	background: var(--rr-bg); color: var(--rr-text);
 	border: 1px solid var(--rr-line); border-radius: 4px; padding: 2px 4px;
 }
 
-#rr-doubles .rr-dbl-format {
-	margin: 9px 0 4px; font-weight: 700; color: var(--rr-accent);
-}
-#rr-doubles .rr-dbl-h {
-	margin: 12px 0 5px; font-weight: 700;
-	text-transform: uppercase; font-size: 10px; letter-spacing: .4px;
-	color: var(--rr-muted);
-	border-top: 1px solid var(--rr-line); padding-top: 8px;
+#rr-doubles #rr-dbl-body { padding: 8px 10px; }
+#rr-doubles .rr-board { display: flex; gap: 10px; }
+#rr-doubles .rr-col { flex: 1 1 0; min-width: 0; }
+#rr-doubles .rr-colh {
+	font-size: 10px; text-transform: uppercase; letter-spacing: .4px;
+	color: var(--rr-muted); font-weight: 700; margin-bottom: 4px;
 }
 
-#rr-doubles .rr-dbl-target {
+#rr-doubles .rr-card {
 	border: 1px solid var(--rr-line); border-radius: 5px;
-	padding: 6px 8px; margin-bottom: 6px;
+	padding: 5px 6px; margin-bottom: 6px;
 }
-#rr-doubles .rr-dbl-target.rr-danger {
+#rr-doubles .rr-card.rr-off { opacity: .5; }
+
+#rr-doubles .rr-aim { display: flex; gap: 4px; margin: 5px 0 4px; }
+#rr-doubles .rr-tgt { font-size: 10px; padding: 1px 6px; color: var(--rr-muted); }
+#rr-doubles .rr-tgt.rr-on {
+	background: var(--rr-accent); border-color: var(--rr-accent); color: #fff;
+}
+
+#rr-doubles .rr-moves { display: flex; flex-direction: column; gap: 2px; }
+#rr-doubles .rr-mv {
+	display: flex; align-items: baseline; gap: 8px;
+	text-align: left; width: 100%;
+	border-color: transparent; background: transparent;
+	padding: 2px 5px;
+}
+#rr-doubles .rr-mv:hover { background: var(--rr-bg-alt); }
+#rr-doubles .rr-mv.rr-on {
+	background: var(--rr-accent-soft); border-color: var(--rr-accent);
+}
+#rr-doubles .rr-mn { flex: 1 1 auto; min-width: 0; }
+#rr-doubles .rr-mn i {
+	font-style: normal; font-size: 9px; color: var(--rr-muted);
+	text-transform: uppercase; margin-left: 4px;
+}
+#rr-doubles .rr-md { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#rr-doubles .rr-mk {
+	color: var(--rr-accent); white-space: nowrap;
+	min-width: 62px; text-align: right;
+}
+
+#rr-doubles .rr-sums {
+	margin-top: 9px; border-top: 1px solid var(--rr-line); padding-top: 7px;
+}
+#rr-doubles .rr-fmt { font-weight: 700; color: var(--rr-accent); margin-right: 8px; }
+#rr-doubles .rr-fmt i {
+	font-style: normal; font-weight: 400; font-size: 10px; color: var(--rr-muted);
+}
+#rr-doubles .rr-sum {
+	display: flex; align-items: baseline; gap: 10px;
+	padding: 3px 6px; margin-top: 4px; border-radius: 4px;
+	border: 1px solid transparent;
+}
+#rr-doubles .rr-sum.rr-danger {
 	border-color: var(--rr-accent); background: var(--rr-accent-soft);
 }
-#rr-doubles .rr-dbl-name { font-weight: 700; font-size: 13px; }
-#rr-doubles .rr-dbl-best { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin: 3px 0 5px; }
-#rr-doubles .rr-dbl-ko { font-weight: 700; color: var(--rr-accent); }
-#rr-doubles .rr-dbl-best .rr-dmg { font-weight: 600; }
-#rr-doubles .rr-note, #rr-doubles .rr-empty { color: var(--rr-muted); font-size: 11px; }
-#rr-doubles .rr-dbl-more { font-size: 10px; padding: 2px 6px; }
-#rr-doubles .rr-matrix { margin-top: 6px; }
+#rr-doubles .rr-st { font-weight: 700; min-width: 96px; }
+#rr-doubles .rr-sd { font-variant-numeric: tabular-nums; }
+#rr-doubles .rr-sk { font-weight: 700; color: var(--rr-accent); min-width: 74px; }
+#rr-doubles .rr-sf { color: var(--rr-muted); font-size: 11px; }
+
+@media (max-width: 780px) {
+	#rr-doubles .rr-board { flex-direction: column; }
+}

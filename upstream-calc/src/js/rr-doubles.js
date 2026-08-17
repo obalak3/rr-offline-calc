@@ -1,33 +1,39 @@
 /**
- * rr-doubles.js -- a double battle view.
+ * rr-doubles.js -- a double battle board.
  *
- * The stock calculator has two slots, which cannot answer the question a
- * doubles turn actually poses: if BOTH opponents attack the same Pokemon of
- * mine, does it die? Reading two single-target results side by side does not
- * tell you, because each attack rolls damage and crits independently -- the
- * answer is a convolution, handled by RRCritKO.analyseFocusFire.
+ * Laid out like the calculator itself: your side on the left, theirs on the
+ * right, with the second Pokemon stacked under the first. Each card lists its
+ * moves with the damage they would do to that card's current target; click a
+ * move to choose it, and the summary shows what the chosen moves do together.
  *
- * Four slots, any of which may be empty (fainted), so 2v2, 2v1 and 1v1 all
- * work. Emptying a slot changes real damage numbers, because the spread
- * penalty depends on how many Pokemon a move actually hits rather than on the
- * format -- see RRCritKO.targetsHit.
+ * The point is the combined result. Two attacks on one Pokemon are not a sum
+ * of averages -- each rolls damage and crits independently, so the chance the
+ * total is lethal is a convolution (RRCritKO.koChancesMulti).
  *
- * Slots are filled from the trainer panel's state (window.RRTrainers) so level
- * scaling, Minimal Grinding Mode and the enemy dataset stay defined in one
- * place.
+ * Any slot can be empty, giving 2v1 and 1v1. That changes real numbers: the
+ * spread penalty follows how many Pokemon a move actually hits, not the
+ * format, so a Rock Slide into a lone target hits full while an Earthquake
+ * still hits soft if the attacker's own partner is alive (RRCritKO.targetsHit).
+ *
+ * Slots come from window.RRTrainers, so level scaling, Minimal Grinding Mode
+ * and the enemy dataset stay defined in the trainer panel alone.
  */
 /* global $, calc, gen, RRCritKO, RRTrainers */
 (function () {
 	"use strict";
 
-	var STAT_MAP = {hp: "hp", atk: "at", def: "df", spa: "spa", spd: "spd", spe: "spe"};
-	var EMPTY = "";
+	var STATS = ["hp", "atk", "def", "spa", "spd", "spe"];
 
-	var mine = [null, null];      // indices into the saved team, or null
-	var theirs = [null, null];    // indices into the current battle's team
-	var expanded = null;          // which target's full grid is open
+	// pick: index into the source list (null = empty). move: chosen move index.
+	// target: which slot on the other side it is aimed at.
+	// `move: null` means "nothing chosen yet", which auto-selects the hardest
+	// hitting move against the current target. A click pins the choice.
+	var side = {
+		mine: [{pick: 0, move: null, target: 0}, {pick: 1, move: null, target: 1}],
+		theirs: [{pick: 0, move: null, target: 0}, {pick: 1, move: null, target: 0}]
+	};
 
-	function generation() {
+	function g() {
 		return calc.Generations.get(typeof gen === "number" ? gen : 9);
 	}
 
@@ -37,70 +43,51 @@
 			.replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 	}
 
-	// ------------------------------------------------------------ building
+	function pct(value, max) {
+		return (100 * value / max).toFixed(1);
+	}
 
-	/** A saved team member -> a calc.Pokemon. */
+	// ------------------------------------------------------------- building
+
 	function myPokemon(member) {
 		if (!member) return null;
-		var evs = {}, ivs = {};
-		for (var key in STAT_MAP) {
-			if (member.evs && member.evs[key] !== undefined) evs[key] = member.evs[key];
-			if (member.ivs && member.ivs[key] !== undefined) ivs[key] = member.ivs[key];
+		var evs = {}, ivs = {}, i;
+		for (i = 0; i < STATS.length; i++) {
+			if (member.evs && member.evs[STATS[i]] !== undefined) {
+				evs[STATS[i]] = member.evs[STATS[i]];
+			}
+			if (member.ivs && member.ivs[STATS[i]] !== undefined) {
+				ivs[STATS[i]] = member.ivs[STATS[i]];
+			}
 		}
 		var options = {
 			level: member.level || 100,
 			nature: member.nature || "Serious",
-			evs: evs,
-			ivs: ivs,
+			evs: evs, ivs: ivs,
 			moves: (member.moves || []).slice(0, 4)
 		};
 		if (member.ability) options.ability = member.ability;
 		if (member.item) options.item = member.item;
 		try {
-			return new calc.Pokemon(generation(), member.species, options);
+			return new calc.Pokemon(g(), member.species, options);
 		} catch (e) {
 			return null;
 		}
 	}
 
 	/**
-	 * calc.Pokemon stores `moves` exactly as handed to it, so a Pokemon built
-	 * from names holds strings rather than Move objects (the calculator's own
-	 * createPokemon builds the objects separately). Accept either.
+	 * calc.Pokemon keeps whatever moves array it was handed, so a Pokemon built
+	 * from names holds strings rather than Move objects. Accept either.
 	 */
-	function asMove(g, move) {
+	function asMove(move) {
 		if (!move) return null;
 		if (typeof move !== "string") return move;
 		if (move === "(No Move)") return null;
 		try {
-			return new calc.Move(g, move);
+			return new calc.Move(g(), move);
 		} catch (e) {
 			return null;
 		}
-	}
-
-	function board() {
-		var battle = RRTrainers.getBattle();
-		var team = RRTrainers.getTeam();
-		var out = {mine: [], theirs: [], myMembers: [], theirMons: []};
-		var i;
-		for (i = 0; i < 2; i++) {
-			var member = mine[i] === null ? null : team[mine[i]];
-			out.myMembers.push(member || null);
-			out.mine.push(member ? myPokemon(member) : null);
-		}
-		for (i = 0; i < 2; i++) {
-			var mon = (battle && theirs[i] !== null) ? battle.team[theirs[i]] : null;
-			out.theirMons.push(mon || null);
-			out.theirs.push(mon ? RRTrainers.buildEnemy(battle, mon) : null);
-		}
-		return out;
-	}
-
-	function living(list) {
-		var n = 0;
-		for (var i = 0; i < list.length; i++) if (list[i]) n++;
-		return n;
 	}
 
 	function baseField() {
@@ -115,342 +102,256 @@
 		return field;
 	}
 
-	/**
-	 * Every damage roll one attacker's moves would do to one target, under the
-	 * game type that matches how many Pokemon each move really hits.
-	 */
-	function shotsAgainst(attacker, defender, livingFoes, livingAllies) {
+	/** Everything on the board right now. */
+	function read() {
+		var battle = RRTrainers.getBattle();
+		var team = RRTrainers.getTeam();
+		var state = {battle: battle, mine: [], theirs: [], names: {mine: [], theirs: []}};
+		var i;
+		for (i = 0; i < 2; i++) {
+			var member = side.mine[i].pick === null ? null : team[side.mine[i].pick];
+			state.mine.push(member ? myPokemon(member) : null);
+			state.names.mine.push(member ? member.species : null);
+		}
+		for (i = 0; i < 2; i++) {
+			var mon = (battle && side.theirs[i].pick !== null)
+				? battle.team[side.theirs[i].pick] : null;
+			state.theirs.push(mon ? RRTrainers.buildEnemy(battle, mon) : null);
+			state.names.theirs.push(mon ? mon.species : null);
+		}
+		state.myLiving = state.mine[0] ? (state.mine[1] ? 2 : 1) : (state.mine[1] ? 1 : 0);
+		state.theirLiving = state.theirs[0] ? (state.theirs[1] ? 2 : 1) : (state.theirs[1] ? 1 : 0);
+		return state;
+	}
+
+	/** First living slot on a side, so targets never point at nothing. */
+	function firstLiving(list) {
+		return list[0] ? 0 : (list[1] ? 1 : -1);
+	}
+
+	/** Damage rolls for one attacker's moves against one defender. */
+	function shots(attacker, defender, foes, allies) {
 		if (!attacker || !defender) return [];
-		var g = generation();
 		var field = baseField();
+		var bonus = RRTrainers.getPrefs().focusEnergy ? 2 : 0;
 		var out = [];
 		for (var i = 0; i < attacker.moves.length; i++) {
-			var move = asMove(g, attacker.moves[i]);
-			if (!move || move.name === "(No Move)") continue;
-			var moveField = RRCritKO.fieldForMove(field, move, livingFoes, livingAllies);
-			var shot = RRCritKO.shotFor(g, attacker, defender, move, moveField,
-				RRTrainers.getPrefs().focusEnergy ? 2 : 0);
-			if (shot) {
-				shot.spread = RRCritKO.targetsHit(move, livingFoes, livingAllies) >= 2;
-				out.push(shot);
-			} else {
-				out.push({move: move.name, dead: true});
-			}
+			var move = asMove(attacker.moves[i]);
+			if (!move) { out.push(null); continue; }
+			var spread = RRCritKO.targetsHit(move, foes, allies) >= 2;
+			var moveField = RRCritKO.fieldForMove(field, move, foes, allies);
+			var shot = RRCritKO.shotFor(g(), attacker, defender, move, moveField, bonus);
+			if (shot) shot.spread = spread;
+			out.push(shot || {move: move.name, dead: true, spread: spread});
 		}
 		return out;
 	}
 
-	function pct(value, max) {
-		return (100 * value / max).toFixed(1);
-	}
-
-	function chanceText(chances) {
-		if (!chances || !chances.length) return "no KO";
+	function koText(chances) {
+		if (!chances || !chances.length) return "";
 		for (var n = 0; n < chances.length; n++) {
 			if (chances[n] <= 0) continue;
 			var label = n === 0 ? "OHKO" : (n + 1) + "HKO";
-			if (chances[n] > 0.9995) return "guaranteed " + label;
-			return (chances[n] * 100).toFixed(1) + "% " + label;
+			if (chances[n] > 0.9995) return label;
+			return (chances[n] * 100).toFixed(0) + "% " + label;
 		}
-		return "no KO";
+		return "";
 	}
 
-	// ------------------------------------------------------- the core view
+	// --------------------------------------------------------------- render
 
-	/**
-	 * For each of my Pokemon: what is the worst the opponents can do to it if
-	 * they both aim at it this turn, and with which pair of moves.
-	 */
-	function incoming(state) {
-		var foes = living(state.mine);          // targets available to them
-		var theirLiving = living(state.theirs);
-		if (!theirLiving || !foes) return null;
+	function card(which, slot, state) {
+		var isMine = which === "mine";
+		var me = state[which][slot];
+		var conf = side[which][slot];
+		var foeList = isMine ? state.theirs : state.mine;
+		var foeNames = isMine ? state.names.theirs : state.names.mine;
+		var foes = isMine ? state.theirLiving : state.myLiving;
+		var allies = (isMine ? state.myLiving : state.theirLiving) - 1;
 
-		var rows = [];
-		for (var t = 0; t < 2; t++) {
-			var target = state.mine[t];
-			if (!target) continue;
+		var source = isMine ? RRTrainers.getTeam()
+			: (state.battle ? state.battle.team : []);
+		var html = '<div class="rr-card' + (me ? "" : " rr-off") + '">';
 
-			// Each opponent's options against this target. Their partner count
-			// is their own living side minus the attacker.
-			var options = [];
-			for (var e = 0; e < 2; e++) {
-				if (!state.theirs[e]) { options.push(null); continue; }
-				options.push(shotsAgainst(state.theirs[e], target, foes,
-					theirLiving - 1));
-			}
-
-			var hp = target.curHP();
-			var grid = [];
-			var best = null;
-			var a = options[0], b = options[1];
-
-			function consider(shots, labels) {
-				var usable = [];
-				for (var s = 0; s < shots.length; s++) {
-					if (shots[s] && !shots[s].dead) usable.push(shots[s]);
-				}
-				var chances = usable.length
-					? RRCritKO.koChancesMulti(usable, hp, 4) : [];
-				var entry = {
-					labels: labels,
-					chances: chances,
-					text: chanceText(chances),
-					turn1: chances.length ? chances[0] : 0,
-					min: 0, max: 0, spread: false
-				};
-				for (var u = 0; u < usable.length; u++) {
-					entry.min += usable[u].min;
-					entry.max += usable[u].max;
-					if (usable[u].spread) entry.spread = true;
-				}
-				grid.push(entry);
-				if (!best || entry.turn1 > best.turn1 ||
-					(entry.turn1 === best.turn1 && entry.max > best.max)) {
-					best = entry;
-				}
-			}
-
-			if (a && b) {
-				for (var i = 0; i < a.length; i++) {
-					for (var j = 0; j < b.length; j++) {
-						if (a[i].dead && b[j].dead) continue;
-						consider([a[i], b[j]],
-							[state.theirMons[0].species + " " + a[i].move,
-								state.theirMons[1].species + " " + b[j].move]);
-					}
-				}
-			} else {
-				var only = a || b;
-				var who = a ? 0 : 1;
-				if (only) {
-					for (var k = 0; k < only.length; k++) {
-						if (only[k].dead) continue;
-						consider([only[k]],
-							[state.theirMons[who].species + " " + only[k].move]);
-					}
-				}
-			}
-
-			if (grid.length) {
-				rows.push({
-					index: t,
-					name: target.name,
-					hp: hp,
-					maxHP: target.maxHP(),
-					best: best,
-					grid: grid.sort(function (x, y) { return y.turn1 - x.turn1; })
-				});
-			}
+		html += '<select class="rr-pick" data-side="' + which + '" data-slot="' + slot + '">' +
+			'<option value="">(empty)</option>';
+		for (var s = 0; s < source.length; s++) {
+			var label = isMine
+				? source[s].species + " Lv" + source[s].level
+				: source[s].species + " Lv" + RRTrainers.resolveLevel(source[s]);
+			html += '<option value="' + s + '"' +
+				(conf.pick === s ? " selected" : "") + '>' + esc(label) + '</option>';
 		}
-		return rows;
-	}
+		html += '</select>';
 
-	/** My moves against each of their Pokemon, one attacker at a time. */
-	function outgoing(state) {
-		var theirLiving = living(state.theirs);
-		var myLiving = living(state.mine);
-		if (!theirLiving || !myLiving) return [];
-		var rows = [];
-		for (var m = 0; m < 2; m++) {
-			if (!state.mine[m]) continue;
-			for (var t = 0; t < 2; t++) {
-				if (!state.theirs[t]) continue;
-				var shots = shotsAgainst(state.mine[m], state.theirs[t],
-					theirLiving, myLiving - 1);
-				var hp = state.theirs[t].curHP();
-				for (var s = 0; s < shots.length; s++) {
-					if (shots[s].dead) continue;
-					var chances = RRCritKO.koChancesMulti([shots[s]], hp, 4);
-					rows.push({
-						attacker: state.mine[m].name,
-						move: shots[s].move,
-						target: state.theirs[t].name,
-						spread: shots[s].spread,
-						min: shots[s].min,
-						max: shots[s].max,
-						maxHP: state.theirs[t].maxHP(),
-						text: chanceText(chances)
-					});
-				}
-			}
-		}
-		return rows;
-	}
+		if (!me) return html + '</div>';
 
-	// ------------------------------------------------------------- render
-
-	function slotOptions(list, selected, labeller) {
-		var html = '<option value="">(empty / fainted)</option>';
-		for (var i = 0; i < list.length; i++) {
-			html += '<option value="' + i + '"' +
-				(selected === i ? " selected" : "") + '>' +
-				esc(labeller(list[i], i)) + '</option>';
+		// Where this Pokemon is pointing.
+		if (conf.target === null || !foeList[conf.target]) {
+			conf.target = firstLiving(foeList);
 		}
-		return html;
-	}
-
-	function renderSlots() {
-		var battle = RRTrainers.getBattle();
-		var team = RRTrainers.getTeam();
-		var html = '<div class="rr-dbl-side"><b>Your side</b>';
-		for (var i = 0; i < 2; i++) {
-			html += '<select class="rr-dbl-mine" data-i="' + i + '">' +
-				slotOptions(team, mine[i], function (m) {
-					return m.species + " Lv" + m.level;
-				}) + '</select>';
-		}
-		if (!team.length) {
-			html += '<span class="rr-note">Save Pokemon to My Team first.</span>';
-		}
-		html += '</div><div class="rr-dbl-side"><b>Opponent</b>';
-		var enemies = battle ? battle.team : [];
-		for (var j = 0; j < 2; j++) {
-			html += '<select class="rr-dbl-theirs" data-i="' + j + '">' +
-				slotOptions(enemies, theirs[j], function (m) {
-					return m.species + " Lv" + RRTrainers.resolveLevel(m);
-				}) + '</select>';
-		}
-		if (!battle) {
-			html += '<span class="rr-note">Pick a battle above.</span>';
-		}
-		return html + '</div>';
-	}
-
-	function renderResults() {
-		var state = board();
-		var myLiving = living(state.mine), theirLiving = living(state.theirs);
-		if (!myLiving || !theirLiving) {
-			return '<div class="rr-empty">Fill at least one slot on each side.</div>';
-		}
-
-		var html = '<div class="rr-dbl-format">' +
-			myLiving + 'v' + theirLiving +
-			(myLiving < 2 || theirLiving < 2
-				? ' <span class="rr-note">spread moves that now hit a single ' +
-					'target deal full damage</span>' : '') +
-			'</div>';
-
-		var rows = incoming(state) || [];
-		html += '<div class="rr-dbl-h">If they both attack one of yours</div>';
-		if (!rows.length) {
-			html += '<div class="rr-empty">Nothing to compute.</div>';
-		}
-		for (var r = 0; r < rows.length; r++) {
-			var row = rows[r];
-			var lethal = row.best && row.best.turn1 > 0;
-			html += '<div class="rr-dbl-target' + (lethal ? " rr-danger" : "") + '">' +
-				'<div class="rr-dbl-name">' + esc(row.name) +
-				' <span class="rr-note">' + row.maxHP + ' HP</span></div>' +
-				'<div class="rr-dbl-best">' +
-				'<span class="rr-dbl-ko">' + esc(row.best.text) + '</span> ' +
-				'<span class="rr-dmg">' + pct(row.best.min, row.maxHP) + ' - ' +
-				pct(row.best.max, row.maxHP) + '%</span>' +
-				'<span class="rr-note">' + esc(row.best.labels.join("  +  ")) +
-				(row.best.spread ? "  (spread)" : "") + '</span></div>' +
-				'<button class="rr-dbl-more" data-t="' + row.index + '">' +
-				(expanded === row.index ? "hide all combinations"
-					: "all " + row.grid.length + " combinations") + '</button>';
-			if (expanded === row.index) {
-				html += '<table class="rr-matrix"><thead><tr><th>Their moves</th>' +
-					'<th>Damage</th><th>KO chance</th></tr></thead><tbody>';
-				for (var g = 0; g < row.grid.length; g++) {
-					var e = row.grid[g];
-					html += '<tr><th>' + esc(e.labels.join(" + ")) +
-						(e.spread ? ' <span class="rr-note">spread</span>' : "") +
-						'</th><td>' + pct(e.min, row.maxHP) + ' - ' +
-						pct(e.max, row.maxHP) + '%</td><td' +
-						(e.turn1 > 0 ? ' class="rr-kill"' : "") + '>' +
-						esc(e.text) + '</td></tr>';
-				}
-				html += '</tbody></table>';
+		if (conf.target >= 0 && foes > 0) {
+			html += '<div class="rr-aim">';
+			for (var f = 0; f < 2; f++) {
+				if (!foeList[f]) continue;
+				html += '<button class="rr-tgt' + (conf.target === f ? " rr-on" : "") +
+					'" data-side="' + which + '" data-slot="' + slot +
+					'" data-target="' + f + '">' + esc(foeNames[f]) + '</button>';
 			}
 			html += '</div>';
 		}
 
-		var out = outgoing(state);
-		if (out.length) {
-			html += '<div class="rr-dbl-h">Your moves</div>' +
-				'<div class="rr-matrix-wrap"><table class="rr-matrix"><thead><tr>' +
-				'<th>Attacker</th><th>Move</th><th>Target</th>' +
-				'<th>Damage</th><th>KO chance</th></tr></thead><tbody>';
-			for (var o = 0; o < out.length; o++) {
-				var x = out[o];
-				html += '<tr><th>' + esc(x.attacker) + '</th><td>' + esc(x.move) +
-					(x.spread ? ' <span class="rr-note">spread</span>' : "") +
-					'</td><td>' + esc(x.target) + '</td><td>' +
-					pct(x.min, x.maxHP) + ' - ' + pct(x.max, x.maxHP) + '%</td>' +
-					'<td class="rr-kill">' + esc(x.text) + '</td></tr>';
+		var target = foeList[conf.target];
+		var list = shots(me, target, foes, allies);
+		var maxHP = target ? target.maxHP() : 0;
+
+		// Until the user picks, show the move that threatens this target most:
+		// defaulting to slot 0 can land on Trick Room and say nothing.
+		if (conf.move === null || !list[conf.move] || list[conf.move].dead) {
+			var best = -1, bestMax = 0;
+			for (var b = 0; b < list.length; b++) {
+				if (list[b] && !list[b].dead && list[b].max > bestMax) {
+					bestMax = list[b].max;
+					best = b;
+				}
 			}
-			html += '</tbody></table></div>';
+			conf.move = best >= 0 ? best : (conf.move === null ? -1 : conf.move);
 		}
+		html += '<div class="rr-moves">';
+		for (var i = 0; i < list.length; i++) {
+			var shot = list[i];
+			if (!shot) continue;
+			var chosen = conf.move === i;
+			html += '<button class="rr-mv' + (chosen ? " rr-on" : "") +
+				'" data-side="' + which + '" data-slot="' + slot +
+				'" data-move="' + i + '">' +
+				'<span class="rr-mn">' + esc(shot.move) +
+				(shot.spread ? '<i>spread</i>' : "") + '</span>';
+			if (shot.dead) {
+				html += '<span class="rr-md">&mdash;</span>';
+			} else {
+				var solo = RRCritKO.koChancesMulti([shot], target.curHP(), 4);
+				html += '<span class="rr-md">' + pct(shot.min, maxHP) + ' - ' +
+					pct(shot.max, maxHP) + '%</span>' +
+					'<span class="rr-mk">' + esc(koText(solo)) + '</span>';
+			}
+			html += '</button>';
+		}
+		html += '</div></div>';
 		return html;
+	}
+
+	/** What the chosen moves do together, grouped by who they are aimed at. */
+	function summary(state) {
+		var lines = [];
+		var sides = [
+			{from: "theirs", to: "mine", label: "Yours"},
+			{from: "mine", to: "theirs", label: "Theirs"}
+		];
+		for (var s = 0; s < sides.length; s++) {
+			var from = sides[s].from, to = sides[s].to;
+			var attackers = state[from], defenders = state[to];
+			var foes = to === "mine" ? state.myLiving : state.theirLiving;
+			var allies = (from === "mine" ? state.myLiving : state.theirLiving) - 1;
+
+			for (var d = 0; d < 2; d++) {
+				var defender = defenders[d];
+				if (!defender) continue;
+				var incoming = [], labels = [];
+				for (var a = 0; a < 2; a++) {
+					var attacker = attackers[a];
+					var conf = side[from][a];
+					if (!attacker || conf.target !== d) continue;
+					var list = shots(attacker, defender, foes, allies);
+					var shot = list[conf.move];
+					if (!shot || shot.dead) continue;
+					incoming.push(shot);
+					labels.push(state.names[from][a] + " " + shot.move);
+				}
+				if (!incoming.length) continue;
+				var hp = defender.curHP(), maxHP = defender.maxHP();
+				var min = 0, max = 0;
+				for (var k = 0; k < incoming.length; k++) {
+					min += incoming[k].min;
+					max += incoming[k].max;
+				}
+				var chances = RRCritKO.koChancesMulti(incoming, hp, 4);
+				var ko = koText(chances);
+				lines.push('<div class="rr-sum' + (chances[0] > 0 ? " rr-danger" : "") + '">' +
+					'<span class="rr-st">' + esc(defender.name) + '</span>' +
+					'<span class="rr-sd">' + pct(min, maxHP) + ' - ' + pct(max, maxHP) + '%</span>' +
+					'<span class="rr-sk">' + esc(ko || "no KO") + '</span>' +
+					'<span class="rr-sf">' + esc(labels.join(" + ")) + '</span></div>');
+			}
+		}
+		return lines.join("");
 	}
 
 	function render() {
 		if (!$("#rr-doubles").length) return;
-		$("#rr-dbl-slots").html(renderSlots());
+		var state;
 		try {
-			$("#rr-dbl-results").html(renderResults());
+			state = read();
 		} catch (e) {
-			$("#rr-dbl-results").html('<div class="rr-empty">Could not compute: ' +
-				esc(e && e.message) + '</div>');
+			return;
 		}
+		var html = '<div class="rr-board">' +
+			'<div class="rr-col"><div class="rr-colh">You</div>' +
+				card("mine", 0, state) + card("mine", 1, state) + '</div>' +
+			'<div class="rr-col"><div class="rr-colh">Opponent</div>' +
+				card("theirs", 0, state) + card("theirs", 1, state) + '</div>' +
+			'</div>';
+
+		var counts = state.myLiving + "v" + state.theirLiving;
+		var note = (state.myLiving < 2 || state.theirLiving < 2)
+			? ' <i>spread moves at full damage</i>' : "";
+		html += '<div class="rr-sums"><span class="rr-fmt">' + counts + note + '</span>' +
+			summary(state) + '</div>';
+		$("#rr-dbl-body").html(html);
 	}
 
-	// --------------------------------------------------------------- init
-
-	function panelHtml() {
-		return '<div id="rr-doubles">' +
-			'<div class="rr-head">' +
-				'<span class="rr-title">Double Battle</span>' +
-				'<span class="rr-note">Any slot can be empty, for 2v1 and 1v1.</span>' +
-				'<button id="rr-dbl-collapse">hide</button>' +
-			'</div>' +
-			'<div class="rr-dbl-body">' +
-				'<div id="rr-dbl-slots" class="rr-dbl-slots"></div>' +
-				'<div id="rr-dbl-results"></div>' +
-			'</div>' +
-		'</div>';
-	}
+	// ----------------------------------------------------------------- init
 
 	function bind() {
+		var root = $("#rr-doubles");
+
+		root.on("change", ".rr-pick", function () {
+			var v = $(this).val();
+			var conf = side[$(this).data("side")][~~$(this).data("slot")];
+			conf.pick = v === "" ? null : ~~v;
+			conf.move = null;
+			render();
+		});
+
+		root.on("click", ".rr-tgt", function () {
+			var conf = side[$(this).data("side")][~~$(this).data("slot")];
+			conf.target = ~~$(this).data("target");
+			conf.move = null;   // strongest move against the new target
+			render();
+		});
+
+		root.on("click", ".rr-mv", function () {
+			side[$(this).data("side")][~~$(this).data("slot")].move =
+				~~$(this).data("move");
+			render();
+		});
+
 		$("#rr-dbl-collapse").click(function () {
-			var body = $("#rr-doubles .rr-dbl-body");
+			var body = $("#rr-dbl-body");
 			body.toggle();
 			$(this).text(body.is(":visible") ? "hide" : "show");
 		});
-		$("#rr-dbl-slots").on("change", ".rr-dbl-mine", function () {
-			var v = $(this).val();
-			mine[~~$(this).data("i")] = v === EMPTY ? null : ~~v;
-			expanded = null;
-			render();
-		});
-		$("#rr-dbl-slots").on("change", ".rr-dbl-theirs", function () {
-			var v = $(this).val();
-			theirs[~~$(this).data("i")] = v === EMPTY ? null : ~~v;
-			expanded = null;
-			render();
-		});
-		$("#rr-dbl-results").on("click", ".rr-dbl-more", function () {
-			var t = ~~$(this).data("t");
-			expanded = expanded === t ? null : t;
-			render();
-		});
 
-		// A double battle should arrive already set up.
+		// Doubles battles arrive ready to use.
 		RRTrainers.onBattleChange(function (battle) {
-			theirs = [null, null];
-			if (battle && RRTrainers.isDoubles(battle)) {
-				theirs[0] = battle.team.length > 0 ? 0 : null;
-				theirs[1] = battle.team.length > 1 ? 1 : null;
-				$("#rr-doubles .rr-dbl-body").show();
+			var doubles = battle && RRTrainers.isDoubles(battle);
+			side.theirs[0].pick = battle && battle.team.length > 0 ? 0 : null;
+			side.theirs[1].pick = doubles && battle.team.length > 1 ? 1 : null;
+			side.theirs[0].move = side.theirs[1].move = null;
+			if (doubles) {
+				$("#rr-dbl-body").show();
 				$("#rr-dbl-collapse").text("hide");
 			}
-			var team = RRTrainers.getTeam();
-			if (mine[0] === null && team.length > 0) mine[0] = 0;
-			if (mine[1] === null && team.length > 1) mine[1] = 1;
-			expanded = null;
 			render();
 		});
 	}
@@ -459,10 +360,13 @@
 		if (typeof RRTrainers === "undefined" || typeof RRCritKO === "undefined") return;
 		var host = $("#rr-panel");
 		if (!host.length) return;
-		host.after(panelHtml());
+		host.after('<div id="rr-doubles"><div class="rr-head">' +
+			'<span class="rr-title">Double Battle</span>' +
+			'<button id="rr-dbl-collapse">hide</button></div>' +
+			'<div id="rr-dbl-body"></div></div>');
 		var team = RRTrainers.getTeam();
-		if (team.length > 0) mine[0] = 0;
-		if (team.length > 1) mine[1] = 1;
+		side.mine[0].pick = team.length > 0 ? 0 : null;
+		side.mine[1].pick = team.length > 1 ? 1 : null;
 		bind();
 		render();
 	});

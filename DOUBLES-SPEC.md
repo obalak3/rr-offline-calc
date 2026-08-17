@@ -22,7 +22,8 @@ as they land.
 - [x] **Empty / fainted slots**, giving 2v1 and 1v1. Spread damage must follow
       the table above as slots empty.
 - [x] **The core question**: "if he uses X and Y onto my Mienshao, does it die?"
-      Show the worst-case enemy move pair per target, plus the full grid.
+      Answered by an interactive board, not a list of possibilities: pick a
+      move on each Pokemon, point it at a target, read the combined result.
 - [x] **Auto-assign**: the 19 battles the sheet flags `BATTLE EFFECT: DOUBLES`
       should open in this mode with both enemy slots filled.
 - [x] Reuse the trainer panel's level scaling and Minimal Grinding Mode rather
@@ -47,3 +48,19 @@ Hatterene + Indeedee-F it reports, for a level 50 Mienshao:
 Emptying one opponent slot switches the header to `2v1` and restores full
 spread damage: Dazzling Gleam 16.8 - 29.7% -> 22.2 - 39.5%, and the "spread"
 tag disappears. Single-target moves are unchanged.
+
+## UI shape (revised after first attempt)
+
+The first version listed all 16 move combinations per target. Too much text and
+too much to read. Replaced with a board that mirrors the calculator's own
+layout:
+
+- Two columns, You and Opponent, second Pokemon stacked under the first.
+- Each card: a species dropdown, target buttons naming the two opposing
+  Pokemon, and its moves with damage and KO chance against the current target.
+- Click a move to choose it; click a target to redirect. Until you click,
+  each Pokemon shows its hardest-hitting move against its current target,
+  so the board is useful before any input (defaulting to slot 0 would sit on
+  Trick Room and say nothing).
+- One summary line per Pokemon being attacked: combined damage and KO chance,
+  and which moves produced it. Nothing else.
