@@ -223,5 +223,61 @@ const field = new calc.Field();
 	}
 }
 
+// ------------------------------------------------- doubles / focus fire
+
+// One attacker through the focus-fire path must equal the single-target path.
+{
+	const a = mon('Blaziken', {level: 50, nature: 'Adamant', evs: {atk: 252}});
+	const d = mon('Snorlax', {level: 50});
+	const m = mv('Flamethrower');
+	const solo = RRCritKO.analyse(gen, a, d, m, field, {});
+	const ff = RRCritKO.analyseFocusFire(gen, [{attacker: a, move: m}], d, field, {});
+	approx('focus fire with one attacker matches the single-target result',
+		ff.chances[0] - solo.chances[0], 0, 1e-12);
+}
+
+// Two attackers must kill at least as often as either alone, and the combined
+// chance must exceed what you would guess from the better one.
+{
+	const d = mon('Mienshao', {level: 50});
+	const a1 = mon('Landorus-Therian', {level: 50, nature: 'Adamant', evs: {atk: 252}});
+	const a2 = mon('Alakazam', {level: 50, nature: 'Modest', evs: {spa: 252}});
+	const m1 = mv('Stone Edge');
+	const m2 = mv('Psychic');
+	const solo1 = RRCritKO.analyse(gen, a1, d, m1, field, {});
+	const solo2 = RRCritKO.analyse(gen, a2, d, m2, field, {});
+	const both = RRCritKO.analyseFocusFire(gen,
+		[{attacker: a1, move: m1}, {attacker: a2, move: m2}], d, field, {});
+	check('focus fire kills at least as often as the better single attack',
+		both.chances[0] >= Math.max(solo1.chances[0], solo2.chances[0]) - 1e-12, true);
+	console.log(`        ${d.name} ${d.maxHP()} HP: Stone Edge alone ` +
+		`${(solo1.chances[0] * 100).toFixed(1)}%, Psychic alone ` +
+		`${(solo2.chances[0] * 100).toFixed(1)}%, together ` +
+		`${(both.chances[0] * 100).toFixed(1)}%`);
+	check('combined damage range is the sum of the parts',
+		both.minTurnDamage === solo1.minTurnDamage + solo2.minTurnDamage, true);
+}
+
+// Spread moves are weaker in doubles; the engine must see the game type.
+{
+	const a = mon('Landorus-Therian', {level: 50, nature: 'Adamant', evs: {atk: 252}});
+	const d = mon('Mienshao', {level: 50});
+	const singles = RRCritKO.analyse(gen, a, d, mv('Earthquake'),
+		new calc.Field({gameType: 'Singles'}), {});
+	const doubles = RRCritKO.analyse(gen, a, d, mv('Earthquake'),
+		new calc.Field({gameType: 'Doubles'}), {});
+	check('spread moves hit softer in doubles',
+		doubles.maxTurnDamage < singles.maxTurnDamage, true);
+	console.log(`        Earthquake max ${singles.maxTurnDamage} singles -> ` +
+		`${doubles.maxTurnDamage} doubles`);
+
+	const seSingles = RRCritKO.analyse(gen, a, d, mv('Stone Edge'),
+		new calc.Field({gameType: 'Singles'}), {});
+	const seDoubles = RRCritKO.analyse(gen, a, d, mv('Stone Edge'),
+		new calc.Field({gameType: 'Doubles'}), {});
+	check('single-target moves are unaffected by the game type',
+		seSingles.maxTurnDamage === seDoubles.maxTurnDamage, true);
+}
+
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

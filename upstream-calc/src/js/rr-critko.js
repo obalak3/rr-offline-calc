@@ -127,11 +127,16 @@ var RRCritKO = (function () {
 	 * @returns array of cumulative probabilities, index 0 = after turn 1
 	 */
 	function koChances(noCrit, crit, c, hp, hits, maxTurns) {
-		hits = hits || 1;
-		maxTurns = maxTurns || 6;
-		if (hp <= 0) return [1];
+		return koChancesMulti(
+			[{noCrit: noCrit, crit: crit, critChance: c, hits: hits || 1}],
+			hp, maxTurns || 6);
+	}
 
-		// Per-hit outcome distribution: 16 non-crit rolls and 16 crit rolls.
+	/**
+	 * One shot's per-hit outcome distribution: 16 non-crit rolls at (1-c)/16
+	 * and 16 crit rolls at c/16.
+	 */
+	function outcomesFor(noCrit, crit, c) {
 		var outcomes = [];
 		var i;
 		for (i = 0; i < noCrit.length; i++) {
@@ -140,29 +145,60 @@ var RRCritKO = (function () {
 		for (i = 0; i < crit.length; i++) {
 			outcomes.push([crit[i], c / crit.length]);
 		}
+		return outcomes;
+	}
 
-		// alive[d] = probability the defender has taken exactly d damage and
-		// is still standing. Everything at or past hp collapses into `ko`.
+	/**
+	 * Cumulative KO probability when SEVERAL different attacks land each turn.
+	 *
+	 * This is what a doubles turn actually looks like: two attackers, each with
+	 * its own damage rolls and its own crit rate, focusing one target. Summing
+	 * their average damage would be wrong -- the question is the probability
+	 * that the *total* crosses the target's HP, and each attack crits
+	 * independently. So convolve the shots in sequence over one shared
+	 * distribution of cumulative damage.
+	 *
+	 * @param shots [{noCrit, crit, critChance, hits}] all landing in one turn
+	 * @param hp    HP that must be removed
+	 * @param maxTurns how many times the same set of shots repeats
+	 */
+	function koChancesMulti(shots, hp, maxTurns) {
+		maxTurns = maxTurns || 6;
+		if (hp <= 0) return [1];
+		if (!shots.length) return [];
+
+		var perShot = [];
+		for (var s = 0; s < shots.length; s++) {
+			perShot.push({
+				outcomes: outcomesFor(shots[s].noCrit, shots[s].crit,
+					shots[s].critChance),
+				hits: shots[s].hits || 1
+			});
+		}
+
 		var alive = new Float64Array(hp);
 		alive[0] = 1;
 		var ko = 0;
 		var results = [];
 
 		for (var turn = 0; turn < maxTurns; turn++) {
-			for (var hit = 0; hit < hits; hit++) {
-				var next = new Float64Array(hp);
-				for (var d = 0; d < hp; d++) {
-					var p = alive[d];
-					if (p === 0) continue;
-					for (var o = 0; o < outcomes.length; o++) {
-						var prob = p * outcomes[o][1];
-						if (prob === 0) continue;
-						var nd = d + outcomes[o][0];
-						if (nd >= hp) ko += prob;
-						else next[nd] += prob;
+			for (var i = 0; i < perShot.length; i++) {
+				for (var hit = 0; hit < perShot[i].hits; hit++) {
+					var outcomes = perShot[i].outcomes;
+					var next = new Float64Array(hp);
+					for (var d = 0; d < hp; d++) {
+						var p = alive[d];
+						if (p === 0) continue;
+						for (var o = 0; o < outcomes.length; o++) {
+							var prob = p * outcomes[o][1];
+							if (prob === 0) continue;
+							var nd = d + outcomes[o][0];
+							if (nd >= hp) ko += prob;
+							else next[nd] += prob;
+						}
 					}
+					alive = next;
 				}
-				alive = next;
 			}
 			results.push(ko);
 			if (ko > 0.9999999) break;
@@ -237,11 +273,106 @@ var RRCritKO = (function () {
 		};
 	}
 
+	/**
+	 * Build one shot's damage distributions, so several attackers can be
+	 * combined without recomputing anything twice.
+	 */
+	function shotFor(gen, attacker, defender, move, field, bonus) {
+		var hits = move.hits || 1;
+		var opts = {
+			hits: 1,
+			useMax: move.useMax,
+			isStellarFirstUse: move.isStellarFirstUse
+		};
+		var single = new calc.Move(gen, move.name, opts);
+		var critOpts = {
+			hits: 1, isCrit: true,
+			useMax: move.useMax,
+			isStellarFirstUse: move.isStellarFirstUse
+		};
+		var singleCrit = new calc.Move(gen, move.name, critOpts);
+		var plain, critical;
+		try {
+			plain = rolls(calc.calculate(gen, attacker, defender, single, field).damage);
+			critical = rolls(calc.calculate(gen, attacker, defender, singleCrit, field).damage);
+		} catch (e) {
+			return null;
+		}
+		if (Math.max.apply(null, plain.concat(critical)) <= 0) return null;
+		return {
+			noCrit: plain,
+			crit: critical,
+			critChance: critChance(attacker, defender, move, bonus),
+			hits: hits,
+			attacker: attacker.name,
+			move: move.name,
+			min: plain[0] * hits,
+			max: critical[critical.length - 1] * hits
+		};
+	}
+
+	/**
+	 * Both attackers focusing one target: does the combined damage kill?
+	 *
+	 * This is the question a doubles turn actually poses, and it is not
+	 * answerable by reading two single-target results side by side. Each attack
+	 * rolls damage and crits independently, so what matters is the probability
+	 * that the *total* crosses the target's HP -- which is a convolution, not a
+	 * sum of averages. Adding the two "maximum damage" figures overstates the
+	 * kill; adding the two averages understates how often a crit gets there.
+	 *
+	 * @param pairs [{attacker, move}] everything aimed at the defender this turn
+	 */
+	function analyseFocusFire(gen, pairs, defender, field, opts) {
+		opts = opts || {};
+		var bonus = opts.critStageBonus || 0;
+		var shots = [];
+		for (var i = 0; i < pairs.length; i++) {
+			if (!pairs[i] || !pairs[i].move) continue;
+			var shot = shotFor(gen, pairs[i].attacker, defender, pairs[i].move,
+				field, bonus);
+			if (shot) shots.push(shot);
+		}
+		if (!shots.length) return null;
+
+		var hp = defender.curHP();
+		var withCrits = koChancesMulti(shots, hp, 6);
+		var flat = [];
+		for (var s = 0; s < shots.length; s++) {
+			flat.push({
+				noCrit: shots[s].noCrit, crit: shots[s].crit,
+				critChance: 0, hits: shots[s].hits
+			});
+		}
+		var withoutCrits = koChancesMulti(flat, hp, 6);
+
+		var min = 0, max = 0;
+		for (var m = 0; m < shots.length; m++) {
+			min += shots[m].min;
+			max += shots[m].max;
+		}
+		var multi = shots.some ? shots.some(function (x) { return x.hits > 1; }) : false;
+		return {
+			shots: shots,
+			chances: withCrits,
+			chancesWithoutCrits: withoutCrits,
+			text: describe(withCrits, multi ? "approx. " : ""),
+			textWithoutCrits: describe(withoutCrits, multi ? "approx. " : ""),
+			minTurnDamage: min,
+			maxTurnDamage: max,
+			maxHP: defender.maxHP()
+		};
+	}
+
 	return {
 		analyse: analyse,
+		analyseFocusFire: analyseFocusFire,
+		shotFor: shotFor,
 		critChance: critChance,
 		critStage: critStage,
 		koChances: koChances,
+		koChancesMulti: koChancesMulti,
+		outcomesFor: outcomesFor,
 		describe: describe,
 		HIGH_CRIT_MOVES: HIGH_CRIT_MOVES,
 		ALWAYS_CRIT_MOVES: ALWAYS_CRIT_MOVES,
