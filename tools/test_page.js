@@ -169,12 +169,25 @@ function run() {
 		check('clicking a battle shows its enemy team', chips.length > 0,
 			`got ${chips.length} chips`);
 
-		const beforeSet = $('#p2').find('input.set-selector').val();
-		$(chips[0]).trigger('click');
+		// Selecting a battle puts its lead on the field straight away.
+		const firstSpecies = data.segments[0].battles[0].team[0].species;
+		const leadSet = $('#p2').find('input.set-selector').val();
+		check('selecting a battle loads its lead',
+			String(leadSet).indexOf(firstSpecies + ' (') === 0,
+			`got "${leadSet}"`);
+
+		// Clicking a different chip swaps to that Pokemon.
+		const secondSpecies = data.segments[0].battles[0].team[1] &&
+			data.segments[0].battles[0].team[1].species;
+		if (secondSpecies) {
+			$(chips[1]).trigger('click');
+			const afterSet = $('#p2').find('input.set-selector').val();
+			check('clicking another enemy changes the defender slot',
+				String(afterSet).indexOf(secondSpecies + ' (') === 0,
+				`expected "${secondSpecies}" got "${afterSet}"`);
+			$(chips[0]).trigger('click');
+		}
 		const afterSet = $('#p2').find('input.set-selector').val();
-		check('clicking an enemy changes the defender slot',
-			afterSet !== beforeSet && !!afterSet,
-			`before="${beforeSet}" after="${afterSet}"`);
 
 		const firstBattle = data.segments[0].battles[0];
 		const expectedSpecies = firstBattle.team[0].species;
