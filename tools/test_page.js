@@ -192,20 +192,70 @@ function run() {
 		check('damage matrix rendered', matrix.length > 0,
 			`got ${matrix.length} rows`);
 
-		// --------------------------------------------- Minimal Grinding Mode
-		const mgmBattle = data.segments[0].battles[0];
-		const withEVs = mgmBattle.team.some(
-			m => Object.keys(m.evs).some(k => m.evs[k] > 0));
-		if (withEVs) {
-			$('#rr-mgm').prop('checked', true).trigger('change');
-			$(window.document.querySelectorAll('#rr-detail .rr-chip')[0]).trigger('click');
-			let evTotal = 0;
-			for (const cls of ['hp', 'at', 'df', 'sa', 'sd', 'sp']) {
-				evTotal += ~~$('#p2').find('.' + cls + ' .evs').val();
+		// ------------------------------------------ battle field effects
+		// Find a battle whose notes name a weather the calculator can set.
+		let effectBattle = null, wantWeather = null;
+		const WEATHERS = [['PERMANENT SANDSTORM', 'Sand'], ['PERMANENT SUN', 'Sun'],
+			['PERMANENT RAIN', 'Rain'], ['PERMANENT SNOW', 'Snow']];
+		for (const seg of data.segments) {
+			for (const b of seg.battles) {
+				const text = (b.effects || []).join(' ').toUpperCase();
+				const hit = WEATHERS.find(w => text.includes(w[0]));
+				if (hit) { effectBattle = b; wantWeather = hit[1]; break; }
 			}
-			check('Minimal Grinding Mode zeroes enemy EVs', evTotal === 0,
-				`EV total ${evTotal}`);
+			if (effectBattle) break;
+		}
+		if (effectBattle) {
+			const btn = findBattleButton($, window, effectBattle.id);
+			if (btn) {
+				$(btn).trigger('click');
+				const weather = $("input[name='weather']:checked").val();
+				check(`battle effects set the weather (${effectBattle.trainer})`,
+					weather === wantWeather, `expected ${wantWeather}, got "${weather}"`);
+
+				// Turning auto-apply off must stop it changing the field.
+				$("input[name='weather'][value='']").prop('checked', true);
+				$('#rr-effects').prop('checked', false).trigger('change');
+				$(findBattleButton($, window, effectBattle.id)).trigger('click');
+				check('auto field effects can be turned off',
+					$("input[name='weather']:checked").val() === '',
+					`got "${$("input[name='weather']:checked").val()}"`);
+				$('#rr-effects').prop('checked', true).trigger('change');
+			}
+		} else {
+			check('found a battle with a weather effect', false, 'none in dataset');
+		}
+
+		// --------------------------------------------- Minimal Grinding Mode
+		// Brock's team has no EVs at all, so pick a battle that actually does.
+		let evBattle = null;
+		for (const seg of data.segments) {
+			for (const b of seg.battles) {
+				if (b.team.some(m => Object.keys(m.evs).some(k => m.evs[k] > 0))) {
+					evBattle = b; break;
+				}
+			}
+			if (evBattle) break;
+		}
+		if (evBattle) {
+			const evIndex = evBattle.team.findIndex(
+				m => Object.keys(m.evs).some(k => m.evs[k] > 0));
+			const btn = findBattleButton($, window, evBattle.id);
+			$(btn).trigger('click');
+
 			$('#rr-mgm').prop('checked', false).trigger('change');
+			$(window.document.querySelectorAll('#rr-detail .rr-chip')[evIndex]).trigger('click');
+			const normal = evTotal($);
+			check(`enemy EVs are applied normally (${evBattle.trainer})`,
+				normal > 0, `EV total ${normal}`);
+
+			$('#rr-mgm').prop('checked', true).trigger('change');
+			$(window.document.querySelectorAll('#rr-detail .rr-chip')[evIndex]).trigger('click');
+			check('Minimal Grinding Mode zeroes enemy EVs', evTotal($) === 0,
+				`EV total ${evTotal($)}`);
+			$('#rr-mgm').prop('checked', false).trigger('change');
+		} else {
+			check('found a battle with EVs', false, 'none in dataset');
 		}
 
 		// ------------------------------------------------------ no errors
@@ -224,4 +274,33 @@ function finish() {
 	try { dom.window.close(); } catch (e) { /* already torn down */ }
 	server.close();
 	process.exit(failures === 0 ? 0 : 1);
+}
+
+function evTotal($) {
+	let total = 0;
+	for (const cls of ['hp', 'at', 'df', 'sa', 'sd', 'sp']) {
+		total += ~~$('#p2').find('.' + cls + ' .evs').val();
+	}
+	return total;
+}
+
+function currentButton(window, id) {
+	for (const b of window.document.querySelectorAll('#rr-battles .rr-battle')) {
+		if (b.getAttribute('data-id') === id) return b;
+	}
+	return null;
+}
+
+function findBattleButton($, window, id) {
+	const here = currentButton(window, id);
+	if (here) return here;
+	const count = window.document.querySelectorAll('#rr-segments .rr-seg').length;
+	for (let i = 0; i < count; i++) {
+		const tab = window.document.querySelectorAll('#rr-segments .rr-seg')[i];
+		if (!tab) continue;
+		$(tab).trigger('click');
+		const found = currentButton(window, id);
+		if (found) return found;
+	}
+	return null;
 }

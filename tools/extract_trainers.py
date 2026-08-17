@@ -400,17 +400,27 @@ def slugify(*parts):
 
 
 def collect_annotations(grid, header_row, block_start):
-    """Battle-effect / variant banners sitting above a block."""
-    notes = []
+    """Battle-effect / variant banners sitting above a block.
+
+    The sheet distinguishes by emphasis: "(!)" marks a per-battle variant
+    ("IF RIVAL HAS SQUIRTLE"), while "(!!!)" marks a note about the whole
+    section ("ALL SPEED STATS IN THIS SECTION ASSUME YOU'RE LEVEL 100").
+    Only the former identifies a battle.
+    """
+    variants, effects, section_notes = [], [], []
     for r in range(max(block_start, header_row - 4), header_row):
         for c in range(1, 34):
             value = cell(grid, r, c)
             if not value:
                 continue
             flat = value.replace("\n", " ").strip()
-            if flat.startswith("(!") or flat.upper().startswith("BATTLE EFFECT"):
-                notes.append(re.sub(r"^\(!+\)\s*", "", flat))
-    return notes
+            if flat.upper().startswith("BATTLE EFFECT"):
+                effects.append(flat)
+            elif flat.startswith("(!"):
+                bangs = len(flat) - len(flat.lstrip("(!")) - 1
+                text = re.sub(r"^\(!+\)\s*", "", flat)
+                (section_notes if bangs >= 3 else variants).append(text)
+    return variants, effects, section_notes
 
 
 def parse_segment(grid, segment_name, norm, warnings):
@@ -426,10 +436,8 @@ def parse_segment(grid, segment_name, norm, warnings):
         title = " / ".join(parts[:-1]) if len(parts) >= 2 else None
         trainer = parts[-1] if parts else "UNKNOWN"
 
-        notes = collect_annotations(grid, h, previous_end)
-        variant = next((n for n in notes
-                        if not n.upper().startswith("BATTLE EFFECT")), None)
-        effects = [n for n in notes if n.upper().startswith("BATTLE EFFECT")]
+        variants, effects, section_notes = collect_annotations(grid, h, previous_end)
+        variant = variants[0] if variants else None
 
         team = []
         for c in MON_COLS:
@@ -515,6 +523,7 @@ def parse_segment(grid, segment_name, norm, warnings):
             ("title", title),
             ("variant", variant),
             ("effects", effects),
+            ("notes", section_notes),
             ("row", h),
             ("team", team),
         ]))

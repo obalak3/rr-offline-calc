@@ -31,10 +31,31 @@
 		return battle.trainer === "GHOST" && mon.species.indexOf("Marowak") === 0;
 	}
 
+	/**
+	 * Battle effects the sheet notes, and the field controls they correspond to.
+	 * An effect cell can name several at once ("DOUBLES + PERMANENT SUN"), so
+	 * every pattern is tested against the whole string rather than picking one.
+	 */
+	var FIELD_EFFECTS = [
+		{re: /PERMANENT SUN/, weather: "sun", label: "Sun"},
+		{re: /PERMANENT RAIN/, weather: "rain", label: "Rain"},
+		{re: /PERMANENT SANDSTORM/, weather: "sand", label: "Sandstorm"},
+		{re: /PERMANENT SNOW/, weather: "snow", label: "Snow"},
+		{re: /PERMANENT HAIL/, weather: "hail", label: "Hail"},
+		{re: /PERMANENT ELECTRIC TERRAIN/, terrain: "electric", label: "Electric Terrain"},
+		{re: /PERMANENT GRASSY TERRAIN/, terrain: "grassy", label: "Grassy Terrain"},
+		{re: /PERMANENT MISTY TERRAIN/, terrain: "misty", label: "Misty Terrain"},
+		{re: /PERMANENT PSYCHIC TERRAIN/, terrain: "psychic", label: "Psychic Terrain"},
+		{re: /OMNI-?BOOSTED/, statBoost: true, label: "enemy +1 all stats"}
+	];
+
 	var data = null;
-	var prefs = {mgm: false, myLevel: 100, focusEnergy: false, segment: 0};
+	var prefs = {mgm: false, myLevel: 100, focusEnergy: false, segment: 0,
+		applyEffects: true};
 	var team = [];
 	var currentBattle = null;
+	var currentMon = -1;
+	var lastEffects = {applied: [], unhandled: []};
 
 	// ------------------------------------------------------------- storage
 
@@ -96,6 +117,56 @@
 		var zero = {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0};
 		if (isMgmException(battle, mon)) zero.hp = 252;
 		return zero;
+	}
+
+	// -------------------------------------------------------- battle effects
+
+	/**
+	 * Set the Field controls to match a battle's noted effects.
+	 *
+	 * Returns {applied: [...], unhandled: [...]} so the panel can be honest
+	 * about which notes were acted on: things like inverse battles, banned
+	 * types or mid-battle transformations have no equivalent in the calculator
+	 * and stay purely informational.
+	 */
+	function applyBattleEffects(battle) {
+		var effects = (battle && battle.effects) || [];
+		var result = {applied: [], unhandled: []};
+		if (!prefs.applyEffects) return result;
+
+		// Reset only what we manage, so switching battles is deterministic
+		// rather than accumulating the previous battle's weather.
+		$("input[name='weather'][value='']").prop("checked", true);
+		$("input[name='terrain']").prop("checked", false);
+		$("#StatBoostR").prop("checked", false);
+
+		var text = effects.join(" | ").toUpperCase();
+		var weather = null, terrain = null;
+		for (var i = 0; i < FIELD_EFFECTS.length; i++) {
+			var rule = FIELD_EFFECTS[i];
+			if (!rule.re.test(text)) continue;
+			if (rule.weather) weather = rule.weather;
+			if (rule.terrain) terrain = rule.terrain;
+			if (rule.statBoost) $("#StatBoostR").prop("checked", true);
+			result.applied.push(rule.label);
+		}
+		if (weather) $("#" + weather).prop("checked", true);
+		if (terrain) $("#" + terrain).prop("checked", true);
+
+		// One change event at the end; each of these is a .calc-trigger.
+		$("input[name='weather']").first().change();
+		if (terrain) $("#" + terrain).change();
+
+		// Anything the sheet flagged that we could not translate.
+		for (var e = 0; e < effects.length; e++) {
+			var remainder = effects[e].replace(/^BATTLE EFFECT:\s*/i, "").trim();
+			for (var r = 0; r < FIELD_EFFECTS.length; r++) {
+				remainder = remainder.replace(FIELD_EFFECTS[r].re, "");
+			}
+			remainder = remainder.replace(/^[\s+|]+|[\s+|]+$/g, "");
+			if (remainder) result.unhandled.push(remainder);
+		}
+		return result;
 	}
 
 	// ------------------------------------------------- loading into a slot
@@ -347,14 +418,27 @@
 		html += '</div>';
 
 		if (battle.effects && battle.effects.length) {
-			html += '<div class="rr-effects">' + esc(battle.effects.join(" | ")) +
-				' <span class="rr-note">(set these in the Field section yourself)</span></div>';
+			html += '<div class="rr-effects">' + esc(battle.effects.join(" | "));
+			if (lastEffects.applied.length) {
+				html += '<span class="rr-applied">applied: ' +
+					esc(lastEffects.applied.join(", ")) + '</span>';
+			}
+			if (lastEffects.unhandled.length) {
+				html += '<span class="rr-note">not applied automatically: ' +
+					esc(lastEffects.unhandled.join("; ")) + '</span>';
+			}
+			if (!prefs.applyEffects) {
+				html += '<span class="rr-note">auto-apply is off; set these in ' +
+					'the Field section yourself</span>';
+			}
+			html += '</div>';
 		}
 
 		html += '<div class="rr-chips">';
 		for (var i = 0; i < battle.team.length; i++) {
 			var mon = battle.team[i];
-			html += '<button class="rr-chip" data-mon="' + i + '">' +
+			html += '<button class="rr-chip' + (i === currentMon ? " rr-on" : "") +
+				'" data-mon="' + i + '">' +
 				'<span class="rr-cs">' + esc(mon.species) + '</span>' +
 				'<span class="rr-cl">Lv ' + esc(levelLabel(mon)) + '</span>' +
 				(mon.item ? '<span class="rr-ci">@ ' + esc(mon.item) + '</span>' : "") +
@@ -521,6 +605,9 @@
 					'My highest Lv <input type="number" id="rr-mylevel" min="1" max="250" /></label>' +
 				'<label title="Focus Energy or Dire Hit: +2 crit stages">' +
 					'<input type="checkbox" id="rr-focus" /> Focus Energy</label>' +
+				'<label title="Set weather, terrain and stat boosts from the ' +
+					'sheet\'s battle notes when you pick a battle">' +
+					'<input type="checkbox" id="rr-effects" /> Auto field effects</label>' +
 				'<button id="rr-collapse">hide</button>' +
 			'</div>' +
 			'<div class="rr-body">' +
@@ -554,17 +641,29 @@
 
 		$("#rr-battles").on("click", ".rr-battle", function () {
 			currentBattle = findBattle($(this).data("id"));
+			currentMon = -1;
+			lastEffects = applyBattleEffects(currentBattle);
 			render();
 		});
 
 		$("#rr-detail").on("click", ".rr-chip", function () {
 			if (!currentBattle) return;
-			loadEnemy(currentBattle, currentBattle.team[~~$(this).data("mon")]);
+			currentMon = ~~$(this).data("mon");
+			$("#rr-detail .rr-chip").removeClass("rr-on");
+			$(this).addClass("rr-on");
+			loadEnemy(currentBattle, currentBattle.team[currentMon]);
 		});
 
 		$("#rr-mgm").change(function () {
 			prefs.mgm = $(this).prop("checked");
 			save(STORE_PREFS, prefs);
+			render();
+		});
+
+		$("#rr-effects").change(function () {
+			prefs.applyEffects = $(this).prop("checked");
+			save(STORE_PREFS, prefs);
+			lastEffects = applyBattleEffects(currentBattle);
 			render();
 		});
 
@@ -621,6 +720,7 @@
 		$(".wrapper").first().prepend(panelHtml());
 		$("#rr-mgm").prop("checked", !!prefs.mgm);
 		$("#rr-focus").prop("checked", !!prefs.focusEnergy);
+		$("#rr-effects").prop("checked", prefs.applyEffects !== false);
 		$("#rr-mylevel").val(prefs.myLevel);
 		bind();
 		render();

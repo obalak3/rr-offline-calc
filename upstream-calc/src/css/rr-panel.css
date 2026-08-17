@@ -253,3 +253,17 @@ body.dark-theme #rr-crit {
 }
 
 #rr-crit:empty { display: none; }
+
+#rr-panel .rr-effects .rr-applied,
+#rr-panel .rr-effects .rr-note {
+	display: block;
+	font-size: 10px;
+	margin-top: 2px;
+}
+
+#rr-panel .rr-effects .rr-applied { color: var(--rr-accent); font-weight: 600; }
+
+#rr-panel .rr-chip.rr-on {
+	background: var(--rr-accent-soft);
+	border-color: var(--rr-accent);
+}
