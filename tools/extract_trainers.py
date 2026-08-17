@@ -99,6 +99,9 @@ CORRECTIONS = {
     },
 }
 
+# Hidden Power IV spreads, loaded from data/calc-names.json at startup.
+HIDDEN_POWER_IVS = {}
+
 # Natures the sheet leaves deliberately unspecified.
 NATURE_PLACEHOLDERS = {"random", "any", "?"}
 
@@ -167,20 +170,41 @@ def compute_stat(key, base, iv, ev, level, nature):
     return value
 
 
-def solve_speed_iv(base, ev, level, nature, target):
+def solve_speed_iv(base, ev, level, nature, target, parity=None, preferred=None):
     """Back-solve the Speed IV from the sheet's printed Speed stat.
 
     The sheet does not list IVs. Prefer 31, then 0 (the documented Gyro Ball /
     Trick Room case), else the highest IV that reproduces the printed stat.
+
+    `parity` constrains the search to even or odd IVs. That matters for Hidden
+    Power: its type is fixed by the parity of the six IVs, so the Speed IV can
+    only be adjusted within one parity class without silently changing the
+    move's type. `preferred` is tried first when it is among the matches.
     """
-    matches = [iv for iv in range(32)
+    candidates = [iv for iv in range(32)
+                  if parity is None or iv % 2 == parity]
+    matches = [iv for iv in candidates
                if compute_stat("spe", base, iv, ev, level, nature) == target]
     if not matches:
-        return 31, False
-    for preferred in (31, 0):
-        if preferred in matches:
-            return preferred, True
+        fallback = preferred if preferred is not None else (
+            31 if parity is None else max(candidates))
+        return fallback, False
+    order = [preferred, 31, 0] if preferred is not None else [31, 0]
+    for choice in order:
+        if choice is not None and choice in matches:
+            return choice, True
     return max(matches), True
+
+
+HIDDEN_POWER_RE = re.compile(r"^Hidden Power (\w+)$")
+
+
+def hidden_power_type(moves):
+    for move in moves:
+        m = HIDDEN_POWER_RE.match(move or "")
+        if m:
+            return m.group(1)
+    return None
 
 
 # --------------------------------------------------------------- name lookup
@@ -432,11 +456,24 @@ def parse_segment(grid, segment_name, norm, warnings):
                 evs[key] = as_int(cell(grid, h + OFF_BASESTATS + i, c + 3)) or 0
 
             sheet_speed = as_int(cell(grid, h + OFF_SPEEDSTAT, c + 3))
-            ivs = {k: 31 for k in STAT_KEYS}
+
+            # Hidden Power's type is set by the parity of the six IVs, so a
+            # Pokemon carrying it needs the matching spread or the calculator
+            # will silently rewrite the move to whatever its IVs imply. The
+            # sheet states the move outright, so the type wins; the Speed IV is
+            # only an inference and gets fitted within that parity class.
+            hp_type = hidden_power_type(moves)
+            spread = HIDDEN_POWER_IVS.get(hp_type, {}) if hp_type else {}
+            ivs = {k: spread.get(k, 31) for k in STAT_KEYS}
+            speed_parity = ivs["spe"] % 2 if hp_type else None
+            speed_preferred = ivs["spe"] if hp_type else None
+
             speed_verified = None
             if sheet_speed is not None and level and level["type"] == "fixed":
                 iv, ok = solve_speed_iv(base["spe"], evs["spe"],
-                                        level["value"], nature, sheet_speed)
+                                        level["value"], nature, sheet_speed,
+                                        parity=speed_parity,
+                                        preferred=speed_preferred)
                 ivs["spe"] = iv
                 speed_verified = ok
                 if not ok:
@@ -460,6 +497,7 @@ def parse_segment(grid, segment_name, norm, warnings):
                 ("baseStats", base),
                 ("evs", evs),
                 ("ivs", ivs),
+                ("hiddenPower", hp_type),
                 ("sheetSpeed", sheet_speed),
                 ("speedVerified", speed_verified),
             ]))
@@ -517,6 +555,11 @@ def main():
 
     with open(args.names) as fh:
         names = json.load(fh)
+    global HIDDEN_POWER_IVS
+    HIDDEN_POWER_IVS = names.get("hiddenPowerIVs", {})
+    if not HIDDEN_POWER_IVS:
+        print("WARNING: no Hidden Power IV spreads in %s; regenerate it with "
+              "node tools/dump_calc_names.js" % args.names)
     norm = Normalizer(names)
     warnings = []
 
@@ -572,6 +615,12 @@ def main():
 
     missing_moves = sum(1 for m in mons if not m["moves"])
     print("Pokemon with no moves parsed: %d" % missing_moves)
+
+    hp_mons = [m for m in mons if m["hiddenPower"]]
+    hp_checked = [m for m in hp_mons if m["speedVerified"] is not None]
+    hp_ok = [m for m in hp_checked if m["speedVerified"]]
+    print("Hidden Power carriers: %d (%d checkable, %d still reconcile)"
+          % (len(hp_mons), len(hp_checked), len(hp_ok)))
 
     if norm.unresolved:
         by_kind = {}

@@ -3291,5 +3291,75 @@
   "Sassy",
   "Serious",
   "Timid"
- ]
+ ],
+ "hiddenPowerIVs": {
+  "Bug": {
+   "atk": 30,
+   "def": 30,
+   "spd": 30
+  },
+  "Dark": {},
+  "Dragon": {
+   "atk": 30
+  },
+  "Electric": {
+   "spa": 30
+  },
+  "Fighting": {
+   "def": 30,
+   "spa": 30,
+   "spd": 30,
+   "spe": 30
+  },
+  "Fire": {
+   "atk": 30,
+   "spa": 30,
+   "spe": 30
+  },
+  "Flying": {
+   "hp": 30,
+   "atk": 30,
+   "def": 30,
+   "spa": 30,
+   "spd": 30
+  },
+  "Ghost": {
+   "def": 30,
+   "spd": 30
+  },
+  "Grass": {
+   "atk": 30,
+   "spa": 30
+  },
+  "Ground": {
+   "spa": 30,
+   "spd": 30
+  },
+  "Ice": {
+   "atk": 30,
+   "def": 30
+  },
+  "Poison": {
+   "def": 30,
+   "spa": 30,
+   "spd": 30
+  },
+  "Psychic": {
+   "atk": 30,
+   "spe": 30
+  },
+  "Rock": {
+   "def": 30,
+   "spd": 30,
+   "spe": 30
+  },
+  "Steel": {
+   "spd": 30
+  },
+  "Water": {
+   "atk": 30,
+   "def": 30,
+   "spa": 30
+  }
+ }
 }
