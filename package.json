@@ -1,0 +1,15 @@
+{
+  "name": "rr-offline-calc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline Radical Red damage calculator with pre-loaded trainer battles and crit-aware KO chances",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tools/test_critko.js && node tools/test_page.js",
+    "data": "python3 tools/extract_trainers.py",
+    "build": "cd upstream-calc && npm run build"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

@@ -1,0 +1,227 @@
+/**
+ * End-to-end check of the built page in a real DOM.
+ *
+ * Loads upstream-calc/dist/index.html with jsdom, lets the calculator's own
+ * scripts boot, then drives the trainer panel the way a user would: pick a
+ * battle, click an enemy, and confirm the defender slot actually changed.
+ *
+ * This is the substitute for clicking around in a browser, and it catches the
+ * things that unit tests cannot -- script order, missing globals, selectors
+ * that do not match the real markup.
+ *
+ * Run: node tools/test_page.js   (after `cd upstream-calc && npm run build`)
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const {JSDOM, VirtualConsole, ResourceLoader} = require('jsdom');
+
+const root = path.join(__dirname, '..');
+const dist = path.join(root, 'upstream-calc/dist');
+const indexPath = path.join(dist, 'index.html');
+
+if (!fs.existsSync(indexPath)) {
+	console.error('Built page not found. Run: cd upstream-calc && npm run build');
+	process.exit(1);
+}
+
+let failures = 0;
+const scriptErrors = [];
+
+function check(name, condition, detail) {
+	if (condition) {
+		console.log(`PASS  ${name}`);
+	} else {
+		failures++;
+		console.log(`FAIL  ${name}`);
+		if (detail !== undefined) console.log(`        ${detail}`);
+	}
+}
+
+const virtualConsole = new VirtualConsole();
+virtualConsole.on('jsdomError', (e) => {
+	// Google Analytics and other network fetches are expected to fail offline.
+	if (/googletagmanager|gtag|ERR_|Failed to load/i.test(e.message || '')) return;
+	scriptErrors.push(e.message + (e.detail ? '\n' + e.detail : ''));
+});
+virtualConsole.on('error', (msg) => {
+	if (/googletagmanager|gtag/i.test(String(msg))) return;
+	scriptErrors.push('console.error: ' + msg);
+});
+
+// The page is served over loopback rather than opened as file://, because
+// jsdom treats file:// as an opaque origin and then localStorage -- which both
+// the theme toggle and the saved team rely on -- does not exist.
+const MIME = {
+	'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+	'.png': 'image/png', '.gif': 'image/gif', '.json': 'application/json'
+};
+
+const server = http.createServer((req, res) => {
+	const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '');
+	const file = path.join(dist, rel || 'index.html');
+	if (!file.startsWith(dist)) { res.writeHead(403).end(); return; }
+	fs.readFile(file, (err, body) => {
+		if (err) { res.writeHead(404).end(); return; }
+		res.writeHead(200, {'Content-Type': MIME[path.extname(file)] || 'application/octet-stream'});
+		res.end(body);
+	});
+});
+
+let dom = null;
+let ran = false;
+
+server.listen(0, '127.0.0.1', () => {
+	const base = `http://127.0.0.1:${server.address().port}/`;
+	dom = new JSDOM(fs.readFileSync(indexPath, 'utf8'), {
+		url: base + 'index.html',
+		runScripts: 'dangerously',
+		resources: new ResourceLoader({strictSSL: false}),
+		virtualConsole,
+		pretendToBeVisual: true,
+		beforeParse(w) {
+			// jsdom has no matchMedia; the theme toggle needs one. Environment
+			// gap, not a page defect.
+			w.matchMedia = () => ({
+				matches: false, media: '', onchange: null,
+				addListener() {}, removeListener() {},
+				addEventListener() {}, removeEventListener() {},
+				dispatchEvent() { return false; }
+			});
+		}
+	});
+	// jsdom fires load asynchronously; give the page a moment to boot.
+	dom.window.addEventListener('load', () => setTimeout(run, 500));
+	setTimeout(() => { if (!ran) run(); }, 15000);
+});
+
+function run() {
+	if (ran) return;
+	ran = true;
+	const {window} = dom;
+	const $ = window.jQuery;
+
+	try {
+		// ---------------------------------------------------- page booted
+		check('jQuery is available', typeof $ === 'function');
+		check('calc engine global exists', typeof window.calc === 'object');
+		check('trainer data global exists', typeof window.RR_TRAINER_DATA === 'object');
+		check('crit engine global exists', typeof window.RRCritKO === 'object');
+
+		if (!window.RR_TRAINER_DATA) return finish();
+
+		// ------------------------------------------------------- dataset
+		const data = window.RR_TRAINER_DATA;
+		const battles = data.segments.reduce((n, s) => n + s.battles.length, 0);
+		const mons = data.segments.reduce(
+			(n, s) => n + s.battles.reduce((m, b) => m + b.team.length, 0), 0);
+		check('dataset has 9 segments', data.segments.length === 9,
+			`got ${data.segments.length}`);
+		check('dataset has 167 battles', battles === 167, `got ${battles}`);
+		check('dataset has 792 Pokemon', mons === 792, `got ${mons}`);
+
+		// Every species must exist in the calculator's own dex, or loading
+		// a battle would silently fail at runtime.
+		const dex = window.pokedex;
+		let missing = [];
+		for (const seg of data.segments) {
+			for (const b of seg.battles) {
+				for (const m of b.team) {
+					if (dex && !dex[m.species]) missing.push(m.species);
+				}
+			}
+		}
+		missing = [...new Set(missing)];
+		check('every trainer Pokemon exists in the calculator dex',
+			missing.length === 0, missing.slice(0, 8).join(', '));
+
+		// ---------------------------------------------------- panel built
+		check('trainer panel was injected',
+			window.document.getElementById('rr-panel') !== null);
+		const segButtons = window.document.querySelectorAll('#rr-segments .rr-seg');
+		check('segment tabs rendered', segButtons.length === 9,
+			`got ${segButtons.length}`);
+		const battleButtons = window.document.querySelectorAll('#rr-battles .rr-battle');
+		check('battle list rendered', battleButtons.length > 0,
+			`got ${battleButtons.length}`);
+
+		// ------------------------------------------- click through a battle
+		// Kanto Leaders / Brock is the first battle of the first segment.
+		$(battleButtons[0]).trigger('click');
+		const chips = window.document.querySelectorAll('#rr-detail .rr-chip');
+		check('clicking a battle shows its enemy team', chips.length > 0,
+			`got ${chips.length} chips`);
+
+		const beforeSet = $('#p2').find('input.set-selector').val();
+		$(chips[0]).trigger('click');
+		const afterSet = $('#p2').find('input.set-selector').val();
+		check('clicking an enemy changes the defender slot',
+			afterSet !== beforeSet && !!afterSet,
+			`before="${beforeSet}" after="${afterSet}"`);
+
+		const firstBattle = data.segments[0].battles[0];
+		const expectedSpecies = firstBattle.team[0].species;
+		check('defender slot holds the expected species',
+			String(afterSet).indexOf(expectedSpecies) === 0,
+			`expected "${expectedSpecies}" got "${afterSet}"`);
+
+		// The level field should match the sheet, not the calculator default.
+		const level = ~~$('#p2').find('.level').val();
+		const expectedLevel = firstBattle.team[0].level.type === 'fixed'
+			? firstBattle.team[0].level.value : null;
+		if (expectedLevel !== null) {
+			check('defender level came from the sheet', level === expectedLevel,
+				`expected ${expectedLevel} got ${level}`);
+		}
+
+		// The ability and item should have been applied too.
+		if (firstBattle.team[0].ability) {
+			check('defender ability came from the sheet',
+				$('#p2').find('.ability').val() === firstBattle.team[0].ability,
+				`expected ${firstBattle.team[0].ability} got ${$('#p2').find('.ability').val()}`);
+		}
+
+		// -------------------------------------------------- crit-aware box
+		const critTable = window.document.querySelectorAll('#rr-crit .rr-critbox tbody tr');
+		check('crit-aware KO table rendered', critTable.length > 0,
+			`got ${critTable.length} rows`);
+
+		const matrix = window.document.querySelectorAll('#rr-detail .rr-matrix tbody tr');
+		check('damage matrix rendered', matrix.length > 0,
+			`got ${matrix.length} rows`);
+
+		// --------------------------------------------- Minimal Grinding Mode
+		const mgmBattle = data.segments[0].battles[0];
+		const withEVs = mgmBattle.team.some(
+			m => Object.keys(m.evs).some(k => m.evs[k] > 0));
+		if (withEVs) {
+			$('#rr-mgm').prop('checked', true).trigger('change');
+			$(window.document.querySelectorAll('#rr-detail .rr-chip')[0]).trigger('click');
+			let evTotal = 0;
+			for (const cls of ['hp', 'at', 'df', 'sa', 'sd', 'sp']) {
+				evTotal += ~~$('#p2').find('.' + cls + ' .evs').val();
+			}
+			check('Minimal Grinding Mode zeroes enemy EVs', evTotal === 0,
+				`EV total ${evTotal}`);
+			$('#rr-mgm').prop('checked', false).trigger('change');
+		}
+
+		// ------------------------------------------------------ no errors
+		check('no unexpected script errors', scriptErrors.length === 0,
+			scriptErrors.slice(0, 3).join('\n        '));
+	} catch (e) {
+		failures++;
+		console.log('FAIL  test harness threw');
+		console.log(e && e.stack ? e.stack : String(e));
+	}
+	finish();
+}
+
+function finish() {
+	console.log(failures === 0 ? '\nAll page checks passed.' : `\n${failures} FAILURE(S)`);
+	try { dom.window.close(); } catch (e) { /* already torn down */ }
+	server.close();
+	process.exit(failures === 0 ? 0 : 1);
+}
