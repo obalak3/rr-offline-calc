@@ -152,8 +152,15 @@ rewritten by the calculator.
 
 ```bash
 node tools/test_page.js        # panel behaviour, ~30s
+node tools/test_offline.js     # the file:// guarantee, ~10s
 node tools/test_load_all.js    # all 792 Pokemon, ~5min
 ```
+
+`test_offline.js` is the one that matters for the whole point of this project.
+It opens the built page as a real `file://` URL, where two things differ from
+serving over loopback and both used to break it: `localStorage` can be denied
+outright, and `history.replaceState` throws on a file URL. Neither showed up
+over http.
 
 The crit engine has its own checks:
 
@@ -178,6 +185,7 @@ tools/verify_roster.js        cross-check the roster against the RR Pokedex
 tools/build_dex.js            RR Pokedex snapshot -> the offline dex bundle
 tools/test_critko.js          checks for the crit-aware KO engine
 tools/test_page.js            drives the built page in a headless DOM
+tools/test_offline.js         opens it as file://, with no server at all
 tools/test_load_all.js        loads all 792 trainer Pokemon and verifies them
 upstream-calc/                the vendored MIT calculator
   src/js/rr-critko.js           crit-aware KO probability      (new, mine)

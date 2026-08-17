@@ -11,6 +11,61 @@
     <link type="text/css" rel="stylesheet" href="./css/rr-panel.css?">
     <!-- Google Analytics removed: it is an external request that cannot
          succeed offline, and it reported to the upstream site's property. -->
+    <!-- Storage fallback. A page opened straight from disk (file://) can be
+         denied localStorage entirely, and several scripts here -- upstream's
+         custom-set loader and theme toggle, and ours -- read it while loading.
+         One of them throwing takes down every script that follows, which left
+         the trainer panel unbuilt. A memory-backed stand-in keeps all of them
+         working; the only loss is that settings stop persisting between
+         sessions, which beats half the page not appearing. -->
+    <script>
+        (function () {
+            try {
+                if (window.localStorage) {
+                    window.localStorage.getItem("rr-probe");
+                    return;
+                }
+            } catch (e) { /* denied; fall through to the stand-in */ }
+            var mem = {
+                getItem: function (k) {
+                    return Object.prototype.hasOwnProperty.call(mem, k) ? String(mem[k]) : null;
+                },
+                setItem: function (k, v) { mem[k] = String(v); },
+                removeItem: function (k) { delete mem[k]; },
+                clear: function () {
+                    for (var k in mem) {
+                        if (typeof mem[k] !== "function") delete mem[k];
+                    }
+                }
+            };
+            try {
+                Object.defineProperty(window, "localStorage",
+                    {value: mem, configurable: true, writable: true});
+            } catch (e) {
+                window.localStorage = mem;
+            }
+        })();
+
+        // Same shape of problem with the history API. The calculator keeps the
+        // URL in step with the selected gen and mode, and guards that the
+        // methods exist -- but on a file:// page they exist and throw, which
+        // killed the handler that populates every dropdown. Keeping the URL
+        // tidy is not worth losing the page over, so failures are swallowed.
+        (function () {
+            if (window.location.protocol !== "file:" || !window.history) return;
+            ["replaceState", "pushState"].forEach(function (name) {
+                var original = window.history[name];
+                if (typeof original !== "function") return;
+                window.history[name] = function () {
+                    try {
+                        return original.apply(window.history, arguments);
+                    } catch (e) {
+                        return undefined;
+                    }
+                };
+            });
+        })();
+    </script>
     <!-- Immediately loads the dark theme in order to reduce FOIT -->
     <script>
         /*

@@ -5,7 +5,7 @@
   "description": "Offline Radical Red damage calculator with pre-loaded trainer battles and crit-aware KO chances",
   "license": "MIT",
   "scripts": {
-    "test": "node tools/test_critko.js && node tools/test_page.js",
+    "test": "node tools/test_critko.js && node tools/test_page.js && node tools/test_offline.js",
     "data": "python3 tools/extract_trainers.py",
     "build": "cd upstream-calc && npm run build"
   },
