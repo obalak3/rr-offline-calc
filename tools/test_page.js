@@ -140,8 +140,9 @@ function run() {
 		// ---------------------------------------------------- panel built
 		check('trainer panel was injected',
 			window.document.getElementById('rr-panel') !== null);
+		// Nine sheet sections plus the chronological Story Order view.
 		const segButtons = window.document.querySelectorAll('#rr-segments .rr-seg');
-		check('segment tabs rendered', segButtons.length === 9,
+		check('segment tabs rendered', segButtons.length === 10,
 			`got ${segButtons.length}`);
 		const battleButtons = window.document.querySelectorAll('#rr-battles .rr-battle');
 		check('battle list rendered', battleButtons.length > 0,
@@ -191,6 +192,31 @@ function run() {
 		const matrix = window.document.querySelectorAll('#rr-detail .rr-matrix tbody tr');
 		check('damage matrix rendered', matrix.length > 0,
 			`got ${matrix.length} rows`);
+
+		// ------------------------------------------------- Story Order view
+		const orderTab = [...window.document.querySelectorAll('#rr-segments .rr-seg')]
+			.find(b => b.getAttribute('data-seg') === 'order');
+		check('Story Order tab exists', !!orderTab);
+		if (orderTab) {
+			$(orderTab).trigger('click');
+			const rows = window.document.querySelectorAll('#rr-battles .rr-battle');
+			const linked = [...rows].filter(r => r.getAttribute('data-id'));
+			const caps = window.document.querySelectorAll('#rr-battles .rr-cap');
+			check('Story Order lists every trainer',
+				rows.length === data.trainerOrder.length,
+				`${rows.length} of ${data.trainerOrder.length}`);
+			check('every Story Order entry links to a battle',
+				linked.length === rows.length,
+				`${linked.length} of ${rows.length} linked`);
+			check('Story Order shows level caps', caps.length > 0,
+				`${caps.length} cap headers`);
+
+			$(linked[0]).trigger('click');
+			check('clicking a Story Order entry loads its team',
+				window.document.querySelectorAll('#rr-detail .rr-chip').length > 0);
+			// Back to the first section for the checks that follow.
+			$(window.document.querySelectorAll('#rr-segments .rr-seg')[0]).trigger('click');
+		}
 
 		// ------------------------------------------ battle field effects
 		// Find a battle whose notes name a weather the calculator can set.

@@ -267,3 +267,29 @@ body.dark-theme #rr-crit {
 	background: var(--rr-accent-soft);
 	border-color: var(--rr-accent);
 }
+
+#rr-panel .rr-cap {
+	font-size: 10px;
+	font-weight: 700;
+	color: var(--rr-muted);
+	text-transform: uppercase;
+	letter-spacing: .4px;
+	padding: 7px 4px 3px;
+	border-top: 1px solid var(--rr-line);
+	margin-top: 4px;
+}
+
+#rr-panel .rr-battles > .rr-cap:first-child {
+	border-top: none;
+	margin-top: 0;
+}
+
+#rr-panel .rr-opt {
+	font-weight: 400;
+	font-size: 9px;
+	color: var(--rr-muted);
+	text-transform: uppercase;
+}
+
+#rr-panel .rr-battle.rr-nolink { opacity: .55; cursor: default; }
+#rr-panel .rr-seg-order { font-style: italic; }

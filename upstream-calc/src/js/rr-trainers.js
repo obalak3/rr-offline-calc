@@ -350,6 +350,101 @@
 
 	// -------------------------------------------------------------- render
 
+	/**
+	 * Link a Trainer Order entry to a battle.
+	 *
+	 * The order tab writes a trainer's class with the name ("LASS ANNE",
+	 * "SUPER NERD MIGUEL") while the battle blocks keep the class in the title
+	 * and the bare name in the trainer field, so an exact match only works for
+	 * gym leaders and rivals. Match on the last word, then break ties with the
+	 * location and class words.
+	 */
+	var orderMatchCache = null;
+
+	function matchOrderEntry(entry) {
+		if (!orderMatchCache) orderMatchCache = {};
+		var cacheKey = entry.name + "|" + entry.location;
+		if (Object.prototype.hasOwnProperty.call(orderMatchCache, cacheKey)) {
+			return orderMatchCache[cacheKey];
+		}
+
+		// "(REMATCH)" is a qualifier, not part of the name; it points at the
+		// Kanto Rematch section rather than the original gym battle.
+		var raw = entry.name.toUpperCase();
+		var wantsRematch = /\(REMATCH\)/.test(raw);
+		var cleaned = raw.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+		var words = cleaned.split(/\s+/).filter(Boolean);
+		var last = words[words.length - 1];
+		// Some trainers are two words ("JOJO FAN"), so try that pairing too.
+		var lastTwo = words.length > 1 ? words.slice(-2).join(" ") : null;
+		var location = (entry.location || "").toUpperCase();
+		var best = null, bestScore = -1;
+
+		for (var s = 0; s < data.segments.length; s++) {
+			var battles = data.segments[s].battles;
+			var isRematchSegment = /REMATCH/.test(data.segments[s].name.toUpperCase());
+			for (var b = 0; b < battles.length; b++) {
+				var battle = battles[b];
+				var trainer = battle.trainer.toUpperCase();
+				if (trainer !== last && trainer !== cleaned &&
+					(!lastTwo || trainer !== lastTwo)) continue;
+				if (wantsRematch !== isRematchSegment) continue;
+
+				var score = 1;
+				var context = ((battle.title || "") + " " + battle.trainer).toUpperCase();
+				if (lastTwo && trainer === lastTwo) score += 2;
+				for (var w = 0; w < words.length - 1; w++) {
+					if (context.indexOf(words[w]) !== -1) score += 2;
+				}
+				// Locations are abbreviated differently on the two tabs
+				// ("VIRIDIAN FOREST" vs "VIRID. FOREST"), so compare on a
+				// prefix of each word rather than the whole string.
+				var locWords = location.split(/[\s.]+/).filter(Boolean);
+				for (var l = 0; l < locWords.length; l++) {
+					var stem = locWords[l].slice(0, 4);
+					if (stem.length >= 3 && context.indexOf(stem) !== -1) score += 3;
+				}
+				if (score > bestScore) {
+					bestScore = score;
+					best = battle;
+				}
+			}
+		}
+		// Some entries share no word with the trainer's name at all: the order
+		// tab lists the Indigo Plateau joke boss by its class, "DUMASS CREATOR",
+		// while the battle block names it SOUPERCELL. Fall back to matching on
+		// the block's title, but only when the location agrees too, so this
+		// cannot quietly attach an entry to an unrelated battle.
+		if (!best && location) {
+			var locStems = location.split(/[\s.]+/).filter(function (w) {
+				return w.length >= 4;
+			}).map(function (w) { return w.slice(0, 4); });
+
+			for (var s2 = 0; s2 < data.segments.length && !best; s2++) {
+				var list = data.segments[s2].battles;
+				for (var b2 = 0; b2 < list.length; b2++) {
+					var candidate = list[b2];
+					var title = (candidate.title || "").toUpperCase();
+					if (!title) continue;
+					var locHit = locStems.length > 0 && locStems.every(function (stem) {
+						return title.indexOf(stem) !== -1;
+					});
+					if (!locHit) continue;
+					var wordHit = false;
+					for (var w2 = 0; w2 < words.length; w2++) {
+						if (words[w2].length >= 4 && title.indexOf(words[w2]) !== -1) {
+							wordHit = true;
+						}
+					}
+					if (wordHit) { best = candidate; break; }
+				}
+			}
+		}
+
+		orderMatchCache[cacheKey] = best;
+		return best;
+	}
+
 	function segmentTabs() {
 		var html = "";
 		for (var i = 0; i < data.segments.length; i++) {
@@ -358,7 +453,43 @@
 				' <span class="rr-count">' + data.segments[i].battles.length +
 				'</span></button>';
 		}
+		html += '<button class="rr-seg rr-seg-order' +
+			(prefs.segment === "order" ? " rr-on" : "") + '" data-seg="order"' +
+			' title="Every trainer in the order you meet them, with level caps">' +
+			'Story Order <span class="rr-count">' +
+			(data.trainerOrder ? data.trainerOrder.length : 0) + '</span></button>';
 		return html;
+	}
+
+	/** The chronological run through the game, grouped by level cap. */
+	function orderList(query) {
+		var entries = data.trainerOrder || [];
+		var html = "";
+		var lastCap = null;
+		for (var i = 0; i < entries.length; i++) {
+			var entry = entries[i];
+			var battle = matchOrderEntry(entry);
+			if (query) {
+				var hay = (entry.name + " " + (entry.location || "")).toLowerCase();
+				if (hay.indexOf(query.toLowerCase()) === -1) continue;
+			}
+			if (entry.levelCap !== lastCap && entry.levelCap !== null) {
+				lastCap = entry.levelCap;
+				html += '<div class="rr-cap">Level cap ' + entry.levelCap + '</div>';
+			}
+			var on = battle && currentBattle && currentBattle.id === battle.id;
+			html += '<button class="rr-battle' + (on ? " rr-on" : "") +
+				(battle ? "" : " rr-nolink") + '"' +
+				(battle ? ' data-id="' + esc(battle.id) + '"' : " disabled") + '>' +
+				'<span class="rr-bt">' + esc(entry.name) +
+				(entry.optional ? ' <span class="rr-opt">optional</span>' : "") +
+				'</span>' +
+				(entry.location ? '<span class="rr-bs">' + esc(entry.location) + '</span>' : "") +
+				(battle ? '<span class="rr-bn">' + battle.team.length + '</span>'
+					: '<span class="rr-bs">no team recorded</span>') +
+				'</button>';
+		}
+		return html || '<div class="rr-empty">No trainers match.</div>';
 	}
 
 	function matchesQuery(battle, query) {
@@ -378,7 +509,10 @@
 	function battleList() {
 		var query = $("#rr-search").val();
 		var html = "";
-		var segments = query ? data.segments : [data.segments[prefs.segment]];
+		if (prefs.segment === "order" && !query) return orderList(null);
+		if (prefs.segment === "order") return orderList(query);
+		var segments = query ? data.segments
+			: [data.segments[prefs.segment] || data.segments[0]];
 		for (var s = 0; s < segments.length; s++) {
 			var segment = segments[s];
 			if (!segment) continue;
@@ -634,7 +768,8 @@
 		});
 
 		$("#rr-segments").on("click", ".rr-seg", function () {
-			prefs.segment = ~~$(this).data("seg");
+			var seg = $(this).data("seg");
+			prefs.segment = seg === "order" ? "order" : ~~seg;
 			save(STORE_PREFS, prefs);
 			render();
 		});
