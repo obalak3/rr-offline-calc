@@ -169,6 +169,7 @@ tools/fetch_sheet.py          refresh the cache (needs network)
 tools/extract_trainers.py     CSV -> trainer dataset, with a validation report
 tools/dump_calc_names.js      export the calculator's canonical name lists
 tools/verify_roster.js        cross-check the roster against the RR Pokedex
+tools/build_dex.js            RR Pokedex snapshot -> the offline dex bundle
 tools/test_critko.js          checks for the crit-aware KO engine
 tools/test_page.js            drives the built page in a headless DOM
 tools/test_load_all.js        loads all 792 trainer Pokemon and verifies them

@@ -68,7 +68,23 @@ repository's MIT license.
 
 ---
 
-## 3. Pokémon
+## 3. Radical Red Pokédex data
+
+**`data/rr-dex-data.js` and `upstream-calc/src/js/data/rr-dex-data.js`**
+
+- Source: <https://github.com/JwowSquared/Radical-Red-Pokedex>
+  (the data behind <https://dex.radicalred.net>)
+- Compiled by JwowSquared and contributors from the ROM.
+
+Used for two things: the offline Pokédex, and `tools/verify_roster.js`, which
+cross-checks the calculator's species data against it as an independent source.
+`tools/build_dex.js` only reshapes it -- dropping the trainer table we already
+have from the spreadsheet, and pre-rendering the evolution method strings -- and
+adds no game knowledge of its own. All credit for the data belongs to them.
+
+---
+
+## 4. Pokémon
 
 Pokémon and all related names are trademarks of Nintendo, Creatures Inc., and
 GAME FREAK Inc. Pokémon Radical Red is an unofficial fan-made ROM hack. This

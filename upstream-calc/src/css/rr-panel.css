@@ -398,3 +398,103 @@ body.dark-theme.rr-doubles-on .move-result-group label.btn.rr-using {
 	border-color: #ff7a4d;
 	box-shadow: inset 0 0 0 1px #ff7a4d;
 }
+
+/* -------------------------------------------------------------- Pokedex */
+
+#rr-dex { display: none; }
+body.rr-dex-on #rr-dex { display: block; }
+
+/* The dex takes over the page rather than sitting beside the calculator. */
+body.rr-dex-on .move-result-group,
+body.rr-dex-on .main-result-group,
+body.rr-dex-on .panel,
+body.rr-dex-on #rr-panel,
+body.rr-dex-on #rr-dbl-combined,
+body.rr-dex-on .wrapper > div[role="region"]:not(#rr-dex),
+body.rr-dex-on #rr-crit,
+body.rr-dex-on hr { display: none; }
+
+#rr-mode-dex { margin-left: 8px; cursor: pointer; font: inherit; }
+#rr-mode-dex.rr-on { background: #b4472e; border-color: #b4472e; color: #fff; }
+body.dark-theme #rr-mode-dex.rr-on {
+	background: #ff7a4d; border-color: #ff7a4d; color: #000;
+}
+
+#rr-dex-body { display: flex; gap: 14px; align-items: flex-start; margin-top: 10px; }
+#rr-dex .rr-dex-side { flex: 0 0 262px; }
+#rr-dex-search {
+	width: 100%; box-sizing: border-box;
+	font: inherit; padding: 5px 8px; margin-bottom: 6px;
+	border: 1px solid rgba(128, 128, 128, .5); border-radius: 4px;
+	background: transparent; color: inherit;
+}
+#rr-dex-list { max-height: 74vh; overflow-y: auto; }
+.rr-dex-item {
+	display: flex; align-items: center; gap: 7px;
+	width: 100%; text-align: left; cursor: pointer;
+	background: transparent; color: inherit;
+	border: 1px solid transparent; border-radius: 4px;
+	padding: 2px 6px; margin-bottom: 2px; font: inherit;
+}
+.rr-dex-item:hover { background: rgba(128, 128, 128, .15); }
+.rr-dex-item.rr-on { border-color: #b4472e; background: rgba(180, 71, 46, .14); }
+body.dark-theme .rr-dex-item.rr-on { border-color: #ff7a4d; background: rgba(255, 122, 77, .14); }
+.rr-dex-iname { flex: 1 1 auto; font-weight: 600; }
+.rr-dex-sprite { width: 40px; height: 40px; image-rendering: pixelated; }
+
+.rr-dex-detail { flex: 1 1 auto; min-width: 0; max-height: 82vh; overflow-y: auto; padding-right: 6px; }
+.rr-dex-head { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
+.rr-dex-head .rr-dex-sprite { width: 96px; height: 96px; }
+.rr-dex-head h2 { margin: 0 0 4px; font-size: 1.5em; }
+.rr-dex-sub { display: flex; align-items: center; gap: 6px; opacity: .85; }
+.rr-dex-btn {
+	margin-top: 7px; font: inherit; cursor: pointer;
+	border: 1px solid rgba(128, 128, 128, .5); border-radius: 4px;
+	padding: 3px 9px; background: transparent; color: inherit;
+}
+.rr-dex-btn:hover { border-color: #b4472e; }
+
+.rr-dex-type {
+	display: inline-block; border-radius: 3px;
+	padding: 0 6px; margin-right: 3px;
+	font-size: .78em; font-weight: 700; color: #14161a;
+}
+
+.rr-dex-stats { max-width: 430px; margin-bottom: 12px; }
+.rr-dex-stat { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.rr-dex-sname { flex: 0 0 34px; font-size: .85em; opacity: .8; }
+.rr-dex-sval { flex: 0 0 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.rr-dex-bar {
+	flex: 1 1 auto; height: 9px; border-radius: 5px;
+	background: rgba(128, 128, 128, .22); overflow: hidden;
+}
+.rr-dex-bar i { display: block; height: 100%; background: #b4472e; }
+body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
+.rr-dex-total { font-weight: 700; border-top: 1px solid rgba(128,128,128,.3); padding-top: 3px; }
+
+#rr-dex h3 { margin: 14px 0 5px; font-size: 1em; }
+.rr-dex-abilities, .rr-dex-evos { list-style: none; padding: 0; margin: 0; }
+.rr-dex-abilities li, .rr-dex-evos li { margin-bottom: 4px; }
+.rr-dex-hidden {
+	font-size: .75em; text-transform: uppercase; letter-spacing: .4px; opacity: .65;
+}
+.rr-dex-txt { display: block; font-size: .85em; opacity: .72; }
+.rr-dex-evos .rr-dex-txt { display: inline; }
+.rr-dex-line { margin: 6px 0; }
+.rr-dex-link {
+	font: inherit; font-weight: 600; cursor: pointer;
+	background: transparent; color: inherit;
+	border: 1px solid rgba(128, 128, 128, .5); border-radius: 4px; padding: 0 6px;
+}
+.rr-dex-link:hover { border-color: #b4472e; }
+
+.rr-dex-table-wrap { overflow-x: auto; }
+.rr-dex-moves { border-collapse: collapse; width: 100%; font-size: .85em; }
+.rr-dex-moves th, .rr-dex-moves td {
+	border: 1px solid rgba(128, 128, 128, .3);
+	padding: 2px 6px; text-align: left; vertical-align: top;
+}
+.rr-dex-moves thead th { background: rgba(128, 128, 128, .14); }
+.rr-dex-num, .rr-dex-lv { text-align: right; font-variant-numeric: tabular-nums; }
+.rr-dex-moves .rr-dex-txt { display: table-cell; font-size: 1em; }
+.rr-dex-msg { opacity: .7; padding: 12px 0; }
