@@ -107,7 +107,7 @@ for (const key of Object.keys(dex.species)) {
 		stats: s.stats,
 		types: (s.type || []).map(t => typeName[t]).filter(Boolean),
 		abilities,
-		eggGroups: (s.eggGroup || []).map(g => dex.eggGroups[g]).filter(Boolean),
+		eggGroups: [...new Set((s.eggGroup || []).map(g => dex.eggGroups[g]).filter(Boolean))],
 		levelup: s.levelupMoves || [],
 		tms,
 		tutors,
@@ -115,6 +115,23 @@ for (const key of Object.keys(dex.species)) {
 		evolutions,
 		ancestor: s.ancestor
 	};
+}
+
+/**
+ * Alternate formes share their base species' name in this snapshot, so the list
+ * shows three entries all called "Charizard". Where one species evolves into
+ * another of the same name, note how -- "with the Charzardite X" -- so the two
+ * can be told apart.
+ */
+for (const key of Object.keys(species)) {
+	const s = species[key];
+	for (const evo of s.evolutions) {
+		const target = species[evo.intoId];
+		if (!target || target.name !== s.name || !evo.how) continue;
+		target.formNote = evo.how
+			.replace(/^with (the )?/i, '')
+			.replace(/^holding (the )?/i, '');
+	}
 }
 
 const moves = {};

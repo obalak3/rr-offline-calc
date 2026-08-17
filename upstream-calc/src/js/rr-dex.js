@@ -135,7 +135,8 @@ var RRDex = (function () {
 		for (var i = 0; i < order.length; i++) {
 			var s = d.species[order[i]];
 			if (terms.length) {
-				var hay = (s.name + " " + s.types.join(" ")).toLowerCase();
+				var hay = (s.name + " " + s.types.join(" ") + " " +
+					(s.formNote || "")).toLowerCase();
 				var ok = true;
 				for (var t = 0; t < terms.length; t++) {
 					if (hay.indexOf(terms[t]) === -1) { ok = false; break; }
@@ -146,7 +147,9 @@ var RRDex = (function () {
 			if (shown > 400) break;   // keep the DOM sane; refine the search
 			html += '<button class="rr-dex-item' +
 				(current === s.id ? " rr-on" : "") + '" data-id="' + s.id + '">' +
-				sprite(s.id) + '<span class="rr-dex-iname">' + esc(s.name) + "</span>" +
+				sprite(s.id) + '<span class="rr-dex-iname">' + esc(s.name) +
+				(s.formNote ? '<i class="rr-dex-form">' + esc(s.formNote) + "</i>" : "") +
+				"</span>" +
 				'<span class="rr-dex-itypes">' + s.types.map(typeChip).join("") +
 				"</span></button>";
 		}
@@ -167,7 +170,9 @@ var RRDex = (function () {
 		for (var i = 0; i < 6; i++) total += s.stats[i] || 0;
 
 		var html = '<div class="rr-dex-head">' + sprite(s.id) +
-			'<div><h2>' + esc(s.name) + "</h2>" +
+			'<div><h2>' + esc(s.name) +
+			(s.formNote ? ' <span class="rr-dex-formbig">' + esc(s.formNote) +
+				"</span>" : "") + "</h2>" +
 			'<div class="rr-dex-sub">#' + (s.dexID || "?") + " " +
 			s.types.map(typeChip).join("") + "</div>" +
 			'<button id="rr-dex-load" class="rr-dex-btn">Load into Pokémon 1</button>' +
@@ -238,6 +243,11 @@ var RRDex = (function () {
 		if (built) return;
 		$(".wrapper").first().append(
 			'<div id="rr-dex">' +
+				'<div class="rr-dex-bar">' +
+					'<h2 class="rr-dex-title">Pokédex</h2>' +
+					'<button id="rr-dex-back" class="btn btn-wide" type="button">' +
+						'&larr; Back to calculator</button>' +
+				'</div>' +
 				'<div id="rr-dex-body">' +
 					'<div class="rr-dex-side">' +
 						'<input id="rr-dex-search" type="text" ' +
@@ -269,8 +279,7 @@ var RRDex = (function () {
 		if (on === active) return;
 		active = on;
 		$("body").toggleClass("rr-dex-on", on);
-		$("#rr-mode-dex").toggleClass("rr-on", on)
-			.text(on ? "Pokédex: on" : "Pokédex");
+		$("#rr-mode-dex").prop("checked", on);
 		if (!on) return;
 		build();
 		$("#rr-dex").show();
@@ -285,11 +294,23 @@ var RRDex = (function () {
 	}
 
 	function bind() {
-		$(document).on("click", "#rr-mode-dex", function () {
-			setActive(!active);
+		$(document).on("change", "#rr-mode-dex", function () {
+			setActive($(this).prop("checked"));
+		});
+		$(document).on("click", "#rr-dex-back", function () {
+			setActive(false);
 		});
 		$(document).on("input", "#rr-dex-search", function () {
 			renderList($(this).val());
+			// Show the first match rather than leaving whatever was open before,
+			// which otherwise reads as the search having done nothing.
+			var first = $("#rr-dex-list .rr-dex-item").first();
+			if (!first.length) return;
+			if (!$("#rr-dex-list .rr-dex-item.rr-on").length) {
+				current = ~~first.data("id");
+				renderList($(this).val());
+				renderDetail();
+			}
 		});
 		$(document).on("click", ".rr-dex-item, .rr-dex-link", function () {
 			current = ~~$(this).data("id");
@@ -304,8 +325,10 @@ var RRDex = (function () {
 	}
 
 	$(function () {
-		$(".modeSelection").append(
-			'<button id="rr-mode-dex" class="btn" type="button">Pokédex</button>');
+		$(".modeSelection").find(".rr-extra-modes").addBack().last().append(
+			'<input class="mode visually-hidden" type="checkbox" id="rr-mode-dex" />' +
+			'<label class="btn btn-right" for="rr-mode-dex" ' +
+				'title="Browse every Pokemon in the game">Pokédex</label>');
 		bind();
 	});
 

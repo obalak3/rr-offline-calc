@@ -331,11 +331,9 @@ body.dark-theme #rr-crit {
 /* Only present in doubles mode. */
 #p3, #p4, .rr-extra-result, .rr-aim, #rr-dbl-combined { display: none; }
 
-#rr-mode-doubles { margin-left: 8px; cursor: pointer; font: inherit; }
-#rr-mode-doubles.rr-on { background: #b4472e; border-color: #b4472e; color: #fff; }
-body.dark-theme #rr-mode-doubles.rr-on {
-	background: #ff7a4d; border-color: #ff7a4d; color: #000;
-}
+/* Our two toggles sit as their own segmented pair beside the mode buttons. */
+.rr-extra-modes { display: inline-block; margin-left: 1.2em; }
+.rr-extra-modes .btn { width: 6em; }
 
 /* .poke-info floats left, so two panels sit side by side in one column unless
    the column is narrowed to a single panel's width. */
@@ -410,15 +408,11 @@ body.rr-dex-on .main-result-group,
 body.rr-dex-on .panel,
 body.rr-dex-on #rr-panel,
 body.rr-dex-on #rr-dbl-combined,
-body.rr-dex-on .wrapper > div[role="region"]:not(#rr-dex),
+body.rr-dex-on .wrapper > div[role="region"]:not(#rr-dex):not([aria-label="Settings"]),
 body.rr-dex-on #rr-crit,
 body.rr-dex-on hr { display: none; }
 
-#rr-mode-dex { margin-left: 8px; cursor: pointer; font: inherit; }
-#rr-mode-dex.rr-on { background: #b4472e; border-color: #b4472e; color: #fff; }
-body.dark-theme #rr-mode-dex.rr-on {
-	background: #ff7a4d; border-color: #ff7a4d; color: #000;
-}
+
 
 #rr-dex-body { display: flex; gap: 14px; align-items: flex-start; margin-top: 10px; }
 #rr-dex .rr-dex-side { flex: 0 0 262px; }
@@ -498,3 +492,39 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
 .rr-dex-num, .rr-dex-lv { text-align: right; font-variant-numeric: tabular-nums; }
 .rr-dex-moves .rr-dex-txt { display: table-cell; font-size: 1em; }
 .rr-dex-msg { opacity: .7; padding: 12px 0; }
+
+.rr-dex-bar {
+	display: flex; align-items: center; gap: 14px;
+	margin: 12px 0 4px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid rgba(128, 128, 128, .3);
+}
+.rr-dex-title { margin: 0; font-size: 1.3em; }
+#rr-dex-back { width: auto; padding: 4px 12px; margin: 0; }
+
+/* Sits with the calculator's results; a heading keeps it from reading as a
+   stray table dropped into the page. */
+#rr-crit .rr-crit-head {
+	font-size: .8em; font-weight: 700;
+	text-transform: uppercase; letter-spacing: .4px;
+	opacity: .65; margin-bottom: 4px;
+}
+
+/* The panel was taller than its content warranted. */
+#rr-panel .rr-cols { min-height: 0; }
+#rr-panel .rr-battles { max-height: 268px; }
+#rr-panel .rr-detail { max-height: 268px; }
+
+/* Alternate formes share a name with their base, so the distinguishing item
+   is shown alongside. */
+.rr-dex-form {
+	display: block; font-style: normal; font-weight: 400;
+	font-size: .78em; opacity: .6;
+}
+.rr-dex-formbig { font-size: .55em; font-weight: 400; opacity: .7; }
+
+/* Keep the dex header aligned with the content below it. The .btn class
+   carries a negative top margin for the calculator's segmented groups, which
+   pulls a lone button out of line here. */
+.rr-dex-bar { justify-content: space-between; }
+.rr-dex-bar .btn { margin-top: 0; }

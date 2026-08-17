@@ -473,9 +473,13 @@ var RRDoubles = (function () {
 		var foeCount = isMine ? state.living.theirs : state.living.mine;
 		var allyCount = (isMine ? state.living.mine : state.living.theirs) - 1;
 
+		// Upstream's wording ("select one to show detailed results") describes a
+		// single radio group; with four lists only one row can be selected
+		// page-wide, so it would be misleading here. Names are disambiguated the
+		// same way the target buttons are.
 		$("#resultHeader" + prefix).text(
-			(attacker ? attacker.name : "Pokémon " + SLOT_LABEL[panelId]) +
-			"'s Moves (select one to aim it)");
+			(attacker ? targetName(state, panelId) : "Pokémon " + SLOT_LABEL[panelId]) +
+			"'s Moves (click a target to use it)");
 
 		// Damage depends on each row's own target, so rows are computed against
 		// their own defender rather than one shared opponent.
@@ -599,8 +603,7 @@ var RRDoubles = (function () {
 		$(".rr-aim").toggle(on);
 		$("#rr-dbl-combined").toggle(on);
 		$("body").toggleClass("rr-doubles-on", on);
-		$("#rr-mode-doubles").toggleClass("rr-on", on)
-			.text(on ? "Doubles: on" : "Doubles: off");
+		$("#rr-mode-doubles").prop("checked", on);
 		if (typeof RRTrainers !== "undefined" && RRTrainers.setFacing) {
 			// Re-apply under the new capacity: one opponent in singles, two in
 			// doubles, so a leftover second pick cannot linger.
@@ -618,8 +621,8 @@ var RRDoubles = (function () {
 	}
 
 	function bind() {
-		$(document).on("click", "#rr-mode-doubles", function () {
-			setActive(!active);
+		$(document).on("change", "#rr-mode-doubles", function () {
+			setActive($(this).prop("checked"));
 		});
 
 		$(document).on("click", ".rr-tgt", function (event) {
@@ -689,8 +692,15 @@ var RRDoubles = (function () {
 
 	$(function () {
 		if (typeof RRCritKO === "undefined") return;
+		// Built like the calculator's own mode buttons -- a visually hidden
+		// checkbox plus a .btn label -- so it picks up the same styling, hover
+		// and checked states in both themes instead of looking bolted on.
 		$(".modeSelection").append(
-			'<button id="rr-mode-doubles" class="btn" type="button">Doubles: off</button>');
+			'<span class="rr-extra-modes">' +
+				'<input class="mode visually-hidden" type="checkbox" id="rr-mode-doubles" />' +
+				'<label class="btn btn-left" for="rr-mode-doubles" ' +
+					'title="Two Pokemon a side">Doubles</label>' +
+			'</span>');
 		bind();
 	});
 

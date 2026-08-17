@@ -663,7 +663,8 @@
 		}
 		var analysis = analyseAgainst(defender);
 		if (!analysis || !analysis.rows.length) return "";
-		var html = '<table class="rr-matrix rr-critbox"><thead><tr>' +
+		var html = '<div class="rr-crit-head">Crit-aware KO chance</div>' +
+			'<table class="rr-matrix rr-critbox"><thead><tr>' +
 			'<th>' + esc(analysis.attacker.name) + ' vs ' + esc(defender.name) + '</th>' +
 			'<th>Damage</th><th>Crit rate</th><th>KO chance (crits included)</th>' +
 			'<th>KO chance (no crits)</th></tr></thead><tbody>';
@@ -1057,6 +1058,10 @@
 		team = load(STORE_TEAM, []) || [];
 
 		$(".wrapper").first().prepend(panelHtml());
+		// Move the crit-aware table down to sit with the calculator's own
+		// results, where damage figures belong, instead of above the title.
+		var main = $(".main-result-group");
+		if (main.length) main.after($("#rr-crit"));
 		$("#rr-mgm").prop("checked", !!prefs.mgm);
 		$("#rr-focus").prop("checked", !!prefs.focusEnergy);
 		$("#rr-effects").prop("checked", prefs.applyEffects !== false);
