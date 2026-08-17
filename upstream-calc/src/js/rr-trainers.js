@@ -114,12 +114,30 @@
 		setdex[species][setName] = set;
 
 		var id = species + " (" + setName + ")";
-		var $sel = $(slotId).find("input.set-selector");
+		var $slot = $(slotId);
+		var $sel = $slot.find("input.set-selector");
+
 		$sel.val(id);
+		// Upstream's .forme change handler derives the current species from the
+		// *rendered* select2 label rather than from the input value. Leaving the
+		// label stale makes it read the previous species, conclude we switched
+		// formes, and overwrite the ability with the new species' default. So
+		// update the label before firing change, not after.
+		$slot.find(".select2-chosen").first().text(id);
 		try {
 			$sel.select2("val", id);
 		} catch (e) { /* select2 rebuilds its list lazily; val + change is enough */ }
 		$sel.val(id).change();
+
+		// Safety net: several upstream paths reset the ability while applying a
+		// set (one of them via a selector typo, ".abilities"), so assert it.
+		if (set.ability) {
+			var $ability = $slot.find("select.ability");
+			if ($ability.children("option[value='" + set.ability + "']").length &&
+				$ability.val() !== set.ability) {
+				$ability.val(set.ability).change();
+			}
+		}
 		return true;
 	}
 
@@ -135,7 +153,11 @@
 		if (mon.ability) set.ability = mon.ability;
 		var setName = battle.trainer + (battle.variant ? " / " + battle.variant : "");
 		if (loadIntoSlot("#p2", mon.species, setName, set)) {
-			render();
+			// Only the 1v1 table changes here. Re-rendering the whole panel would
+			// detach the chip being clicked and discard the battle list; and the
+			// matrix depends on the attacker and the enemy team, neither of which
+			// this touched, so recomputing it would be pure waste.
+			renderCrit();
 		}
 	}
 
@@ -199,7 +221,7 @@
 		};
 		if (member.ability) set.ability = member.ability;
 		if (loadIntoSlot("#p1", member.species, "My " + member.species, set)) {
-			render();
+			renderResults();
 		}
 	}
 
@@ -338,8 +360,7 @@
 				(mon.item ? '<span class="rr-ci">@ ' + esc(mon.item) + '</span>' : "") +
 				'</button>';
 		}
-		html += '</div>';
-		html += matrixTable(battle);
+		html += '</div><div id="rr-matrix"></div>';
 		return html;
 	}
 
@@ -448,6 +469,29 @@
 
 	var rendering = false;
 
+	/** Just the 1v1 crit-aware table, which depends on both current slots. */
+	function renderCrit() {
+		if (!data || rendering) return;
+		rendering = true;
+		try {
+			$("#rr-crit").html(critBox());
+		} finally {
+			rendering = false;
+		}
+	}
+
+	/** The matrix too: needed when the attacker, battle, or prefs change. */
+	function renderResults() {
+		if (!data || rendering) return;
+		rendering = true;
+		try {
+			if (currentBattle) $("#rr-matrix").html(matrixTable(currentBattle));
+			$("#rr-crit").html(critBox());
+		} finally {
+			rendering = false;
+		}
+	}
+
 	function render() {
 		if (!data || rendering) return;
 		rendering = true;
@@ -456,6 +500,7 @@
 			$("#rr-battles").html(battleList());
 			$("#rr-detail").html(detailPanel());
 			$("#rr-team").html(teamBar());
+			$("#rr-matrix").html(currentBattle ? matrixTable(currentBattle) : "");
 			$("#rr-crit").html(critBox());
 		} finally {
 			rendering = false;
