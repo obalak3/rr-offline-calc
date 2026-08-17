@@ -211,35 +211,6 @@ body.dark-theme #rr-crit {
 }
 #rr-panel .rr-member .rr-drop-mon:hover { color: var(--rr-accent); }
 
-/* ------------------------------------------------------------- matrices */
-
-.rr-matrix-wrap { overflow-x: auto; }
-
-.rr-matrix {
-	border-collapse: collapse;
-	width: 100%;
-	font-size: 11px;
-}
-
-.rr-matrix th,
-.rr-matrix td {
-	border: 1px solid var(--rr-line);
-	padding: 3px 6px;
-	text-align: left;
-	vertical-align: top;
-	white-space: nowrap;
-}
-
-.rr-matrix thead th { background: var(--rr-bg-alt); }
-.rr-matrix tbody th { background: var(--rr-bg-alt); font-weight: 600; }
-.rr-matrix .rr-mh { display: block; color: var(--rr-muted); font-size: 10px; }
-.rr-matrix .rr-dmg { display: block; font-weight: 600; }
-.rr-matrix .rr-ko { display: block; color: var(--rr-muted); }
-.rr-matrix .rr-nil { color: var(--rr-muted); }
-.rr-matrix td.rr-kill .rr-ko,
-.rr-matrix td.rr-kill { color: var(--rr-accent); }
-.rr-matrix .rr-plain { color: var(--rr-muted); }
-
 #rr-crit {
 	--rr-bg: #fff;
 	--rr-bg-alt: #f2f4f7;
@@ -317,14 +288,6 @@ body.dark-theme #rr-crit {
 	--rr-accent: #ff7a4d;
 	--rr-accent-soft: #24120c;
 }
-
-/* The calculator's own table styles wash these out against black, so state
-   the colour rather than inheriting it. */
-.rr-matrix tbody td { color: var(--rr-text); }
-.rr-matrix .rr-plain,
-.rr-matrix .rr-ko { color: var(--rr-muted); }
-.rr-matrix td.rr-kill,
-.rr-matrix td.rr-kill .rr-ko { color: var(--rr-accent); }
 
 /* --------------------------------------------------------- double battle */
 
@@ -412,8 +375,6 @@ body.rr-dex-on #rr-dbl-combined,
 body.rr-dex-on .wrapper > div[role="region"]:not(#rr-dex):not([aria-label="Settings"]),
 body.rr-dex-on #rr-crit,
 body.rr-dex-on hr { display: none; }
-
-
 
 #rr-dex-body { display: flex; gap: 14px; align-items: flex-start; margin-top: 10px; }
 #rr-dex .rr-dex-side { flex: 0 0 262px; }
@@ -509,10 +470,11 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
 .rr-critline .rr-plain { opacity: .65; }
 .rr-critline.rr-incoming { opacity: .95; }
 
-/* The panel was taller than its content warranted. */
+/* Sized to the content now that the damage matrix is gone; the battle list
+   scrolls rather than stretching the row to fit it. */
 #rr-panel .rr-cols { min-height: 0; }
-#rr-panel .rr-battles { max-height: 268px; }
-#rr-panel .rr-detail { max-height: 268px; }
+#rr-panel .rr-battles { max-height: 208px; }
+#rr-panel .rr-detail { max-height: 208px; }
 
 /* Alternate formes share a name with their base, so the distinguishing item
    is shown alongside. */
@@ -527,21 +489,6 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
    pulls a lone button out of line here. */
 .rr-dex-bar { justify-content: space-between; }
 .rr-dex-bar .btn { margin-top: 0; }
-
-/* The six-opponent matrix has seven columns; forcing every cell to one line
-   pushed it past the panel. The KO line wraps instead, so it fits. */
-#rr-panel .rr-matrix .rr-ko { white-space: normal; }
-#rr-panel .rr-matrix th, #rr-panel .rr-matrix td { white-space: normal; }
-#rr-panel .rr-matrix .rr-dmg { white-space: nowrap; }
-#rr-panel .rr-matrix { table-layout: fixed; }
-
-/* An elevated crit rate is the thing worth spotting, so it is called out. */
-.rr-crit-rate { font-variant-numeric: tabular-nums; }
-.rr-crit-rate.rr-crit-high { color: #b4472e; font-weight: 700; }
-.rr-crit-rate.rr-crit-always { color: #b4472e; font-weight: 700; text-transform: uppercase; }
-body.dark-theme .rr-crit-rate.rr-crit-high,
-body.dark-theme .rr-crit-rate.rr-crit-always { color: #ff7a4d; }
-
 
 .rr-crit-flag {
 	font-size: .8em; font-weight: 700; color: #b4472e;
@@ -578,3 +525,6 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 #rr-panel .rr-speed-row.rr-faster { color: var(--rr-accent); border-color: var(--rr-accent); }
 #rr-panel .rr-speed-note { font-size: 11px; color: var(--rr-accent); margin-top: 4px; }
 #rr-panel .rr-speed-note.rr-speed-ok { color: var(--rr-muted); }
+
+/* Used by the crit lines for the quieter half of a sentence. */
+.rr-plain { color: var(--rr-muted); opacity: .8; }

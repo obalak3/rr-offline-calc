@@ -222,9 +222,10 @@ function run() {
 		check('the opponent\'s threat is reported', !!incoming,
 			incoming ? '' : 'no incoming line');
 
-		const matrix = window.document.querySelectorAll('#rr-detail .rr-matrix tbody tr');
-		check('damage matrix rendered', matrix.length > 0,
-			`got ${matrix.length} rows`);
+		// The damage matrix was removed once the results block and the doubles
+		// view covered the same ground.
+		check('no leftover damage matrix',
+			window.document.querySelectorAll('#rr-detail .rr-matrix').length === 0);
 
 		// ------------------------------------------------------ speed tiers
 		{

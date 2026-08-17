@@ -225,37 +225,38 @@ const field = new calc.Field();
 
 // ------------------------------------------------- doubles / focus fire
 
-// One attacker through the focus-fire path must equal the single-target path.
+// Combining shots is what the doubles view actually calls, so test that
+// directly. One attacker through it must equal the single-target result.
 {
 	const a = mon('Blaziken', {level: 50, nature: 'Adamant', evs: {atk: 252}});
 	const d = mon('Snorlax', {level: 50});
 	const m = mv('Flamethrower');
 	const solo = RRCritKO.analyse(gen, a, d, m, field, {});
-	const ff = RRCritKO.analyseFocusFire(gen, [{attacker: a, move: m}], d, field, {});
-	approx('focus fire with one attacker matches the single-target result',
-		ff.chances[0] - solo.chances[0], 0, 1e-12);
+	const shot = RRCritKO.shotFor(gen, a, d, m, field, 0);
+	const combined = RRCritKO.koChancesMulti([shot], d.curHP(), 6);
+	approx('one shot through koChancesMulti matches the single-target result',
+		combined[0] - solo.chances[0], 0, 1e-12);
 }
 
-// Two attackers must kill at least as often as either alone, and the combined
-// chance must exceed what you would guess from the better one.
+// Two attackers must kill at least as often as either alone.
 {
 	const d = mon('Mienshao', {level: 50});
 	const a1 = mon('Landorus-Therian', {level: 50, nature: 'Adamant', evs: {atk: 252}});
 	const a2 = mon('Alakazam', {level: 50, nature: 'Modest', evs: {spa: 252}});
-	const m1 = mv('Stone Edge');
-	const m2 = mv('Psychic');
+	const m1 = mv('Stone Edge'), m2 = mv('Psychic');
 	const solo1 = RRCritKO.analyse(gen, a1, d, m1, field, {});
 	const solo2 = RRCritKO.analyse(gen, a2, d, m2, field, {});
-	const both = RRCritKO.analyseFocusFire(gen,
-		[{attacker: a1, move: m1}, {attacker: a2, move: m2}], d, field, {});
-	check('focus fire kills at least as often as the better single attack',
-		both.chances[0] >= Math.max(solo1.chances[0], solo2.chances[0]) - 1e-12, true);
+	const s1 = RRCritKO.shotFor(gen, a1, d, m1, field, 0);
+	const s2 = RRCritKO.shotFor(gen, a2, d, m2, field, 0);
+	const both = RRCritKO.koChancesMulti([s1, s2], d.curHP(), 6);
+	check('two attackers kill at least as often as the better one alone',
+		both[0] >= Math.max(solo1.chances[0], solo2.chances[0]) - 1e-12, true);
 	console.log(`        ${d.name} ${d.maxHP()} HP: Stone Edge alone ` +
 		`${(solo1.chances[0] * 100).toFixed(1)}%, Psychic alone ` +
 		`${(solo2.chances[0] * 100).toFixed(1)}%, together ` +
-		`${(both.chances[0] * 100).toFixed(1)}%`);
+		`${(both[0] * 100).toFixed(1)}%`);
 	check('combined damage range is the sum of the parts',
-		both.minTurnDamage === solo1.minTurnDamage + solo2.minTurnDamage, true);
+		s1.min + s2.min === solo1.minTurnDamage + solo2.minTurnDamage, true);
 }
 
 // Spread moves are weaker in doubles; the engine must see the game type.

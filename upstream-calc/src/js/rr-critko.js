@@ -365,62 +365,8 @@ var RRCritKO = (function () {
 		};
 	}
 
-	/**
-	 * Both attackers focusing one target: does the combined damage kill?
-	 *
-	 * This is the question a doubles turn actually poses, and it is not
-	 * answerable by reading two single-target results side by side. Each attack
-	 * rolls damage and crits independently, so what matters is the probability
-	 * that the *total* crosses the target's HP -- which is a convolution, not a
-	 * sum of averages. Adding the two "maximum damage" figures overstates the
-	 * kill; adding the two averages understates how often a crit gets there.
-	 *
-	 * @param pairs [{attacker, move}] everything aimed at the defender this turn
-	 */
-	function analyseFocusFire(gen, pairs, defender, field, opts) {
-		opts = opts || {};
-		var bonus = opts.critStageBonus || 0;
-		var shots = [];
-		for (var i = 0; i < pairs.length; i++) {
-			if (!pairs[i] || !pairs[i].move) continue;
-			var shot = shotFor(gen, pairs[i].attacker, defender, pairs[i].move,
-				field, bonus);
-			if (shot) shots.push(shot);
-		}
-		if (!shots.length) return null;
-
-		var hp = defender.curHP();
-		var withCrits = koChancesMulti(shots, hp, 6);
-		var flat = [];
-		for (var s = 0; s < shots.length; s++) {
-			flat.push({
-				noCrit: shots[s].noCrit, crit: shots[s].crit,
-				critChance: 0, hits: shots[s].hits
-			});
-		}
-		var withoutCrits = koChancesMulti(flat, hp, 6);
-
-		var min = 0, max = 0;
-		for (var m = 0; m < shots.length; m++) {
-			min += shots[m].min;
-			max += shots[m].max;
-		}
-		var multi = shots.some ? shots.some(function (x) { return x.hits > 1; }) : false;
-		return {
-			shots: shots,
-			chances: withCrits,
-			chancesWithoutCrits: withoutCrits,
-			text: describe(withCrits, multi ? "approx. " : ""),
-			textWithoutCrits: describe(withoutCrits, multi ? "approx. " : ""),
-			minTurnDamage: min,
-			maxTurnDamage: max,
-			maxHP: defender.maxHP()
-		};
-	}
-
 	return {
 		analyse: analyse,
-		analyseFocusFire: analyseFocusFire,
 		shotFor: shotFor,
 		targetsHit: targetsHit,
 		fieldForMove: fieldForMove,

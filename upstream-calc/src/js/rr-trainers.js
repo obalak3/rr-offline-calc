@@ -312,10 +312,6 @@
 
 	// ------------------------------------------------------- crit analysis
 
-	function analyseAgainst(defender) {
-		return analysePair("#p1", defender, false);
-	}
-
 	/**
 	 * Every move one side would use on the other, with its real crit rate.
 	 *
@@ -367,16 +363,6 @@
 
 	function pct(value, max) {
 		return (100 * value / max).toFixed(1);
-	}
-
-	/**
-	 * The KO result in the calculator's own phrasing ("guaranteed OHKO",
-	 * "63.2% chance to 2HKO"). An earlier compact form -- "2HKO 0.2% / 3HKO
-	 * 100%" -- read backwards and did not match anything else on the page.
-	 */
-	function ladder(result) {
-		if (!result) return "&mdash;";
-		return result.text || "not a KO";
 	}
 
 	// ---------------------------------------------------------- speed tiers
@@ -754,61 +740,7 @@
 				(mon.item ? '<span class="rr-ci">@ ' + esc(mon.item) + '</span>' : "") +
 				'</button>';
 		}
-		html += '</div><div id="rr-speed"></div><div id="rr-matrix"></div>';
-		return html;
-	}
-
-	/** Your attacker's moves against every Pokemon on the enemy team. */
-	function matrixTable(battle) {
-		if (typeof createPokemon !== "function") return "";
-		var defenders = [];
-		for (var i = 0; i < battle.team.length; i++) {
-			var poke = enemyPokemon(battle, battle.team[i]);
-			if (poke) defenders.push({mon: battle.team[i], poke: poke});
-		}
-		if (!defenders.length) return "";
-
-		var first = analyseAgainst(defenders[0].poke);
-		if (!first || !first.rows.length) {
-			return '<div class="rr-empty">Give your Pokemon some moves to see the matrix.</div>';
-		}
-
-		var html = '<div class="rr-matrix-wrap"><table class="rr-matrix"><thead><tr><th>' +
-			esc(first.attacker.name) + '</th>';
-		for (var d = 0; d < defenders.length; d++) {
-			html += '<th>' + esc(defenders[d].mon.species) +
-				'<span class="rr-mh">Lv ' + resolveLevel(defenders[d].mon) + '</span></th>';
-		}
-		html += '</tr></thead><tbody>';
-
-		var analyses = [first];
-		for (var k = 1; k < defenders.length; k++) {
-			analyses.push(analyseAgainst(defenders[k].poke));
-		}
-
-		for (var r = 0; r < first.rows.length; r++) {
-			html += '<tr><th>' + esc(first.rows[r].move) + '</th>';
-			for (var c = 0; c < defenders.length; c++) {
-				var analysis = analyses[c];
-				var row = analysis && analysis.rows[r];
-				var res = row && row.result;
-				if (!res) {
-					html += '<td class="rr-nil">&mdash;</td>';
-					continue;
-				}
-				var lo = pct(res.minTurnDamage, res.maxHP);
-				var hi = pct(res.maxTurnDamage, res.maxHP);
-				var kills = res.chances[0] > 0;
-				html += '<td class="' + (kills ? "rr-kill" : "") + '">' +
-					'<span class="rr-dmg">' + lo + " - " + hi + '%</span>' +
-					'<span class="rr-ko">' + ladder(res) + '</span></td>';
-			}
-			html += '</tr>';
-		}
-		html += '</tbody></table></div>' +
-			'<div class="rr-note">KO chances include critical hits at the real ' +
-			'crit rate. Damage range spans a non-crit low roll to a crit high roll. ' +
-			'End-of-turn damage and hazards are not folded in.</div>';
+		html += '</div><div id="rr-speed"></div>';
 		return html;
 	}
 
@@ -965,7 +897,6 @@
 		if (!data || rendering) return;
 		rendering = true;
 		try {
-			if (currentBattle) $("#rr-matrix").html(matrixTable(currentBattle));
 			$("#rr-crit").html(critBox());
 		} finally {
 			rendering = false;
@@ -982,7 +913,6 @@
 			$("#rr-team").html(teamBar());
 			markChips();
 			$("#rr-speed").html(currentBattle ? speedPanel(currentBattle) : "");
-			$("#rr-matrix").html(currentBattle ? matrixTable(currentBattle) : "");
 			$("#rr-crit").html(critBox());
 		} finally {
 			rendering = false;
