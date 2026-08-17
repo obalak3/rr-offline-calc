@@ -212,9 +212,15 @@ function run() {
 		}
 
 		// -------------------------------------------------- crit-aware box
-		const critTable = window.document.querySelectorAll('#rr-crit .rr-critbox tbody tr');
-		check('crit-aware KO table rendered', critTable.length > 0,
-			`got ${critTable.length} rows`);
+		// Crit information is lines attached to the result, not a table.
+		const critLines = window.document.querySelectorAll('#rr-crit .rr-critline');
+		check('crit-aware lines rendered', critLines.length > 0,
+			`got ${critLines.length} lines`);
+		check('crit info is not a separate table',
+			window.document.querySelectorAll('#rr-crit table').length === 0);
+		const incoming = window.document.querySelector('#rr-crit .rr-incoming');
+		check('the opponent\'s threat is reported', !!incoming,
+			incoming ? '' : 'no incoming line');
 
 		const matrix = window.document.querySelectorAll('#rr-detail .rr-matrix tbody tr');
 		check('damage matrix rendered', matrix.length > 0,
