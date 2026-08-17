@@ -223,6 +223,21 @@ var RRCritKO = (function () {
 	}
 
 	/**
+	 * The damage range actually reachable, given how often the move crits.
+	 *
+	 * Spanning "non-crit low roll to crit high roll" is right when a crit is
+	 * merely possible, but wrong at the extremes: a move that always crits
+	 * (Super Luck plus Scope Lens plus a high-ratio move, say) can never roll
+	 * the non-crit minimum, and one that cannot crit can never reach the crit
+	 * maximum.
+	 */
+	function damageSpan(plain, critical, c, hits) {
+		var low = (c >= 1 ? critical : plain)[0];
+		var high = (c <= 0 ? plain : critical);
+		return {min: low * hits, max: high[high.length - 1] * hits};
+	}
+
+	/**
 	 * Full crit-aware analysis for one attacker/defender/move.
 	 *
 	 * Returns null when the move deals no damage.
@@ -260,6 +275,7 @@ var RRCritKO = (function () {
 		var chances = koChances(plain, critical, c, hp, hits, 6);
 		var without = koChances(plain, critical, 0, hp, hits, 6);
 
+		var span = damageSpan(plain, critical, c, hits);
 		return {
 			critChance: c,
 			critStage: critStage(attacker, move, bonus),
@@ -267,8 +283,8 @@ var RRCritKO = (function () {
 			chancesWithoutCrits: without,
 			text: describe(chances, hits > 1 ? "approx. " : ""),
 			textWithoutCrits: describe(without, hits > 1 ? "approx. " : ""),
-			minTurnDamage: plain[0] * hits,
-			maxTurnDamage: critical[critical.length - 1] * hits,
+			minTurnDamage: span.min,
+			maxTurnDamage: span.max,
 			maxHP: defender.maxHP()
 		};
 	}
@@ -335,15 +351,17 @@ var RRCritKO = (function () {
 			return null;
 		}
 		if (Math.max.apply(null, plain.concat(critical)) <= 0) return null;
+		var rate = critChance(attacker, defender, move, bonus);
+		var span = damageSpan(plain, critical, rate, hits);
 		return {
 			noCrit: plain,
 			crit: critical,
-			critChance: critChance(attacker, defender, move, bonus),
+			critChance: rate,
 			hits: hits,
 			attacker: attacker.name,
 			move: move.name,
-			min: plain[0] * hits,
-			max: critical[critical.length - 1] * hits
+			min: span.min,
+			max: span.max
 		};
 	}
 
@@ -412,6 +430,7 @@ var RRCritKO = (function () {
 		koChancesMulti: koChancesMulti,
 		outcomesFor: outcomesFor,
 		describe: describe,
+		damageSpan: damageSpan,
 		HIGH_CRIT_MOVES: HIGH_CRIT_MOVES,
 		ALWAYS_CRIT_MOVES: ALWAYS_CRIT_MOVES,
 		STAGE_RATE: STAGE_RATE

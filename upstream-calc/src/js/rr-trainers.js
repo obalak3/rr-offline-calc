@@ -313,16 +313,30 @@
 	// ------------------------------------------------------- crit analysis
 
 	function analyseAgainst(defender) {
+		return analysePair("#p1", defender, false);
+	}
+
+	/**
+	 * Every move one side would use on the other, with its real crit rate.
+	 *
+	 * `swap` flips the field for the returning direction, the same way the
+	 * calculator does: screens, hazards and terrain are side-specific, so
+	 * calculating the opponent's attacks on an unswapped field would credit
+	 * your Reflect to them.
+	 */
+	function analysePair(attackerSel, defender, swap) {
 		if (typeof createPokemon !== "function" || !defender) return null;
 		var attacker;
 		try {
-			attacker = createPokemon($("#p1"));
+			attacker = createPokemon($(attackerSel));
 		} catch (e) {
 			return null;
 		}
+		if (!attacker || !attacker.name) return null;
 		var field;
 		try {
 			field = createField();
+			if (swap && field.clone) field = field.clone().swap();
 		} catch (e) {
 			field = new calc.Field();
 		}
@@ -654,18 +668,21 @@
 		return html;
 	}
 
-	function critBox() {
+	/** One direction of the crit-aware table. */
+	function critTable(attackerSel, defenderSel, swap, label) {
 		var defender;
 		try {
-			defender = createPokemon($("#p2"));
+			defender = createPokemon($(defenderSel));
 		} catch (e) {
 			return "";
 		}
-		var analysis = analyseAgainst(defender);
+		if (!defender || !defender.name) return "";
+		var analysis = analysePair(attackerSel, defender, swap);
 		if (!analysis || !analysis.rows.length) return "";
-		var html = '<div class="rr-crit-head">Crit-aware KO chance</div>' +
-			'<table class="rr-matrix rr-critbox"><thead><tr>' +
-			'<th>' + esc(analysis.attacker.name) + ' vs ' + esc(defender.name) + '</th>' +
+
+		var html = '<table class="rr-matrix rr-critbox"><thead><tr>' +
+			'<th>' + esc(label) + ": " + esc(analysis.attacker.name) + " vs " +
+			esc(defender.name) + '</th>' +
 			'<th>Damage</th><th>Crit rate</th><th>KO chance (crits included)</th>' +
 			'<th>KO chance (no crits)</th></tr></thead><tbody>';
 		for (var i = 0; i < analysis.rows.length; i++) {
@@ -676,15 +693,33 @@
 					'<td colspan="4" class="rr-nil">no damage</td></tr>';
 				continue;
 			}
+			// A crit rate above the baseline 1/24 is the thing worth noticing:
+			// Super Luck plus Scope Lens plus a high-ratio move crits every time.
+			var rate = res.critChance;
+			var cls = rate >= 0.999 ? " rr-crit-always"
+				: (rate > 1 / 24 + 1e-9 ? " rr-crit-high" : "");
 			html += '<tr><th>' + esc(row.move) + '</th>' +
 				'<td>' + pct(res.minTurnDamage, res.maxHP) + ' - ' +
 				pct(res.maxTurnDamage, res.maxHP) + '%</td>' +
-				'<td>' + (res.critChance * 100).toFixed(1) + '%</td>' +
+				'<td class="rr-crit-rate' + cls + '">' +
+				(rate >= 0.999 ? "always" : (rate * 100).toFixed(1) + "%") + '</td>' +
 				'<td class="rr-kill">' + ladder(res) + '</td>' +
 				'<td class="rr-plain">' + esc(res.textWithoutCrits) + '</td></tr>';
 		}
-		html += '</tbody></table>';
-		return html;
+		return html + "</tbody></table>";
+	}
+
+	/**
+	 * Both directions: what you do to them, and what they do to you. The
+	 * incoming half is the point -- it is where you find out that Giovanni's
+	 * Honchkrow crits with every Night Slash.
+	 */
+	function critBox() {
+		var outgoing = critTable("#p1", "#p2", false, "You");
+		var incoming = critTable("#p2", "#p1", true, "Them");
+		if (!outgoing && !incoming) return "";
+		return '<div class="rr-crit-head">Crit-aware KO chance</div>' +
+			outgoing + incoming;
 	}
 
 	function teamBar() {

@@ -279,5 +279,40 @@ const field = new calc.Field();
 		seSingles.maxTurnDamage === seDoubles.maxTurnDamage, true);
 }
 
+// ------------------------------------------------- damage range extremes
+
+// A move that always crits can never roll the non-crit minimum, and one that
+// cannot crit can never reach the crit maximum.
+{
+	const d = mon('Snorlax', {level: 50});
+	const f = new calc.Field();
+
+	// Super Luck + Scope Lens + a high-ratio move maxes the crit stage.
+	const honch = mon('Honchkrow', {level: 50, ability: 'Super Luck',
+		item: 'Scope Lens', nature: 'Adamant', evs: {atk: 252}});
+	const always = RRCritKO.analyse(gen, honch, d, mv('Night Slash'), f, {});
+	check('Super Luck + Scope Lens + high-ratio move always crits',
+		always.critChance, 1);
+
+	const forced = calc.calculate(gen, honch, d,
+		mv('Night Slash', {isCrit: true}), f).damage;
+	check('an always-crit move starts at the crit low roll, not the non-crit one',
+		always.minTurnDamage, forced[0]);
+	console.log(`        Night Slash ${always.minTurnDamage}-${always.maxTurnDamage}, ` +
+		`crit-only rolls ${forced[0]}-${forced[forced.length - 1]}`);
+
+	// Same Pokemon, a move with no crit-ratio boost: still only stage 2.
+	const partial = RRCritKO.analyse(gen, honch, d, mv('Sucker Punch'), f, {});
+	check('the same Pokemon crits half the time with an ordinary move',
+		partial.critChance, 1 / 2);
+
+	// Shell Armor cannot be crit, so the range must stop at the non-crit max.
+	const armored = mon('Lapras', {level: 50, ability: 'Shell Armor'});
+	const none = RRCritKO.analyse(gen, honch, armored, mv('Night Slash'), f, {});
+	const plain = calc.calculate(gen, honch, armored, mv('Night Slash'), f).damage;
+	check('a move that cannot crit stops at the non-crit high roll',
+		none.maxTurnDamage, plain[plain.length - 1]);
+}
+
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

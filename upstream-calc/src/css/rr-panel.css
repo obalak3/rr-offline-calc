@@ -536,3 +536,17 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
 #rr-panel .rr-matrix th, #rr-panel .rr-matrix td { white-space: normal; }
 #rr-panel .rr-matrix .rr-dmg { white-space: nowrap; }
 #rr-panel .rr-matrix { table-layout: fixed; }
+
+/* An elevated crit rate is the thing worth spotting, so it is called out. */
+.rr-crit-rate { font-variant-numeric: tabular-nums; }
+.rr-crit-rate.rr-crit-high { color: #b4472e; font-weight: 700; }
+.rr-crit-rate.rr-crit-always { color: #b4472e; font-weight: 700; text-transform: uppercase; }
+body.dark-theme .rr-crit-rate.rr-crit-high,
+body.dark-theme .rr-crit-rate.rr-crit-always { color: #ff7a4d; }
+#rr-crit .rr-critbox + .rr-critbox { margin-top: 8px; }
+
+.rr-crit-flag {
+	font-size: .8em; font-weight: 700; color: #b4472e;
+	text-transform: uppercase; letter-spacing: .3px; margin-left: .3em;
+}
+body.dark-theme .rr-crit-flag { color: #ff7a4d; }

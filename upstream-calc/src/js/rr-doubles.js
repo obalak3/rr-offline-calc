@@ -507,11 +507,21 @@ var RRDoubles = (function () {
 
 			labelEl.text(shot ? shot.move : "(No Move)");
 			if (!shot || shot.dead || !defender) {
-				damageEl.text("0 - 0%");
+				damageEl.html("0 - 0%");
 			} else {
-				damageEl.text(pct(shot.min, defender.maxHP()) + " - " +
+				// An elevated crit rate is worth seeing on the row itself: it is
+				// how you notice that a Super Luck holder with Scope Lens crits
+				// every single Night Slash.
+				var crit = "";
+				if (shot.critChance >= 0.999) {
+					crit = ' <b class="rr-crit-flag">always crits</b>';
+				} else if (shot.critChance > 1 / 24 + 1e-9) {
+					crit = ' <b class="rr-crit-flag">' +
+						(shot.critChance * 100).toFixed(0) + '% crit</b>';
+				}
+				damageEl.html(esc(pct(shot.min, defender.maxHP()) + " - " +
 					pct(shot.max, defender.maxHP()) + "%" +
-					(shot.spread ? " (spread)" : ""));
+					(shot.spread ? " (spread)" : "")) + crit);
 			}
 
 			// One target button per living opponent, worth showing only when
