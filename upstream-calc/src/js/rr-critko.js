@@ -274,6 +274,42 @@ var RRCritKO = (function () {
 	}
 
 	/**
+	 * How many Pokemon a move actually hits, given who is still standing.
+	 *
+	 * This decides the spread penalty, which is NOT a property of the format:
+	 * the 0.75x applies only when a move genuinely hits two or more targets. In
+	 * a 2v1 a Rock Slide aimed at the last opponent hits one Pokemon and deals
+	 * full damage -- but an Earthquake still hits 0.75x if the attacker's own
+	 * partner is alive, because it hits that partner too.
+	 *
+	 * @param livingFoes   opponents of the attacker still on the field
+	 * @param livingAllies the attacker's partners still on the field (not itself)
+	 */
+	function targetsHit(move, livingFoes, livingAllies) {
+		if (move.target === "allAdjacentFoes") return Math.max(livingFoes, 0);
+		if (move.target === "allAdjacent") {
+			return Math.max(livingFoes, 0) + Math.max(livingAllies, 0);
+		}
+		return 1;
+	}
+
+	/**
+	 * The field this particular move should be calculated under.
+	 *
+	 * The calculator applies the spread penalty whenever gameType is Doubles, so
+	 * a move that only reaches one target must be calculated as Singles to get
+	 * its true damage.
+	 */
+	function fieldForMove(baseField, move, livingFoes, livingAllies) {
+		var wanted = targetsHit(move, livingFoes, livingAllies) >= 2
+			? "Doubles" : "Singles";
+		if (baseField.gameType === wanted) return baseField;
+		var clone = baseField.clone ? baseField.clone() : baseField;
+		clone.gameType = wanted;
+		return clone;
+	}
+
+	/**
 	 * Build one shot's damage distributions, so several attackers can be
 	 * combined without recomputing anything twice.
 	 */
@@ -368,6 +404,8 @@ var RRCritKO = (function () {
 		analyse: analyse,
 		analyseFocusFire: analyseFocusFire,
 		shotFor: shotFor,
+		targetsHit: targetsHit,
+		fieldForMove: fieldForMove,
 		critChance: critChance,
 		critStage: critStage,
 		koChances: koChances,
