@@ -147,8 +147,11 @@ var RRDoubles = (function () {
 		var p4 = makePanel("p2", "p4", "Pokémon 4");
 		if (!p3 || !p4) return false;
 
-		$("#p1").closest(".panel").append(p3);
-		$("#p2").closest(".panel").append(p4);
+		// Only the two columns that hold Pokemon get stacked and narrowed. The
+		// Field column is also a .panel, and narrowing it left its fieldset
+		// sitting off-centre inside a wider box.
+		$("#p1").closest(".panel").addClass("rr-stack").append(p3);
+		$("#p2").closest(".panel").addClass("rr-stack").append(p4);
 
 		try {
 			if (typeof loadDefaultLists === "function") loadDefaultLists();

@@ -337,8 +337,9 @@ body.dark-theme #rr-crit {
 
 /* .poke-info floats left, so two panels sit side by side in one column unless
    the column is narrowed to a single panel's width. */
-body.rr-doubles-on .panel { width: 32em; }
-body.rr-doubles-on .poke-info { float: none; clear: both; margin-bottom: 8px; }
+/* Clearing the float is what stacks the two panels; forcing a column width as
+   well only made the column narrower than the panel inside it. */
+body.rr-doubles-on .rr-stack .poke-info { float: none; clear: both; margin-bottom: 8px; }
 
 /* Four move lists wrap into 1 | 2 over 3 | 4, mirroring the panels below. */
 body.rr-doubles-on .move-result-subgroup {
@@ -528,3 +529,10 @@ body.dark-theme .rr-dex-bar i { background: #ff7a4d; }
    pulls a lone button out of line here. */
 .rr-dex-bar { justify-content: space-between; }
 .rr-dex-bar .btn { margin-top: 0; }
+
+/* The six-opponent matrix has seven columns; forcing every cell to one line
+   pushed it past the panel. The KO line wraps instead, so it fits. */
+#rr-panel .rr-matrix .rr-ko { white-space: normal; }
+#rr-panel .rr-matrix th, #rr-panel .rr-matrix td { white-space: normal; }
+#rr-panel .rr-matrix .rr-dmg { white-space: nowrap; }
+#rr-panel .rr-matrix { table-layout: fixed; }
