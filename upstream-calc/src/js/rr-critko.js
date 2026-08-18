@@ -223,18 +223,27 @@ var RRCritKO = (function () {
 	}
 
 	/**
-	 * The damage range actually reachable, given how often the move crits.
+	 * The damage range a move actually rolls, and separately the crit ceiling.
 	 *
-	 * Spanning "non-crit low roll to crit high roll" is right when a crit is
-	 * merely possible, but wrong at the extremes: a move that always crits
-	 * (Super Luck plus Scope Lens plus a high-ratio move, say) can never roll
-	 * the non-crit minimum, and one that cannot crit can never reach the crit
-	 * maximum.
+	 * This used to run from the non-crit low roll to the crit high roll, which
+	 * is a range no move ever produces: "Extreme Speed 88.1 - 156.3%" is a
+	 * 1.77x spread where a damage roll spans 1.17x. Folding two different crit
+	 * states into one figure made every number on the page harder to read, and
+	 * for information the crit lines already give properly.
+	 *
+	 * So the range is one crit state throughout -- the ordinary one, or the
+	 * crit one for a move that always crits, since that move can never roll a
+	 * non-crit minimum -- and the crit ceiling is reported alongside it rather
+	 * than inside it.
 	 */
 	function damageSpan(plain, critical, c, hits) {
-		var low = (c >= 1 ? critical : plain)[0];
-		var high = (c <= 0 ? plain : critical);
-		return {min: low * hits, max: high[high.length - 1] * hits};
+		var base = (c >= 1) ? critical : plain;
+		var ceiling = (c > 0) ? critical : plain;
+		return {
+			min: base[0] * hits,
+			max: base[base.length - 1] * hits,
+			critMax: ceiling[ceiling.length - 1] * hits
+		};
 	}
 
 	/**
@@ -285,6 +294,7 @@ var RRCritKO = (function () {
 			textWithoutCrits: describe(without, hits > 1 ? "approx. " : ""),
 			minTurnDamage: span.min,
 			maxTurnDamage: span.max,
+			critMaxDamage: span.critMax,
 			maxHP: defender.maxHP()
 		};
 	}
@@ -361,7 +371,8 @@ var RRCritKO = (function () {
 			attacker: attacker.name,
 			move: move.name,
 			min: span.min,
-			max: span.max
+			max: span.max,
+			critMax: span.critMax
 		};
 	}
 

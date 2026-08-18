@@ -797,6 +797,11 @@
 			html += ' <span class="rr-plain">(crit ' +
 				(result.critChance * 100).toFixed(1) + "%)</span>";
 		}
+		// The crit ceiling, kept out of the range so the range stays one.
+		if (result.critChance > 0 && result.critMaxDamage > result.maxTurnDamage) {
+			html += ' <span class="rr-plain">up to ' +
+				pct(result.critMaxDamage, result.maxHP) + "% on a crit</span>";
+		}
 		// Only worth saying when the crits actually move the answer.
 		if (result.text !== result.textWithoutCrits) {
 			html += ' <span class="rr-plain">&mdash; without crits: ' +

@@ -534,9 +534,16 @@ var RRDoubles = (function () {
 					crit = ' <b class="rr-crit-flag">' +
 						(shot.critChance * 100).toFixed(0) + '% crit</b>';
 				}
+				// The crit ceiling goes after the range, never inside it: a
+				// range that spans two crit states is one no move can roll.
+				var ceiling = "";
+				if (shot.critChance > 0 && shot.critMax > shot.max) {
+					ceiling = ' <span class="rr-plain">up to ' +
+						pct(shot.critMax, defender.maxHP()) + "% on a crit</span>";
+				}
 				damageEl.html(esc(pct(shot.min, defender.maxHP()) + " - " +
 					pct(shot.max, defender.maxHP()) + "%" +
-					(shot.spread ? " (spread)" : "")) + crit);
+					(shot.spread ? " (spread)" : "")) + crit + ceiling);
 			}
 
 			// One target button per living opponent, worth showing only when
@@ -597,9 +604,11 @@ var RRDoubles = (function () {
 			}
 			if (incoming.length < 2) continue;
 
-			var min = 0, max = 0;
+			var min = 0, max = 0, critMax = 0;
 			for (var k = 0; k < incoming.length; k++) {
-				min += incoming[k].min; max += incoming[k].max;
+				min += incoming[k].min;
+				max += incoming[k].max;
+				critMax += incoming[k].critMax;
 			}
 			var chances = RRCritKO.koChancesMulti(incoming, defender.curHP(), 4);
 			var noCrit = [];
@@ -613,7 +622,11 @@ var RRDoubles = (function () {
 				esc(labels.join(" + ")) + " vs. " + esc(targetName(state, defId)) + ": " +
 				min + "-" + max + " (" + pct(min, defender.maxHP()) + " - " +
 				pct(max, defender.maxHP()) + "%) &mdash; " +
-				esc(koText(chances) || "not a KO");
+				esc(koText(chances) || "not a KO") +
+				(critMax > max
+					? ' <span class="rr-plain">up to ' +
+						pct(critMax, defender.maxHP()) + "% if both crit</span>"
+					: "");
 			// One extra line, only when crits actually change the picture or a
 			// move crits more often than the 1/24 baseline.
 			var changed = koText(plainChances) !== koText(chances);

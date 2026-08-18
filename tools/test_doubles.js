@@ -254,6 +254,29 @@ function run() {
 	check('every slot has its own four result rows',
 		rows.every(n => n === 4), rows.join('/'));
 
+	// Every rendered range has to be a range a move can actually roll. The
+	// reported span used to run from the non-crit low roll to the crit high
+	// roll, which is 1.77x where a damage roll spans 1.175x.
+	const spreads = [];
+	for (const p of ['L', 'R', 'M', 'N']) {
+		for (let i = 1; i <= 4; i++) {
+			const el = doc.getElementById(`resultDamage${p}${i}`);
+			if (!el) continue;
+			const m = el.textContent.match(/([\d.]+) - ([\d.]+)%/);
+			if (!m || Number(m[1]) <= 0) continue;
+			spreads.push({row: p + i, ratio: Number(m[2]) / Number(m[1]),
+				text: el.textContent.trim()});
+		}
+	}
+	const tooWide = spreads.filter(s => s.ratio > 1.25);
+	check('every damage range is one a move can actually roll',
+		spreads.length > 0 && tooWide.length === 0,
+		tooWide.length ? tooWide.map(s => `${s.row} ${s.text}`).join('; ')
+			: '(no ranges rendered)');
+	check('the crit ceiling is reported outside the range',
+		spreads.some(s => /on a crit/.test(s.text)),
+		spreads.slice(0, 2).map(s => s.text).join(' | '));
+
 	const damage = doc.getElementById('resultDamageM1');
 	check('Pokemon 3 gets a damage figure of its own',
 		!!damage && /\d/.test(damage.textContent), damage && damage.textContent);

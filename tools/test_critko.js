@@ -313,6 +313,32 @@ const field = new calc.Field();
 	const plain = calc.calculate(gen, honch, armored, mv('Night Slash'), f).damage;
 	check('a move that cannot crit stops at the non-crit high roll',
 		none.maxTurnDamage, plain[plain.length - 1]);
+
+	// A range that mixes crit states is a range no move can roll. The reported
+	// span used to run non-crit low to crit high -- 88.1 to 156.3% for Extreme
+	// Speed, a 1.77x spread where damage rolls only span 255/217 = 1.175x.
+	const ordinary = RRCritKO.analyse(gen, mon('Dragonite', {level: 50}), d,
+		mv('Extreme Speed'), f, {});
+	const rollSpread = 255 / 217;
+	check('an ordinary move reports one crit state, not two',
+		ordinary.maxTurnDamage / ordinary.minTurnDamage <= rollSpread + 0.02, true);
+	console.log(`        Extreme Speed ${ordinary.minTurnDamage}-${ordinary.maxTurnDamage} ` +
+		`(spread ${(ordinary.maxTurnDamage / ordinary.minTurnDamage).toFixed(3)}), ` +
+		`crit ceiling ${ordinary.critMaxDamage}`);
+
+	const critRolls = calc.calculate(gen, mon('Dragonite', {level: 50}), d,
+		mv('Extreme Speed', {isCrit: true}), f).damage;
+	check('the crit ceiling is reported separately and is the crit high roll',
+		ordinary.critMaxDamage, critRolls[critRolls.length - 1]);
+	check('the crit ceiling sits above the ordinary range',
+		ordinary.critMaxDamage > ordinary.maxTurnDamage, true);
+
+	// An always-crit move has no non-crit state, so its range IS the crit one.
+	check('an always-crit move needs no separate ceiling',
+		always.critMaxDamage, always.maxTurnDamage);
+	// And one that cannot crit has no ceiling above its range either.
+	check('a move that cannot crit has no crit ceiling',
+		none.critMaxDamage, none.maxTurnDamage);
 }
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} FAILURE(S)`);
