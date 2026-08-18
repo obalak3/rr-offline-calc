@@ -85,7 +85,24 @@ adds no game knowledge of its own. All credit for the data belongs to them.
 
 ---
 
-## 4. Pokémon
+## 4. Experience growth curves
+
+**`data/gr1.json` … `data/gr6.json`**
+
+- Source: <https://pokeapi.co> (`/api/v2/growth-rate/1..6`)
+- Cached by `tools/fetch_growth.js`; six requests, run only when refreshing.
+
+A Pokémon in a PC box stores experience, not level, so importing one means
+running its species' growth curve backwards. Nothing in the Radical Red dex
+snapshot carries that, and there are only six curves, so the species lists come
+from PokéAPI. Only the six lists are used -- which species is on which curve --
+and the curve formulae themselves are the long-published ones. PokéAPI is a
+free, community-run API; credit for assembling that data belongs to them and to
+the Pokémon data community it draws on.
+
+---
+
+## 5. Pokémon
 
 Pokémon and all related names are trademarks of Nintendo, Creatures Inc., and
 GAME FREAK Inc. Pokémon Radical Red is an unofficial fan-made ROM hack. This

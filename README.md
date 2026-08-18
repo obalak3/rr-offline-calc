@@ -31,11 +31,17 @@ critical with its true probability, including the effect of move crit ratios
 (Slash, Stone Edge, …), Super Luck, Scope Lens / Razor Claw / Leek / Lucky
 Punch, Focus Energy, Merciless, and Battle Armor / Shell Armor.
 
-**3. A damage matrix.** Your attacker's four moves against all six enemy
-Pokémon at once, so you can see the whole fight on one screen.
+**3. Doubles.** Not a second page but the same one, grown: two more Pokémon
+panels stacked under the first two, two more move lists, and a combined readout
+underneath. Battles the sheet flags as doubles select it on their own, singles
+battles switch back, and you choose which two of the enemy team are actually on
+the field — including 2v1, where spread moves stop being halved. Damage,
+targeting and the crit maths all follow.
 
-**4. A saved team.** Keep up to six of your own Pokémon in `localStorage` and
-click to swap which one is attacking.
+**4. A saved team.** Keep your own Pokémon in `localStorage` and click to put
+one on the field — either slot, in doubles. **Import from save** reads them
+straight out of the game's battery `.sav`: your party exactly, natures solved
+from the stored stats, plus everything in your PC boxes.
 
 **5. A Story Order view.** All 96 story trainers in the order you meet them,
 grouped by level cap, with optional fights marked — so you can find the battle
@@ -54,6 +60,14 @@ reach.
 **8. Automatic field effects.** 59 battles carry notes like permanent sandstorm
 or omni-boosted opponents; selecting one sets the weather, terrain, and stat
 boosts to match. Toggleable, and the panel says which notes it couldn't apply.
+
+**9. The Pokédex, offline.** All 1343 entries — stats, types, abilities with
+their descriptions, full movepools and evolution methods — searchable without a
+connection.
+
+**10. Your level follows the level cap.** Selecting a battle puts your own
+Pokémon at the cap for that point in the game, both slots of it, so the numbers
+mean something before you touch anything.
 
 Everything the stock calculator does still works untouched — including picking
 any Pokémon by hand for wild encounters that aren't in the sheet.
@@ -97,6 +111,24 @@ cd upstream-calc && npm run build
 
 The extractor prints a report every run: battle counts, unresolved names, and a
 speed cross-check (see below). Standard library only, no pip installs.
+
+---
+
+## Refreshing the Pokédex
+
+Also only needed when the upstream data changes, and also needs network.
+
+```bash
+curl -sSL https://raw.githubusercontent.com/JwowSquared/Radical-Red-Pokedex/master/data.js \
+  -o data/rr-dex-data.js
+node tools/fetch_growth.js           # the six experience curves, cached in data/
+node tools/build_dex.js              # -> upstream-calc/src/js/data/rr-dex-data.js
+npm run build
+```
+
+The growth curves are separate because the dex snapshot does not carry them, and
+importing a Pokémon out of a PC box needs one: a stored Pokémon keeps its
+experience but not its level.
 
 ---
 
@@ -188,16 +220,24 @@ tools/extract_trainers.py     CSV -> trainer dataset, with a validation report
 tools/dump_calc_names.js      export the calculator's canonical name lists
 tools/verify_roster.js        cross-check the roster against the RR Pokedex
 tools/build_dex.js            RR Pokedex snapshot -> the offline dex bundle
+tools/fetch_growth.js         cache the six experience curves (needs network)
+tools/prune_dist.js           strip everything the page does not reference
 tools/test_critko.js          checks for the crit-aware KO engine
 tools/test_page.js            drives the built page in a headless DOM
+tools/test_doubles.js         drives doubles: format, facing, both your slots
 tools/test_offline.js         opens it as file://, with no server at all
+tools/test_save.js            reads a real .sav and checks nothing is invented
 tools/test_load_all.js        loads all 792 trainer Pokemon and verifies them
 upstream-calc/                the vendored MIT calculator
   src/js/rr-critko.js           crit-aware KO probability      (new, mine)
   src/js/rr-trainers.js         trainer panel + team manager   (new, mine)
+  src/js/rr-doubles.js          doubles, inside the same page  (new, mine)
+  src/js/rr-dex.js              the offline Pokedex            (new, mine)
+  src/js/rr-save.js             battery-save importer          (new, mine)
   src/js/data/rr-trainers-data.js  generated dataset           (new, generated)
+  src/js/data/rr-dex-data.js       generated dex bundle        (new, generated)
   src/css/rr-panel.css          panel styles                   (new, mine)
-  src/index.template.html       +4 lines, +1 changed (dark by default)
+  src/index.template.html       mode row, credits, script tags
   src/js/dark-theme-toggle.js   1 changed line (dark by default)
 ```
 
@@ -209,10 +249,19 @@ upstream-calc/                the vendored MIT calculator
   damage (weather, poison, Leftovers). Those live inside the upstream KO
   routine, which isn't exported piecewise. The stock KO line, which does include
   them, is always shown alongside.
-- Weather, terrain and omni-boost effects are applied automatically, but
-  doubles, inverse battles, banned types and mid-battle transformations have no
-  equivalent in the calculator. They're shown and explicitly listed as not
-  applied, rather than silently ignored.
+- Weather, terrain and omni-boost effects are applied automatically, and so is
+  the doubles format. Inverse battles, banned types and mid-battle
+  transformations have no equivalent in the calculator; they're shown and
+  explicitly listed as not applied, rather than silently ignored.
+- The save importer does not know where the ability slot lives in the save.
+  Radical Red gives most species three abilities where vanilla had two, so it
+  cannot be the single bit vanilla used, and a byte-by-byte search against
+  known Pokémon found nothing. Imports default to the species' first ability
+  and the panel's dropdown changes it.
+- A Pokémon in a PC box stores no stats, so the nature fingerprint that pins a
+  party member's nature exactly is not available: stored Pokémon come in as
+  Adamant or Modest by whichever attacking stat is higher. Their levels are
+  exact — derived from the stored experience and the species' growth curve.
 - Hidden Power's type is fixed by the parity of the six IVs, so a Pokémon
   carrying it gets the type's canonical IV spread and the Speed IV is fitted
   within that parity class. One Pokémon (Brendan's Sceptile-Mega) cannot satisfy
