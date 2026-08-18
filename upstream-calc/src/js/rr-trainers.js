@@ -295,7 +295,7 @@
 		};
 	}
 
-	function loadTeamMember(member) {
+	function loadTeamMember(member, panelId) {
 		var set = {
 			level: member.level,
 			nature: member.nature,
@@ -305,7 +305,13 @@
 			ivs: toCalcStats(member.ivs)
 		};
 		if (member.ability) set.ability = member.ability;
-		if (loadIntoSlot("#p1", member.species, "My " + member.species, set)) {
+		var target = panelId || "p1";
+		if (loadIntoSlot("#" + target, member.species, "My " + member.species, set)) {
+			// Pokemon 3 was created after the calculator bound its set-selector
+			// handler, so it has to be filled through the doubles view's own.
+			if (typeof window.RRDoubles !== "undefined" && window.RRDoubles.fill) {
+				window.RRDoubles.fill(target);
+			}
 			renderResults();
 		}
 	}
@@ -862,15 +868,31 @@
 	function teamBar() {
 		var html = '<div class="rr-team-head"><b>My Team</b>' +
 			'<button id="rr-save-mon" title="Save the current attacker">+ save current</button>' +
-			'</div><div class="rr-team-list">';
+			'<label class="rr-save-import" title="Read your team straight out of the ' +
+				'game\'s battery save">import from save' +
+				'<input type="file" id="rr-save-file" accept=".sav,.srm" /></label>' +
+			'</div><div id="rr-save-out"></div><div class="rr-team-list">';
 		if (!team.length) {
 			html += '<span class="rr-empty">Set up your Pokemon on the left, then ' +
 				'press "save current" to keep it here.</span>';
 		}
 		for (var i = 0; i < team.length; i++) {
-			html += '<span class="rr-member"><button class="rr-load-mon" data-i="' + i + '">' +
-				esc(team[i].species) + ' <span class="rr-cl">Lv ' + team[i].level +
-				'</span></button><button class="rr-drop-mon" data-i="' + i +
+			var doubles = (typeof window.RRDoubles !== "undefined" &&
+				window.RRDoubles.isActive());
+			// A nickname is the only thing telling two of a species apart.
+			var label = team[i].nickname || team[i].species;
+			html += '<span class="rr-member"><button class="rr-load-mon" data-i="' + i +
+				'" data-panel="p1" title="Use ' + esc(team[i].species) +
+				' as Pok\u00e9mon 1">' +
+				esc(label) + ' <span class="rr-cl">Lv ' + team[i].level +
+				'</span></button>';
+			if (doubles) {
+				// Pokemon 3 is the other half of your side; without this there is
+				// no way to put a saved Pokemon into it.
+				html += '<button class="rr-load-mon rr-load-alt" data-i="' + i +
+					'" data-panel="p3" title="Use as Pok\u00e9mon 3">3</button>';
+			}
+			html += '<button class="rr-drop-mon" data-i="' + i +
 				'" title="Remove">x</button></span>';
 		}
 		return html + '</div>';
@@ -1025,6 +1047,7 @@
 		$("#rr-mylevel").on("change input", function () {
 			prefs.myLevel = Math.max(1, Math.min(250, ~~$(this).val() || 100));
 			save(STORE_PREFS, prefs);
+			applyMyLevel();
 			reloadFacing();
 			render();
 		});
@@ -1039,7 +1062,7 @@
 		});
 
 		$("#rr-team").on("click", ".rr-load-mon", function () {
-			loadTeamMember(team[~~$(this).data("i")]);
+			loadTeamMember(team[~~$(this).data("i")], $(this).data("panel"));
 		});
 
 		$("#rr-team").on("click", ".rr-drop-mon", function () {
@@ -1185,6 +1208,37 @@
 		prefs.myLevel = cap;
 		$("#rr-mylevel").val(cap);
 		save(STORE_PREFS, prefs);
+		applyMyLevel();
+	}
+
+	/**
+	 * Put your own Pokemon at your level.
+	 *
+	 * This field used to feed only the enemy's relative levels ("Highest Lv -2"),
+	 * which meant selecting Brock moved your level to the cap of 15 and left
+	 * your attacker sitting at 100. Every damage figure on the page was then
+	 * quietly wrong until you noticed and typed the level in yourself. Your
+	 * side follows your level now, both slots of it.
+	 *
+	 * Loading a saved Pokemon still wins: that set carries its own level, and
+	 * choosing it is a deliberate act.
+	 */
+	function applyMyLevel() {
+		var ids = ["#p1"];
+		if (typeof window.RRDoubles !== "undefined" && window.RRDoubles.isActive()) {
+			ids.push("#p3");
+		}
+		var touched = false;
+		for (var i = 0; i < ids.length; i++) {
+			var $level = $(ids[i]).find(".level");
+			if (!$level.length || ~~$level.val() === prefs.myLevel) continue;
+			$level.val(prefs.myLevel).change();
+			touched = true;
+		}
+		if (touched && typeof window.RRDoubles !== "undefined" &&
+			window.RRDoubles.isActive()) {
+			window.RRDoubles.refresh();
+		}
 	}
 
 	/** True when the sheet flags this battle as a double battle. */
@@ -1240,7 +1294,34 @@
 			// zeroed Pokemon 2's EVs and left Pokemon 4's alone.
 			notifyFacing();
 		},
-		markChips: markChips
+		markChips: markChips,
+		/** Append imported Pokemon to the saved team, skipping duplicates. */
+		addTeam: function (list) {
+			var added = 0;
+			for (var i = 0; i < list.length; i++) {
+				var mon = list[i];
+				var already = false;
+				for (var t = 0; t < team.length; t++) {
+					if (team[t].species === mon.species &&
+						team[t].level === mon.level &&
+						(team[t].nickname || "") === (mon.nickname || "") &&
+						team[t].moves.join() === mon.moves.join()) {
+						already = true;
+						break;
+					}
+				}
+				if (already) continue;
+				team.push({
+					species: mon.species, level: mon.level, nature: mon.nature,
+					ability: mon.ability, item: mon.item, moves: mon.moves.slice(0, 4),
+					evs: mon.evs, ivs: mon.ivs, nickname: mon.nickname || ""
+				});
+				added++;
+			}
+			save(STORE_TEAM, team);
+			render();
+			return added;
+		}
 	};
 
 	$(function () {

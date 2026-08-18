@@ -537,3 +537,31 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 .credits p { max-width: 60em; margin: 0 0 .6em; }
 .credits ul { max-width: 60em; margin: 0 0 .8em; padding-left: 1.2em; }
 .credits li { margin-bottom: .35em; line-height: 1.45; }
+
+/* -------------------------------------------------------- save file import */
+
+#rr-panel .rr-save-import {
+	font: inherit; font-size: 11px; cursor: pointer;
+	border: 1px solid var(--rr-line); border-radius: 4px;
+	padding: 3px 8px; color: var(--rr-text);
+}
+#rr-panel .rr-save-import:hover { border-color: var(--rr-accent); }
+#rr-panel .rr-save-import input { display: none; }
+#rr-save-out { margin: 5px 0; }
+#rr-save-out .rr-save-msg { font-size: 11px; color: var(--rr-muted); }
+#rr-save-out .rr-save-slot {
+	display: flex; align-items: center; gap: 8px; margin-bottom: 3px;
+}
+#rr-save-out .rr-save-take {
+	font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
+	border: 1px solid var(--rr-accent); border-radius: 4px;
+	background: var(--rr-accent-soft); color: var(--rr-text); padding: 2px 8px;
+}
+#rr-save-out .rr-save-desc { font-size: 11px; color: var(--rr-muted); }
+
+/* In doubles a saved Pokemon can go into either of your two slots. */
+#rr-panel .rr-member .rr-load-alt {
+	border-radius: 0; border-left: none; padding: 3px 7px;
+	font-weight: 700; color: var(--rr-muted);
+}
+#rr-panel .rr-member .rr-load-alt:hover { color: var(--rr-accent); }

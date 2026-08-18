@@ -211,6 +211,23 @@ function run() {
 				`expected ${firstBattle.team[0].ability} got ${$('#p2').find('.ability').val()}`);
 		}
 
+		// ------------------------------------------------- your own level
+		// The level cap moved your level in the panel but left your attacker
+		// at 100, so every damage figure was wrong until you retyped it.
+		const cap = ~~$('#rr-mylevel').val();
+		if (cap > 0 && cap < 100) {
+			check('your Pokemon sits at the level cap',
+				~~$('#p1').find('.level').val() === cap,
+				`cap ${cap}, attacker Lv${$('#p1').find('.level').val()}`);
+		} else {
+			check('your Pokemon sits at the level cap', true);
+		}
+		$('#rr-mylevel').val(42).trigger('change');
+		check('typing your level moves your Pokemon with it',
+			~~$('#p1').find('.level').val() === 42,
+			`attacker Lv${$('#p1').find('.level').val()}`);
+		$('#rr-mylevel').val(cap || 100).trigger('change');
+
 		// -------------------------------------------------- crit-aware box
 		// Crit information is lines attached to the result, not a table.
 		const critLines = window.document.querySelectorAll('#rr-crit .rr-critline');

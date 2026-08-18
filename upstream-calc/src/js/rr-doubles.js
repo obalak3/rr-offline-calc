@@ -321,6 +321,21 @@ var RRDoubles = (function () {
 		to.find("input.set-selector").val(value);
 		setLabel(to, value);
 		applySet(toId);
+		mirrorLevel(fromId, toId);
+	}
+
+	/**
+	 * A set carries the level it was written at, not the level you are playing
+	 * at. Copying one into Pokemon 3 therefore brought a level 100 partner in
+	 * beside your level 59 lead, and every number for that half of your side
+	 * was wrong. Your two slots share a level; keep them that way.
+	 */
+	function mirrorLevel(fromId, toId) {
+		var level = $("#" + fromId + " .level").val();
+		if (!level) return;
+		var $to = $("#" + toId + " .level");
+		if (!$to.length || $to.val() === String(level)) return;
+		$to.val(level).change();
 	}
 
 	/** Load one of the sheet's Pokemon into a panel. */
@@ -650,6 +665,9 @@ var RRDoubles = (function () {
 		// createField reads it and it decides which field options are shown --
 		// Helping Hand and the rest only apply in doubles.
 		$(on ? "#doubles-format" : "#singles-format").prop("checked", true).change();
+		// Entering doubles after a battle was already chosen skips build(),
+		// so your second slot would keep whatever level it last had.
+		if (on) mirrorLevel("p1", "p3");
 		if (typeof RRTrainers !== "undefined" && RRTrainers.setFacing) {
 			// Re-apply under the new capacity: one opponent in singles, two in
 			// doubles, so a leftover second pick cannot linger.
@@ -744,6 +762,11 @@ var RRDoubles = (function () {
 	});
 
 	return {
+		/** Pokemon 3 and 4 need applySet; the originals carry upstream's own. */
+		fill: function (panelId) {
+			if (panelId === "p3" || panelId === "p4") applySet(panelId);
+			refresh();
+		},
 		enable: function () { setActive(true); },
 		disable: function () { setActive(false); },
 		isActive: function () { return active; },
