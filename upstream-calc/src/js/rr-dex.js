@@ -43,21 +43,29 @@ var RRDex = (function () {
 	 * A script tag rather than fetch: fetch is blocked on file:// pages, which
 	 * is exactly where this needs to work.
 	 */
+	var waiting = [];
 	function ensureData(then) {
 		if (data()) { then(true); return; }
+		// Callers used to be dropped on the floor while a load was in flight,
+		// which mattered as soon as something other than the dex panel needed
+		// the bundle: the save importer asks for it too.
+		waiting.push(then);
 		if (loading) return;
 		loading = true;
 		$("#rr-dex-detail").html('<div class="rr-dex-msg">Loading Pokédex…</div>');
+		var finish = function (ok) {
+			loading = false;
+			var queue = waiting;
+			waiting = [];
+			for (var i = 0; i < queue.length; i++) queue[i](ok);
+		};
 		var script = document.createElement("script");
 		script.src = DATA_SRC;
-		script.onload = function () {
-			loading = false;
-			then(!!data());
-		};
+		script.onload = function () { finish(!!data()); };
 		script.onerror = function () {
-			loading = false;
 			$("#rr-dex-detail").html('<div class="rr-dex-msg">Could not load ' +
 				esc(DATA_SRC) + '. Run <code>node tools/build_dex.js</code> and rebuild.</div>');
+			finish(false);
 		};
 		document.body.appendChild(script);
 	}
@@ -329,6 +337,10 @@ var RRDex = (function () {
 	});
 
 	return {
+		// The bundle is not the dex panel's private property: the save importer
+		// needs species data too, and asking the user to open the Pokedex first
+		// is not an instruction anybody should have to be given.
+		ensureData: ensureData,
 		open: function () { setActive(true); },
 		close: function () { setActive(false); },
 		isActive: function () { return active; },

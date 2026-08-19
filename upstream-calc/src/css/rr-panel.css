@@ -565,3 +565,16 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 	font-weight: 700; color: var(--rr-muted);
 }
 #rr-panel .rr-member .rr-load-alt:hover { color: var(--rr-accent); }
+
+/* Dropping a .sav straight onto the panel beats hunting through ~/Library. */
+#rr-panel.rr-dropping {
+	outline: 2px dashed var(--rr-accent);
+	outline-offset: -4px;
+}
+#rr-panel.rr-dropping::after {
+	content: "Drop the .sav to import your team";
+	position: absolute; inset: auto 0 0 0;
+	padding: 6px 10px; text-align: center;
+	background: var(--rr-accent); color: #000; font-weight: 700;
+}
+#rr-panel { position: relative; }

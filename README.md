@@ -41,7 +41,9 @@ targeting and the crit maths all follow.
 **4. A saved team.** Keep your own Pokémon in `localStorage` and click to put
 one on the field — either slot, in doubles. **Import from save** reads them
 straight out of the game's battery `.sav`: your party exactly, natures solved
-from the stored stats, plus everything in your PC boxes.
+from the stored stats, plus everything in your PC boxes. **Drag the `.sav` onto
+the panel** and it imports — see below, because finding that file is otherwise
+the worst part of this.
 
 **5. A Story Order view.** All 96 story trainers in the order you meet them,
 grouped by level cap, with optional fights marked — so you can find the battle
@@ -96,6 +98,33 @@ If you prefer a server:
 ```bash
 cd upstream-calc/dist && python3 -m http.server 8777
 ```
+
+---
+
+## Importing your team without hunting for the save file
+
+Emulators keep battery saves somewhere inconvenient. OpenEmu puts them under
+`~/Library/Application Support/OpenEmu/<core>/Battery Saves`, and Finder hides
+`~/Library`, so every import through a file dialog means typing a path.
+
+Two ways around it, and the second is the good one:
+
+```bash
+npm run link-save     # drops ~/RadicalRed.sav pointing at the real save
+```
+
+That is a symlink, not a copy: the emulator writes through it, so it is always
+the current save and there is no stale duplicate to import by mistake. Your home
+folder is in every file dialog's sidebar, so the file is then two clicks away.
+
+Better: **drag the `.sav` straight onto the trainer panel.** The panel takes the
+drop wherever it lands, so once a Finder window is open on the save — or on
+`~/RadicalRed.sav` — importing is one drag, no dialog at all. Save the game,
+drag again, and the newer file is read.
+
+The save has to be the battery save the emulator writes (`.sav`), not a save
+state. Save states are the emulator's own memory dump and hold no save data in
+this format.
 
 ---
 
@@ -221,12 +250,14 @@ tools/dump_calc_names.js      export the calculator's canonical name lists
 tools/verify_roster.js        cross-check the roster against the RR Pokedex
 tools/build_dex.js            RR Pokedex snapshot -> the offline dex bundle
 tools/fetch_growth.js         cache the six experience curves (needs network)
+tools/link_save.js            put a shortcut to the battery save in ~/
 tools/prune_dist.js           strip everything the page does not reference
 tools/test_critko.js          checks for the crit-aware KO engine
 tools/test_page.js            drives the built page in a headless DOM
 tools/test_doubles.js         drives doubles: format, facing, both your slots
 tools/test_offline.js         opens it as file://, with no server at all
 tools/test_save.js            reads a real .sav and checks nothing is invented
+tools/test_import.js          drops a .sav on the page and follows it into the team
 tools/test_load_all.js        loads all 792 trainer Pokemon and verifies them
 upstream-calc/                the vendored MIT calculator
   src/js/rr-critko.js           crit-aware KO probability      (new, mine)

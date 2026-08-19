@@ -30,7 +30,7 @@
  * counter. So both slots are shown with their trainer name, playtime and team,
  * and you choose.
  */
-/* global $, RR_DEX_DATA, RRTrainers */
+/* global $, RR_DEX_DATA, RRTrainers, RRDex */
 var RRSave = (function () {
 	"use strict";
 
@@ -533,28 +533,92 @@ var RRSave = (function () {
 			"in the panel if needed.</div>");
 	}
 
+	/**
+	 * Read one .sav, whether it was picked or dropped.
+	 *
+	 * Species data lives in a 3.9 MB bundle the page only pulls in on demand,
+	 * so importing before ever opening the Pokedex used to fail with "the
+	 * Pokedex data has not loaded yet" -- true, unhelpful, and the user's
+	 * problem to solve. Load it here instead.
+	 */
+	function readFile(file, retried) {
+		if (!file) return;
+		// Once. If the bundle still is not there afterwards, parse says so --
+		// asking for it again would just spin.
+		if (!dex() && !retried && typeof RRDex !== "undefined" && RRDex.ensureData) {
+			$("#rr-save-out").html('<div class="rr-save-msg">Loading Pok\u00e9dex ' +
+				"data…</div>");
+			RRDex.ensureData(function () { readFile(file, true); });
+			return;
+		}
+		$("#rr-save-out").html('<div class="rr-save-msg">Reading ' +
+			esc(file.name) + "…</div>");
+		var reader = new FileReader();
+		reader.onload = function () {
+			try {
+				parsed = parse(reader.result);
+			} catch (e) {
+				parsed = {error: "Could not read that file: " + e.message};
+			}
+			render();
+		};
+		reader.onerror = function () {
+			parsed = {error: "Could not read that file."};
+			render();
+		};
+		reader.readAsArrayBuffer(file);
+	}
+
 	function bind() {
 		$(document).on("change", "#rr-save-file", function () {
-			var file = this.files && this.files[0];
-			if (!file) return;
-			$("#rr-save-out").html('<div class="rr-save-msg">Reading…</div>');
-			var reader = new FileReader();
-			reader.onload = function () {
-				try {
-					parsed = parse(reader.result);
-				} catch (e) {
-					parsed = {error: "Could not read that file: " + e.message};
-				}
-				render();
-			};
-			reader.onerror = function () {
-				parsed = {error: "Could not read that file."};
-				render();
-			};
-			reader.readAsArrayBuffer(file);
+			readFile(this.files && this.files[0]);
+			// Clear it, so picking the same path again after saving the game
+			// still fires a change event and re-reads the newer file.
+			this.value = "";
 		});
 		$(document).on("click", ".rr-save-take", function () {
 			take(~~$(this).data("slot"));
+		});
+
+		/*
+		 * Drag and drop, because the file picker is the worst part of this.
+		 * OpenEmu keeps its battery saves under ~/Library, which Finder hides,
+		 * so reaching them through an open dialog means typing a path every
+		 * time. Dropping the file on the panel skips all of it.
+		 */
+		var zone = "#rr-panel";
+		var depth = 0;
+		$(document).on("dragenter dragover", zone, function (e) {
+			var dt = e.originalEvent && e.originalEvent.dataTransfer;
+			if (!dt || !dt.types || dt.types.indexOf("Files") < 0) return;
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.type === "dragenter" && depth++ === 0) $(zone).addClass("rr-dropping");
+		});
+		$(document).on("dragleave", zone, function () {
+			if (--depth <= 0) { depth = 0; $(zone).removeClass("rr-dropping"); }
+		});
+		$(document).on("drop", zone, function (e) {
+			var dt = e.originalEvent && e.originalEvent.dataTransfer;
+			if (!dt || !dt.files || !dt.files.length) return;
+			e.preventDefault();
+			e.stopPropagation();
+			depth = 0;
+			$(zone).removeClass("rr-dropping");
+			var file = dt.files[0];
+			if (!/\.(sav|srm|sa[0-9]|fla)$/i.test(file.name)) {
+				parsed = {error: "That is not a battery save. Drop the .sav file " +
+					"the emulator writes, not a save state."};
+				render();
+				return;
+			}
+			readFile(file);
+		});
+		// Anywhere else on the page, a dropped file would navigate away from
+		// the calculator and lose whatever is set up.
+		$(document).on("dragover drop", function (e) {
+			if ($(e.target).closest(zone).length) return;
+			e.preventDefault();
 		});
 	}
 

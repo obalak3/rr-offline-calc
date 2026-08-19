@@ -874,7 +874,8 @@
 		var html = '<div class="rr-team-head"><b>My Team</b>' +
 			'<button id="rr-save-mon" title="Save the current attacker">+ save current</button>' +
 			'<label class="rr-save-import" title="Read your team straight out of the ' +
-				'game\'s battery save">import from save' +
+				'game\'s battery save \u2014 or drop the .sav anywhere on this panel">' +
+				'import from save' +
 				'<input type="file" id="rr-save-file" accept=".sav,.srm" /></label>' +
 			'</div><div id="rr-save-out"></div><div class="rr-team-list">';
 		if (!team.length) {
