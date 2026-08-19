@@ -277,6 +277,77 @@ function run() {
 			/Gengar/.test(String($('#p1 input.set-selector').val() || '')));
 	}
 
+	// --- retargeting a move its current target ignores ---------------------
+	// The target buttons used to be hidden whenever a move did nothing to the
+	// Pokemon it was pointed at, which is backwards: that is the moment you
+	// need to aim it elsewhere. Earthquake against a Flying type showed 0 - 0%
+	// and no way to point it at the opponent standing next to it.
+	const groundImmune = (name) => {
+		const entry = window.pokedex[name];
+		if (!entry) return false;
+		return (entry.types || []).indexOf('Flying') >= 0;
+	};
+	let immuneCase = null;
+	data.segments.forEach((seg, index) => {
+		if (immuneCase || !T.isDoubles(seg.battles[0] || {})) { /* keep looking */ }
+		for (const b of seg.battles) {
+			if (immuneCase || !T.isDoubles(b) || b.team.length < 2) continue;
+			for (let i = 0; i < b.team.length && !immuneCase; i++) {
+				for (let j = 0; j < b.team.length; j++) {
+					if (i === j) continue;
+					if (groundImmune(b.team[i].species) && !groundImmune(b.team[j].species)) {
+						immuneCase = {index, battle: b, i, j};
+						break;
+					}
+				}
+			}
+		}
+	});
+	if (!immuneCase) {
+		check('a battle exists with one Ground-immune opponent', false);
+	} else {
+		clickBattle(immuneCase.index, immuneCase.battle);
+		T.setFacing([immuneCase.i, immuneCase.j]);
+		T.addTeam([{
+			species: 'Hippowdon', level: 50, nature: 'Adamant', ability: 'Sand Stream',
+			item: '', moves: ['Earthquake', 'Stone Edge', 'Slack Off', 'Stealth Rock'],
+			evs: {hp: 252, atk: 252, def: 4, spa: 0, spd: 0, spe: 0},
+			ivs: {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31}
+		}]);
+		// By name: the team bar already holds the Pokemon added by earlier
+		// checks, and the first button is not the one just added.
+		const hippo = [...doc.querySelectorAll('#rr-team .rr-load-mon[data-panel="p1"]')]
+			.find(b => b.textContent.indexOf('Hippowdon') >= 0);
+		check('the Ground attacker is in the team bar', !!hippo);
+		if (hippo) $(hippo).click();
+
+		const aim = () => doc.querySelector(".rr-aim[data-panel='p1'][data-move='0']");
+		const damage = () => doc.getElementById('resultDamageL1').textContent.trim();
+		const buttonFor = (species) => [...(aim() ? aim().querySelectorAll('button') : [])]
+			.find(b => b.textContent.indexOf(species) >= 0);
+
+		// Aim it at the one that ignores it. Which target a row starts on is
+		// chosen for you, so say it outright rather than assume.
+		const immuneButton = buttonFor(immuneCase.battle.team[immuneCase.i].species);
+		check('the Ground-immune opponent is offered as a target', !!immuneButton);
+		if (immuneButton) $(immuneButton).click();
+		check('the move does nothing to the opponent it is aimed at',
+			/^0 - 0%/.test(damage()), damage());
+
+		// The bug: at exactly this point the buttons used to disappear.
+		const stillThere = aim() ? aim().querySelectorAll('button').length : 0;
+		check('it still offers every opponent as a target', stillThere >= 2,
+			`${stillThere} button(s)`);
+
+		const otherButton = buttonFor(immuneCase.battle.team[immuneCase.j].species);
+		check('including the opponent it would actually hit', !!otherButton);
+		if (otherButton) {
+			$(otherButton).click();
+			check('aiming it there gives a real damage figure',
+				!/^0 - 0%/.test(damage()), damage());
+		}
+	}
+
 	// --- results ---------------------------------------------------------
 	// All four Pokemon get their own move list, each row prefixed by its slot.
 	const rows = ['L', 'R', 'M', 'N'].map(p =>
@@ -294,15 +365,25 @@ function run() {
 			if (!el) continue;
 			const m = el.textContent.match(/([\d.]+) - ([\d.]+)%/);
 			if (!m || Number(m[1]) <= 0) continue;
-			spreads.push({row: p + i, ratio: Number(m[2]) / Number(m[1]),
+			spreads.push({row: p + i, min: Number(m[1]),
+				ratio: Number(m[2]) / Number(m[1]),
 				text: el.textContent.trim()});
 		}
 	}
-	const tooWide = spreads.filter(s => s.ratio > 1.25);
+	// Only where the numbers are big enough for the bound to mean anything.
+	// The 16 rolls span 85-100%, so a range should be about 1.175x wide -- but
+	// each roll is floored to a whole point of damage, and at small values that
+	// rounding dominates: 8 damage rolls 6 to 8, a ratio of 1.33, and 3 rolls
+	// 2 to 3, a ratio of 1.5. Those are correct. Above about a tenth of the
+	// target's health the flooring is noise, and the bug this catches -- a
+	// range running from the non-crit low roll to the crit high roll, at 1.77x
+	// -- showed up on ranges far larger than that.
+	const measurable = spreads.filter(s => s.min >= 10);
+	const tooWide = measurable.filter(s => s.ratio > 1.25);
 	check('every damage range is one a move can actually roll',
-		spreads.length > 0 && tooWide.length === 0,
+		measurable.length > 0 && tooWide.length === 0,
 		tooWide.length ? tooWide.map(s => `${s.row} ${s.text}`).join('; ')
-			: '(no ranges rendered)');
+			: `(only ${spreads.length} ranges, none above 10%)`);
 	check('the crit ceiling is reported outside the range',
 		spreads.some(s => /on a crit/.test(s.text)),
 		spreads.slice(0, 2).map(s => s.text).join(' | '));

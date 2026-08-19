@@ -546,13 +546,20 @@ var RRDoubles = (function () {
 					(shot.spread ? " (spread)" : "")) + crit + ceiling);
 			}
 
-			// One target button per living opponent, worth showing only when
-			// the move can actually do something.
+			// One target button per living opponent.
+			//
+			// These used to be hidden whenever the move did nothing to the
+			// target it currently had, which is backwards: aiming it somewhere
+			// else is precisely what you need at that moment. Scorching Sands
+			// against a Gyarados showed 0 - 0% and no way to point it at the
+			// other opponent, which it would have hit perfectly well. The
+			// buttons depend on the attacker having a move in this row, not on
+			// what that move happens to do to whoever is in front of it.
 			var using = selectedRow(panelId, cache[targetId]) === row;
 			labelEl.toggleClass("rr-using", !!(using && shot && !shot.dead));
 
 			var html = "";
-			if (shot && !shot.dead && foeCount > 0) {
+			if (asMove(attacker.moves[row]) && foeCount > 0) {
 				for (var f = 0; f < foes.length; f++) {
 					if (!state.mon[foes[f]]) continue;
 					html += '<button type="button" class="rr-tgt' +
