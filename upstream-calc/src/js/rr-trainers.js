@@ -931,6 +931,25 @@
 		}
 	}
 
+	/**
+	 * Redraw the team bar alone.
+	 *
+	 * Its contents depend on the format -- in doubles every saved Pokemon
+	 * offers a second button, for Pokemon 3 -- and nothing was redrawing it
+	 * when the format changed. Add your team in singles and switch to doubles
+	 * and the second button never appeared; switch back and the ones already
+	 * drawn stayed, offering a slot that no longer exists.
+	 *
+	 * The save importer's output lives inside this markup, so it is carried
+	 * across. Otherwise a redraw in the middle of an import -- clicking a
+	 * battle is enough -- takes the "Use this save" buttons away with it.
+	 */
+	function refreshTeam() {
+		var saveOut = $("#rr-save-out").html();
+		$("#rr-team").html(teamBar());
+		if (saveOut) $("#rr-save-out").html(saveOut);
+	}
+
 	function render() {
 		if (!data || rendering) return;
 		rendering = true;
@@ -938,7 +957,7 @@
 			$("#rr-segments").html(segmentTabs());
 			$("#rr-battles").html(battleList());
 			$("#rr-detail").html(detailPanel());
-			$("#rr-team").html(teamBar());
+			refreshTeam();
 			markChips();
 			$("#rr-speed").html(currentBattle ? speedPanel(currentBattle) : "");
 			$("#rr-crit").html(critBox());
@@ -1301,6 +1320,7 @@
 			notifyFacing();
 		},
 		markChips: markChips,
+		refreshTeam: refreshTeam,
 		/** Append imported Pokemon to the saved team, skipping duplicates. */
 		addTeam: function (list) {
 			var added = 0;

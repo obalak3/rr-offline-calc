@@ -681,6 +681,11 @@ var RRDoubles = (function () {
 		// Entering doubles after a battle was already chosen skips build(),
 		// so your second slot would keep whatever level it last had.
 		if (on) mirrorLevel("p1", "p3");
+		// The team bar offers a second slot only in doubles, so it has to be
+		// redrawn on the way in and on the way out.
+		if (typeof RRTrainers !== "undefined" && RRTrainers.refreshTeam) {
+			RRTrainers.refreshTeam();
+		}
 		if (typeof RRTrainers !== "undefined" && RRTrainers.setFacing) {
 			// Re-apply under the new capacity: one opponent in singles, two in
 			// doubles, so a leftover second pick cannot linger.

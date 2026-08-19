@@ -224,6 +224,36 @@ function run() {
 	check('the nickname is what the team bar shows',
 		/Spook/.test(doc.getElementById('rr-team').textContent));
 
+	// The order that broke it: the team bar is built once, and nothing was
+	// redrawing it when the format changed. Add a Pokemon in singles and switch
+	// to doubles and its second button never appeared -- and switching back left
+	// buttons offering a slot that no longer existed.
+	const p3Buttons = () => doc.querySelectorAll('#rr-team .rr-load-mon[data-panel="p3"]').length;
+	$('#rr-format-singles').prop('checked', true).change();
+	check('singles offers no second slot', p3Buttons() === 0, `${p3Buttons()}`);
+	T.addTeam([{
+		species: 'Snorlax', level: 50, nature: 'Adamant', ability: 'Immunity',
+		item: '', moves: ['Body Slam'],
+		evs: {hp: 252, atk: 252, def: 4, spa: 0, spd: 0, spe: 0},
+		ivs: {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31}
+	}]);
+	check('a Pokemon added in singles still offers no second slot',
+		p3Buttons() === 0, `${p3Buttons()}`);
+	$('#rr-format-doubles').prop('checked', true).change();
+	check('switching to doubles gives every saved Pokemon its second slot',
+		p3Buttons() === doc.querySelectorAll('#rr-team .rr-member').length,
+		`${p3Buttons()} of ${doc.querySelectorAll('#rr-team .rr-member').length}`);
+	$('#rr-format-singles').prop('checked', true).change();
+	check('switching back to singles takes them away again',
+		p3Buttons() === 0, `${p3Buttons()}`);
+	$('#rr-format-doubles').prop('checked', true).change();
+
+	// Redrawing the team bar must not take the importer's output with it.
+	$('#rr-save-out').html('<div class="rr-save-msg">Use this save</div>');
+	T.refreshTeam();
+	check('a redraw keeps the save importer\'s output',
+		/Use this save/.test(doc.getElementById('rr-save-out').textContent));
+
 	const toP3 = doc.querySelector('#rr-team .rr-load-mon[data-panel="p3"]');
 	check('there is a button targeting Pokemon 3', !!toP3);
 	if (toP3) {
