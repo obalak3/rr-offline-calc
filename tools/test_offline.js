@@ -40,6 +40,43 @@ function check(name, condition, detail) {
 	}
 }
 
+/*
+ * Before anything is rendered: the built page must not be able to serve a
+ * previous build. Every asset it names is hash-stamped, so a rebuild changes
+ * their URLs -- but only if the browser re-reads index.html, and the Pokedex
+ * bundle is fetched by a path inside a script rather than named in the HTML at
+ * all. Both gaps were real: a cached index.html made an already-fixed bug look
+ * like it had come back, holding the whole app on the previous build.
+ */
+(function checkCacheChain() {
+	const crypto = require('crypto');
+	const html = fs.readFileSync(indexPath, 'utf8');
+	check('the page tells the browser not to cache it',
+		/http-equiv="Cache-Control"[^>]*no-store/i.test(html));
+
+	const loaderRef = html.match(/\.\/js\/rr-dex\.js\?([0-9a-f]+)/);
+	check('the Pokedex loader is stamped in the page', !!loaderRef);
+
+	const loaderPath = path.join(dist, 'js/rr-dex.js');
+	if (loaderRef && fs.existsSync(loaderPath)) {
+		const actual = crypto.createHash('sha1')
+			.update(fs.readFileSync(loaderPath)).digest('hex').slice(0, 8);
+		check('the loader stamp matches the file it points at',
+			loaderRef[1] === actual, `${loaderRef[1]} vs ${actual}`);
+
+		const src = fs.readFileSync(loaderPath, 'utf8');
+		const dataRef = src.match(/DATA_SRC = "[^"?]+\?([0-9a-f]+)"/);
+		check('the loader stamps the bundle it fetches', !!dataRef);
+		const bundlePath = path.join(dist, 'js/data/rr-dex-data.js');
+		if (dataRef && fs.existsSync(bundlePath)) {
+			const bundleHash = crypto.createHash('sha1')
+				.update(fs.readFileSync(bundlePath)).digest('hex').slice(0, 8);
+			check('the bundle stamp matches the bundle',
+				dataRef[1] === bundleHash, `${dataRef[1]} vs ${bundleHash}`);
+		}
+	}
+})();
+
 const scriptErrors = [];
 const virtualConsole = new VirtualConsole();
 virtualConsole.on('jsdomError', (e) => {

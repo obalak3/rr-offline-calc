@@ -89,6 +89,11 @@ page does not use, which is most of what upstream ships: four other
 calculators' pages, their data and controls, the engine's test suite, and
 minified bundles nothing loads. That takes `dist/` from 13 MB to 5.6 MB.
 
+After a rebuild, just reload the page — `index.html` asks not to be cached, and
+every asset it names is hash-stamped, so a normal refresh picks the new build
+up. (It did not always: a cached page made an already-fixed bug appear to come
+back, because the browser was still running the build that had it.)
+
 Then open `upstream-calc/dist/index.html`. **No server required** — the trainer
 data is loaded as a plain script, specifically so the page works from `file://`
 when you have no network at all.
@@ -252,6 +257,7 @@ tools/build_dex.js            RR Pokedex snapshot -> the offline dex bundle
 tools/fetch_growth.js         cache the six experience curves (needs network)
 tools/link_save.js            put a shortcut to the battery save in ~/
 tools/prune_dist.js           strip everything the page does not reference
+tools/stamp_dist.js           hash-stamp the lazily loaded Pokedex bundle
 tools/test_critko.js          checks for the crit-aware KO engine
 tools/test_page.js            drives the built page in a headless DOM
 tools/test_doubles.js         drives doubles: format, facing, both your slots

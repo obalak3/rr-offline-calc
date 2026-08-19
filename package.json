@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node tools/test_critko.js && node tools/test_page.js && node tools/test_doubles.js && node tools/test_offline.js && node tools/test_save.js && node tools/test_import.js",
     "data": "python3 tools/extract_trainers.py",
-    "build": "cd upstream-calc && npm run build && cd .. && node tools/prune_dist.js",
+    "build": "cd upstream-calc && npm run build && cd .. && node tools/prune_dist.js && node tools/stamp_dist.js",
     "link-save": "node tools/link_save.js"
   },
   "devDependencies": {

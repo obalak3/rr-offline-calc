@@ -3,6 +3,20 @@
 
 <head>
     <meta charset="UTF-8" />
+    <!--
+      Do not cache this page.
+
+      Every asset it references is hash-stamped, so a rebuild changes their
+      URLs and the browser fetches the new ones -- but only if it re-reads
+      this file. Cached, it keeps asking for the old stamps, and the whole app
+      silently stays on the previous build. That is not a theoretical worry:
+      it made a bug that had already been fixed appear to come back, because
+      the page still held the version that had it. The stamped assets stay
+      cacheable; only this one file has to be checked every time.
+    -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Pok&eacute;mon Radical Red Damage Calculator</title>
     <link type="text/css" rel="stylesheet" href="./js/vendor/select2/select2.css" />
     <link type="text/css" rel="stylesheet" href="./css/main.css?" />
