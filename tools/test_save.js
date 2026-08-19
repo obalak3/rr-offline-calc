@@ -39,12 +39,6 @@ function findSave() {
 	return hit ? path.join(dir, hit) : null;
 }
 
-const file = findSave();
-if (!file || !fs.existsSync(file)) {
-	console.log('No battery save available; skipping (pass one as an argument).');
-	process.exit(0);
-}
-
 // rr-save.js is browser code: give it just enough of a browser to load.
 const noop = () => {};
 const jq = () => ({on: noop, html: noop, empty: noop, append: noop, data: noop});
@@ -53,6 +47,78 @@ sandbox.window.document = sandbox.document;
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(dexFile, 'utf8'), sandbox, {filename: 'rr-dex-data.js'});
 vm.runInContext(fs.readFileSync(saveFile, 'utf8'), sandbox, {filename: 'rr-save.js'});
+
+/*
+ * The ability rule, which took an experiment to find rather than a search.
+ *
+ * Radical Red does not store the ability at all: it is bit 0 of the PID, gen
+ * 3's own rule, carried over unchanged. Established by changing four abilities
+ * in game with an ability pill and diffing the save before against after --
+ * the only bytes that moved were the PID's, and only for those four Pokemon.
+ */
+(function checkAbilityRule() {
+	const twoAbilities = {abilities: [
+		{name: 'Intimidate', slot: 0, hidden: false},
+		{name: 'Strong Jaw', slot: 1, hidden: false},
+		{name: 'Bull Rush', slot: 2, hidden: true}
+	]};
+	const oneAbility = {abilities: [
+		{name: 'Torrent', slot: 0, hidden: false},
+		{name: 'Protean', slot: 2, hidden: true}
+	]};
+	const pick = sandbox.RRSave.abilityFor;
+
+	check('an even PID gives ability 1', pick(twoAbilities, 0xa51ce024) === 'Intimidate');
+	check('an odd PID gives ability 2', pick(twoAbilities, 0x2a852001) === 'Strong Jaw');
+	// Seen on a Frogadier whose bit is set although the species has no second
+	// ability: the game falls back rather than leaving it blank.
+	check('a species with no ability 2 falls back to ability 1',
+		pick(oneAbility, 0xe01a54f1) === 'Torrent');
+	check('a hidden ability is never picked by the bit',
+		pick(twoAbilities, 0xffffffff) !== 'Bull Rush' &&
+		pick(oneAbility, 0xffffffff) !== 'Protean');
+	check('a species with no abilities at all does not throw',
+		pick({abilities: []}, 1) === '');
+})();
+
+/*
+ * The experiment itself, when its two saves are still around: four abilities
+ * changed in game, everything else left alone.
+ */
+(function checkExperiment() {
+	const before = path.join(process.env.HOME || '', 'rr-ability-before.sav');
+	const after = path.join(process.env.HOME || '', 'rr-ability-after.sav');
+	if (!fs.existsSync(before) || !fs.existsSync(after)) {
+		console.log('        (ability experiment saves not present; skipping)');
+		return;
+	}
+	const expected = {
+		before: {Granbull: 'Strong Jaw', Spidops: 'Insomnia', Gyarados: 'Intimidate',
+			Mienshao: 'Inner Focus', Bibarel: 'Simple', Frogadier: 'Torrent'},
+		after: {Granbull: 'Intimidate', Spidops: 'Stakeout', Gyarados: 'Intimidate',
+			Mienshao: 'Regenerator', Bibarel: 'Unaware', Frogadier: 'Torrent'}
+	};
+	for (const which of ['before', 'after']) {
+		const bytes = fs.readFileSync(which === 'before' ? before : after);
+		const result = sandbox.RRSave.parse(
+			bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+		if (result.error) { check(`${which}: the experiment save parses`, false, result.error); continue; }
+		// The newest write, which alternates between the two slots.
+		const slot = result.slots.reduce((a, b) => (b.counter > a.counter ? b : a));
+		const wrong = slot.party.filter(p => expected[which][p.species] &&
+			p.ability !== expected[which][p.species]);
+		check(`${which} the pills: every ability matches the game`, wrong.length === 0,
+			wrong.map(p => `${p.species} read ${p.ability}, ` +
+				`game says ${expected[which][p.species]}`).join('; '));
+	}
+})();
+
+const file = findSave();
+if (!file || !fs.existsSync(file)) {
+	console.log('No battery save available; skipping (pass one as an argument).');
+	process.exit(0);
+}
+
 
 const bytes = fs.readFileSync(file);
 const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);

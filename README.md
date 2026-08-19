@@ -256,6 +256,7 @@ tools/verify_roster.js        cross-check the roster against the RR Pokedex
 tools/build_dex.js            RR Pokedex snapshot -> the offline dex bundle
 tools/fetch_growth.js         cache the six experience curves (needs network)
 tools/link_save.js            put a shortcut to the battery save in ~/
+tools/diff_saves.js           diff two saves to find where a field lives
 tools/prune_dist.js           strip everything the page does not reference
 tools/stamp_dist.js           hash-stamp the lazily loaded Pokedex bundle
 tools/test_critko.js          checks for the crit-aware KO engine
@@ -290,22 +291,13 @@ upstream-calc/                the vendored MIT calculator
   the doubles format. Inverse battles, banned types and mid-battle
   transformations have no equivalent in the calculator; they're shown and
   explicitly listed as not applied, rather than silently ignored.
-- The save importer does not know where the ability slot lives in the save, so
-  imports default to each species' **ability 1** and the panel's dropdown
-  changes it. Measured against a party whose abilities were read off the game's
-  own summary screen, that default is right 5 times in 6 — it is only wrong for
-  a Pokémon actually holding its second ability.
-
-  What has been ruled out, exhaustively rather than by eye: every bit position
-  in both record types, at widths 1-3 (a slot number) and 8-10 (an ability id),
-  constrained both by known abilities and by the rule that a value must name a
-  slot the species actually has. Nothing survives that is not inside a field
-  already accounted for — an item id, an experience total, a nickname's letters,
-  a stat. Gen 3's own mechanism is ruled out too: bit 31 of the IV word is the
-  ability selector in vanilla, but a Pokémon known to hold its second ability
-  has it clear, and with the game's perfect-IV setting every IV word in the file
-  reads 0x3fffffff, leaving no spare bits. Settling it needs two saves differing
-  only in one Pokémon's ability; diffing those points straight at the byte.
+- Hidden abilities are the one thing the importer cannot read. Ordinary
+  abilities are exact: they are bit 0 of the personality value, gen 3's own
+  rule, which Radical Red kept — an ability pill does not record a choice, it
+  rerolls the PID until that bit lands right. Where a species has no second
+  ability the game falls back to the first, and so does this. But nothing
+  observed so far holds a hidden ability, so slot 2 is never selected rather
+  than guessed at; the panel's dropdown sets one in a click.
 - A Pokémon in a PC box stores no stats, so the nature fingerprint that pins a
   party member's nature exactly is not available: stored Pokémon come in as
   Adamant or Modest by whichever attacking stat is higher. Their levels are

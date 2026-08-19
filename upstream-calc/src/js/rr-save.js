@@ -16,10 +16,12 @@
  *     stored stats are a fingerprint: with base stats, IVs, EVs and level
  *     known, exactly one nature reproduces all six numbers. That is derived
  *     rather than guessed, and it is exact.
- *   - The ability slot has not been located. Radical Red has three per species
- *     where vanilla had two, so it cannot live in vanilla's single PID bit.
- *     The first non-hidden ability is used, and the panel's dropdown is right
- *     there to change it.
+ *   - The ability is not stored anywhere. It is bit 0 of the personality
+ *     value, gen 3's own rule, which Radical Red kept -- an ability pill does
+ *     not record a choice, it rerolls the PID until that bit lands right. That
+ *     was found by experiment rather than by reading bytes: four abilities
+ *     changed in game, save diffed before against after, and the only bytes
+ *     that moved were those four Pokemon's PIDs.
  *   - PC boxes use a second, tighter format: 58 bytes, no stats block and no
  *     level, with the four moves packed ten bits each. The level comes back out
  *     of the stored experience and the species' growth curve, which the dex
@@ -156,18 +158,38 @@ var RRSave = (function () {
 	}
 
 	/**
-	 * Ability 1, which is what a Pokemon has unless the game says otherwise.
+	 * Which of a species' abilities this Pokemon has: bit 0 of its PID.
 	 *
-	 * The dex bundle now orders abilities the way the game numbers them, so
-	 * this is the first entry. It used to be "the first non-hidden one" over a
-	 * list whose hidden ability came first, which quietly handed every import
-	 * its species' hidden ability instead.
+	 * Gen 3's own rule, and it survived into Radical Red unchanged -- which no
+	 * amount of staring at the bytes was going to reveal, because the ability
+	 * is not stored at all. Every explicit field was searched and eliminated
+	 * first; what settled it was changing four abilities in game with an
+	 * ability pill and diffing the save before and against after. The only
+	 * bytes that moved were the four of the PID, and only for the four Pokemon
+	 * that were changed. The pill does not record a choice, it rerolls the
+	 * personality value until the low bit lands where it needs to.
+	 *
+	 * Confirmed in both directions -- one Pokemon went from ability 2 to
+	 * ability 1, three went the other way, and two untouched controls did not
+	 * move -- plus the fallback below, seen on a Frogadier whose bit is set
+	 * although its species has no second ability.
+	 *
+	 * Hidden abilities are the one part still unproven: nothing in the save
+	 * observed so far holds one, so slot 2 is never selected here rather than
+	 * guessed at.
 	 */
-	function defaultAbility(species) {
-		for (var i = 0; i < species.abilities.length; i++) {
-			if (!species.abilities[i].hidden) return species.abilities[i].name;
+	function abilityFor(species, pid) {
+		var list = species.abilities || [];
+		var wanted = pid & 1;
+		var fallback = "";
+		for (var i = 0; i < list.length; i++) {
+			if (list[i].hidden) continue;
+			if (list[i].slot === wanted) return list[i].name;
+			if (list[i].slot === 0) fallback = list[i].name;
 		}
-		return species.abilities.length ? species.abilities[0].name : "";
+		// A species with no ability 2 uses ability 1 whatever the bit says.
+		if (fallback) return fallback;
+		return list.length ? list[0].name : "";
 	}
 
 	function readRecord(view, offset, withStats) {
@@ -211,9 +233,7 @@ var RRSave = (function () {
 			nature = deriveNature(species, level, ivs, evs, stats);
 		}
 
-		// The ability slot has not been located in the save, so ability 1
-		// stands in. It is a dropdown in the panel.
-		var ability = defaultAbility(species);
+		var ability = abilityFor(species, view.getUint32(offset + REC.PID, true));
 
 		if (!withStats) return null;   // nothing trustworthy without a stats block
 		var nickname = readText(view, offset + REC.NICK, 10) || "";
@@ -387,7 +407,7 @@ var RRSave = (function () {
 		if (level < 1) return null;
 
 		var itemId = view.getUint16(offset + BOX.ITEM, true);
-		var ability = defaultAbility(species);
+		var ability = abilityFor(species, view.getUint32(offset + BOX.PID, true));
 
 		return {
 			species: species.name,
@@ -627,5 +647,6 @@ var RRSave = (function () {
 		bind();
 	});
 
-	return {parse: parse, deriveNature: deriveNature, RECORD: REC};
+	return {parse: parse, deriveNature: deriveNature, abilityFor: abilityFor,
+		RECORD: REC};
 })();
