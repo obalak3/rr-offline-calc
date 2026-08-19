@@ -52,6 +52,8 @@
 	];
 
 	var data = null;
+	// The team as it was before the last clear, so the button has a way back.
+	var cleared = null;
 	var prefs = {mgm: false, myLevel: 100, focusEnergy: false, segment: 0,
 		applyEffects: true, followCap: true};
 	var team = [];
@@ -877,6 +879,10 @@
 				'game\'s battery save \u2014 or drop the .sav anywhere on this panel">' +
 				'import from save' +
 				'<input type="file" id="rr-save-file" accept=".sav,.srm" /></label>' +
+			(team.length
+				? '<button id="rr-clear-team" title="Remove every saved Pok\u00e9mon">' +
+					"clear</button>"
+				: "") +
 			'</div><div id="rr-save-out"></div><div class="rr-team-list">';
 		if (!team.length) {
 			html += '<span class="rr-empty">Set up your Pokemon on the left, then ' +
@@ -1094,6 +1100,33 @@
 			team.splice(~~$(this).data("i"), 1);
 			save(STORE_TEAM, team);
 			render();
+		});
+
+		/*
+		 * Emptying the team, with a way back.
+		 *
+		 * No confirmation dialog: it interrupts, and it is the wrong trade for
+		 * something this cheap to undo. The cleared team is kept in memory and
+		 * one click puts it back, which covers the misclick without making
+		 * every deliberate clear cost two clicks.
+		 */
+		$("#rr-team").on("click", "#rr-clear-team", function () {
+			if (!team.length) return;
+			cleared = team.slice();
+			team = [];
+			save(STORE_TEAM, team);
+			refreshTeam();
+			$("#rr-save-out").html('<div class="rr-save-msg">Cleared ' +
+				cleared.length + " Pok\u00e9mon. " +
+				'<button id="rr-undo-clear">undo</button></div>');
+		});
+		$("#rr-team").on("click", "#rr-undo-clear", function () {
+			if (!cleared) return;
+			team = cleared.slice();
+			cleared = null;
+			save(STORE_TEAM, team);
+			$("#rr-save-out").empty();
+			refreshTeam();
 		});
 
 		// Switching which move the calculator details does not go through

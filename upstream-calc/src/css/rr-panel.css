@@ -578,3 +578,11 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 	background: var(--rr-accent); color: #000; font-weight: 700;
 }
 #rr-panel { position: relative; }
+
+/* Emptying the team sits apart from the buttons that add to it. */
+#rr-panel .rr-team-head #rr-clear-team {
+	margin-left: auto;
+	color: var(--rr-muted);
+}
+#rr-panel .rr-team-head #rr-clear-team:hover { color: var(--rr-accent); }
+#rr-panel #rr-undo-clear { margin-left: 4px; }
