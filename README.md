@@ -253,11 +253,22 @@ upstream-calc/                the vendored MIT calculator
   the doubles format. Inverse battles, banned types and mid-battle
   transformations have no equivalent in the calculator; they're shown and
   explicitly listed as not applied, rather than silently ignored.
-- The save importer does not know where the ability slot lives in the save.
-  Radical Red gives most species three abilities where vanilla had two, so it
-  cannot be the single bit vanilla used, and a byte-by-byte search against
-  known Pokémon found nothing. Imports default to the species' first ability
-  and the panel's dropdown changes it.
+- The save importer does not know where the ability slot lives in the save, so
+  imports default to each species' **ability 1** and the panel's dropdown
+  changes it. Measured against a party whose abilities were read off the game's
+  own summary screen, that default is right 5 times in 6 — it is only wrong for
+  a Pokémon actually holding its second ability.
+
+  What has been ruled out, exhaustively rather than by eye: every bit position
+  in both record types, at widths 1-3 (a slot number) and 8-10 (an ability id),
+  constrained both by known abilities and by the rule that a value must name a
+  slot the species actually has. Nothing survives that is not inside a field
+  already accounted for — an item id, an experience total, a nickname's letters,
+  a stat. Gen 3's own mechanism is ruled out too: bit 31 of the IV word is the
+  ability selector in vanilla, but a Pokémon known to hold its second ability
+  has it clear, and with the game's perfect-IV setting every IV word in the file
+  reads 0x3fffffff, leaving no spare bits. Settling it needs two saves differing
+  only in one Pokémon's ability; diffing those points straight at the byte.
 - A Pokémon in a PC box stores no stats, so the nature fingerprint that pins a
   party member's nature exactly is not available: stored Pokémon come in as
   Adamant or Modest by whichever attacking stat is higher. Their levels are
