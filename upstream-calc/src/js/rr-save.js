@@ -40,11 +40,20 @@ var RRSave = (function () {
 	var SIGNATURE = 0x08012025;
 
 	// Offsets within Radical Red's flat 100-byte Pokemon record.
+	/*
+	 * A party member is 100 bytes: the same 0x20-byte identity header a stored
+	 * Pokemon carries, then the battle data. The header was found by noticing
+	 * that the trainer id -- one constant repeated once per Pokemon -- appears
+	 * every 100 bytes starting 0x20 before the species, with the nickname right
+	 * behind it. Anchoring on it beats guessing an offset: it is the one field
+	 * whose value is known in advance to be the same for all six.
+	 */
 	var REC = {
 		SIZE: 100,
-		SPECIES: 0x00, ITEM: 0x02, EXP: 0x04, FRIENDSHIP: 0x09,
-		MOVES: 0x0c, PP: 0x14, EVS: 0x18, IVS: 0x28,
-		LEVEL: 0x34, CUR_HP: 0x36, STATS: 0x38
+		PID: 0x00, OTID: 0x04, NICK: 0x08, OT_NAME: 0x14,
+		SPECIES: 0x20, ITEM: 0x22, EXP: 0x24, FRIENDSHIP: 0x29,
+		MOVES: 0x2c, PP: 0x34, EVS: 0x38, IVS: 0x48,
+		LEVEL: 0x54, CUR_HP: 0x56, STATS: 0x58
 	};
 	// A stored Pokemon is packed tighter: no level, no stats, and the four
 	// moves share five bytes at ten bits each.
@@ -146,6 +155,21 @@ var RRSave = (function () {
 		};
 	}
 
+	/**
+	 * Ability 1, which is what a Pokemon has unless the game says otherwise.
+	 *
+	 * The dex bundle now orders abilities the way the game numbers them, so
+	 * this is the first entry. It used to be "the first non-hidden one" over a
+	 * list whose hidden ability came first, which quietly handed every import
+	 * its species' hidden ability instead.
+	 */
+	function defaultAbility(species) {
+		for (var i = 0; i < species.abilities.length; i++) {
+			if (!species.abilities[i].hidden) return species.abilities[i].name;
+		}
+		return species.abilities.length ? species.abilities[0].name : "";
+	}
+
 	function readRecord(view, offset, withStats) {
 		var d = dex();
 		var speciesId = view.getUint16(offset + REC.SPECIES, true);
@@ -187,17 +211,15 @@ var RRSave = (function () {
 			nature = deriveNature(species, level, ivs, evs, stats);
 		}
 
-		// The ability slot has not been located in the save, so the first
-		// non-hidden one stands in. It is a dropdown in the panel.
-		var ability = "";
-		for (var a = 0; a < species.abilities.length; a++) {
-			if (!species.abilities[a].hidden) { ability = species.abilities[a].name; break; }
-		}
-		if (!ability && species.abilities.length) ability = species.abilities[0].name;
+		// The ability slot has not been located in the save, so ability 1
+		// stands in. It is a dropdown in the panel.
+		var ability = defaultAbility(species);
 
 		if (!withStats) return null;   // nothing trustworthy without a stats block
+		var nickname = readText(view, offset + REC.NICK, 10) || "";
 		return {
 			species: species.name,
+			nickname: nickname === species.name ? "" : nickname,
 			level: level,
 			nature: nature.nature,
 			natureExact: nature.exact,
@@ -230,9 +252,15 @@ var RRSave = (function () {
 	function findParty(view, sectionOffset) {
 		var best = [];
 		for (var base = sectionOffset; base < sectionOffset + 512; base += 2) {
+			// All six share one trainer id, which is what pins the alignment.
+			var otId = view.getUint32(base + REC.OTID, true);
+			if (!otId) continue;
 			var run = [];
 			for (var k = 0; k < 6; k++) {
-				var mon = readRecord(view, base + k * REC.SIZE, true);
+				var at = base + k * REC.SIZE;
+				if (at + REC.SIZE > view.byteLength) break;
+				if (view.getUint32(at + REC.OTID, true) !== otId) break;
+				var mon = readRecord(view, at, true);
 				if (!mon) break;
 				run.push(mon);
 			}
@@ -359,11 +387,7 @@ var RRSave = (function () {
 		if (level < 1) return null;
 
 		var itemId = view.getUint16(offset + BOX.ITEM, true);
-		var ability = "";
-		for (i = 0; i < species.abilities.length; i++) {
-			if (!species.abilities[i].hidden) { ability = species.abilities[i].name; break; }
-		}
-		if (!ability && species.abilities.length) ability = species.abilities[0].name;
+		var ability = defaultAbility(species);
 
 		return {
 			species: species.name,

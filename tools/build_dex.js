@@ -65,14 +65,29 @@ for (const key of Object.keys(dex.species)) {
 	const s = dex.species[key];
 	if (!s || !s.name) continue;
 
+	/*
+	 * The snapshot lists a species' abilities as [hidden, ability 1, ability 2],
+	 * not in the game's own order. Checked against a dozen species whose layout
+	 * is not in doubt -- Geodude (Rock Head / Sturdy / Sand Veil), Snorlax
+	 * (Immunity / Thick Fat / Gluttony) and Mienfoo (Inner Focus / Regenerator
+	 * / Reckless) all have three, and all three line up -- so this is not a
+	 * guess. Reordering matters twice over: the Pokedex was listing the hidden
+	 * ability first, and the save importer, which picks "the first non-hidden
+	 * ability", was picking the hidden one for every Pokemon it read.
+	 */
+	const ABILITY_ORDER = [1, 2, 0];   // snapshot position, by ability number
 	const abilities = [];
-	(s.abilities || []).forEach((pair, index) => {
+	ABILITY_ORDER.forEach((position, number) => {
+		const pair = (s.abilities || [])[position];
 		const id = Array.isArray(pair) ? pair[0] : pair;
 		if (!id || !dex.abilities[id]) return;
 		const entry = dex.abilities[id];
 		const name = Array.isArray(entry.names) ? entry.names[0] : entry.name;
 		if (!name) return;
-		abilities.push({name, hidden: index === 2, text: entry.description || ''});
+		// The number is the game's own, so a save file's ability slot can be
+		// looked up directly once we know where the game keeps it.
+		abilities.push({name, hidden: number === 2, slot: number,
+			text: entry.description || ''});
 	});
 
 	const evolutions = [];
