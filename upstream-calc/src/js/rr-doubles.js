@@ -621,7 +621,8 @@ var RRDoubles = (function () {
 			var noCrit = [];
 			for (var n = 0; n < incoming.length; n++) {
 				noCrit.push({noCrit: incoming[n].noCrit, crit: incoming[n].crit,
-					critChance: 0, hits: incoming[n].hits});
+					perHit: incoming[n].perHit, critChance: 0,
+					hits: incoming[n].hits});
 			}
 			var plainChances = RRCritKO.koChancesMulti(noCrit, defender.curHP(), 4);
 

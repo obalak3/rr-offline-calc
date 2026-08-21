@@ -341,5 +341,68 @@ const field = new calc.Field();
 		none.critMaxDamage, none.maxTurnDamage);
 }
 
+// ------------------------------------------------------- multi-hit damage
+
+// The calculator reports a multi-hit move's whole turn, already summed. This
+// module used to ask for one hit and multiply by the hit count, which was
+// wrong twice over: for a move whose hit count is fixed in the data the
+// constructor ignores the request, so every hit got counted twice (Crobat's
+// Dual Wingbeat read 77.6 - 94.1% against a range that is really 38.8 - 47.1%);
+// and for Triple Axel, whose hits ARE honoured but escalate 20/40/60, three
+// copies of the weakest hit came out far under the truth.
+{
+	const f = new calc.Field();
+	const crobat = mon('Crobat', {level: 50, evs: {atk: 252}});
+	const gyara = mon('Gyarados', {level: 50});
+
+	// Every multi-hit shape: fixed count, escalating, and variable count.
+	for (const name of ['Dual Wingbeat', 'Triple Axel', 'Triple Kick',
+		'Bullet Seed', 'Double Kick', 'Dragon Darts', 'Population Bomb',
+		'Brave Bird']) {
+		const move = mv(name);
+		const truth = calc.calculate(gen, crobat, gyara, move, f).damage;
+		const res = RRCritKO.analyse(gen, crobat, gyara, move, f, {});
+		check(`${name}: range is the calculator's own turn total`,
+			`${res.minTurnDamage}-${res.maxTurnDamage}`,
+			`${truth[0]}-${truth[truth.length - 1]}`);
+
+		// The per-hit split the KO probability runs on has to add back up to
+		// that same total, or the two halves of the display disagree.
+		const arrays = RRCritKO.hitArrays(gen, crobat, gyara, move, f);
+		check(`${name}: one entry per hit`, arrays.perHit.length, move.hits);
+		let mismatched = 0;
+		for (let i = 0; i < arrays.noCrit.length; i++) {
+			let sum = 0;
+			for (const hit of arrays.perHit) sum += hit.noCrit[i];
+			if (sum !== arrays.noCrit[i]) mismatched++;
+		}
+		check(`${name}: the per-hit split sums back to the total`, mismatched, 0);
+	}
+
+	// Triple Axel's hits are not equal, so a split that pretends they are
+	// would be wrong even though it sums correctly.
+	const axel = RRCritKO.hitArrays(gen, crobat, gyara, mv('Triple Axel'), f);
+	check('Triple Axel splits into three different hits',
+		axel.perHit[0].noCrit[0] < axel.perHit[1].noCrit[0] &&
+		axel.perHit[1].noCrit[0] < axel.perHit[2].noCrit[0], true);
+	console.log(`        Triple Axel low rolls per hit: ` +
+		axel.perHit.map(h => h.noCrit[0]).join(' + '));
+
+	// Dual Wingbeat's two hits are identical, and each crits on its own: two
+	// chances at a crit make it strictly likelier to KO than one lump would.
+	const dw = RRCritKO.hitArrays(gen, crobat, gyara, mv('Dual Wingbeat'), f);
+	check('Dual Wingbeat splits into two equal hits',
+		JSON.stringify(dw.perHit[0]), JSON.stringify(dw.perHit[1]));
+	const rate = RRCritKO.critChance(crobat, gyara, mv('Dual Wingbeat'), 0);
+	const hp = gyara.curHP();
+	const perHitCrits = RRCritKO.koChancesMulti(
+		[{noCrit: dw.noCrit, crit: dw.crit, critChance: rate, perHit: dw.perHit}],
+		hp, 6);
+	const perTurnCrits = RRCritKO.koChancesMulti(
+		[{noCrit: dw.noCrit, crit: dw.crit, critChance: rate, hits: 1}], hp, 6);
+	check('each hit of a multi-hit move rolls its own crit',
+		perHitCrits[1] !== perTurnCrits[1], true);
+}
+
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

@@ -149,6 +149,27 @@ var RRCritKO = (function () {
 	}
 
 	/**
+	 * The sequence of per-hit outcome distributions one shot contributes to a
+	 * turn. A shot that carries `perHit` (see hitArrays) gets one distribution
+	 * per hit, which is what makes an escalating move like Triple Axel come out
+	 * right; anything else repeats its single distribution `hits` times.
+	 */
+	function stepsFor(shot) {
+		var steps = [];
+		var i;
+		if (shot.perHit && shot.perHit.length) {
+			for (i = 0; i < shot.perHit.length; i++) {
+				steps.push(outcomesFor(shot.perHit[i].noCrit,
+					shot.perHit[i].crit, shot.critChance));
+			}
+			return steps;
+		}
+		var one = outcomesFor(shot.noCrit, shot.crit, shot.critChance);
+		for (i = 0; i < (shot.hits || 1); i++) steps.push(one);
+		return steps;
+	}
+
+	/**
 	 * Cumulative KO probability when SEVERAL different attacks land each turn.
 	 *
 	 * This is what a doubles turn actually looks like: two attackers, each with
@@ -169,11 +190,7 @@ var RRCritKO = (function () {
 
 		var perShot = [];
 		for (var s = 0; s < shots.length; s++) {
-			perShot.push({
-				outcomes: outcomesFor(shots[s].noCrit, shots[s].crit,
-					shots[s].critChance),
-				hits: shots[s].hits || 1
-			});
+			perShot.push(stepsFor(shots[s]));
 		}
 
 		var alive = new Float64Array(hp);
@@ -183,8 +200,8 @@ var RRCritKO = (function () {
 
 		for (var turn = 0; turn < maxTurns; turn++) {
 			for (var i = 0; i < perShot.length; i++) {
-				for (var hit = 0; hit < perShot[i].hits; hit++) {
-					var outcomes = perShot[i].outcomes;
+				for (var hit = 0; hit < perShot[i].length; hit++) {
+					var outcomes = perShot[i][hit];
 					var next = new Float64Array(hp);
 					for (var d = 0; d < hp; d++) {
 						var p = alive[d];
@@ -235,6 +252,10 @@ var RRCritKO = (function () {
 	 * crit one for a move that always crits, since that move can never roll a
 	 * non-crit minimum -- and the crit ceiling is reported alongside it rather
 	 * than inside it.
+	 *
+	 * Callers pass whole-turn arrays and hits = 1: the calculator already sums
+	 * a multi-hit move's hits for us, and scaling that again is exactly the bug
+	 * hitArrays exists to prevent.
 	 */
 	function damageSpan(plain, critical, c, hits) {
 		var base = (c >= 1) ? critical : plain;
@@ -247,6 +268,125 @@ var RRCritKO = (function () {
 	}
 
 	/**
+	 * Damage arrays for a move: the whole turn's total, and one array per hit.
+	 *
+	 * Multi-hit moves crit per hit, so the KO probability needs the damage of a
+	 * SINGLE hit -- but the calculator only ever reports the turn's total, and
+	 * it will not hand back one hit on request. `new calc.Move(gen, "Dual
+	 * Wingbeat", {hits: 1})` is quietly ignored: when a move's hit count is
+	 * fixed in the data and it is not multiaccuracy, the constructor pins hits
+	 * to that number, and calculate() clones the move, so even assigning .hits
+	 * afterwards is undone by the clone. This module used to assume it had a
+	 * single hit and multiply by the hit count, which counted every hit twice:
+	 * Crobat's Dual Wingbeat read 77.6 - 94.1% where the truth is 38.8 - 47.1%.
+	 * The opposite error hit Triple Axel, whose hits are honoured but are not
+	 * equal (20 / 40 / 60 base power), so three copies of the first hit came out
+	 * well under the real damage.
+	 *
+	 * Both are fixed by never scaling anything by hand. The turn total comes
+	 * straight from the calculator, so the printed range is exactly the range
+	 * the calculator gives. The per-hit split is taken by whichever route the
+	 * Move constructor allows:
+	 *
+	 *  - it honours `hits` (variable-count moves, Triple Kick, Triple Axel):
+	 *    ask for 1, 2, ... n hits and difference successive totals, which is
+	 *    exact even when the hits differ from each other;
+	 *  - it refuses (fixed-count moves such as Dual Wingbeat): every hit of
+	 *    those is identical, so divide the total by the hit count.
+	 *
+	 * If neither route holds up -- an uneven division, or a difference that
+	 * comes out negative because some ability changed the calculation between
+	 * the two calls -- the turn is left as one lump rather than split on a
+	 * guess. The total is still right; only the crit modelling degrades, from
+	 * per hit to per turn.
+	 *
+	 * Returns null when the move does nothing at all.
+	 */
+	function hitArrays(gen, attacker, defender, move, field) {
+		var n = move.hits || 1;
+
+		function totalFor(hits, isCrit) {
+			var m = new calc.Move(gen, move.name, {
+				hits: hits,
+				isCrit: isCrit || undefined,
+				useMax: move.useMax,
+				isStellarFirstUse: move.isStellarFirstUse
+			});
+			if (m.hits !== hits) return null;
+			return rolls(calc.calculate(gen, attacker, defender, m, field).damage);
+		}
+
+		var plain, critical;
+		try {
+			plain = totalFor(n, false);
+			critical = totalFor(n, true);
+		} catch (e) {
+			return null;
+		}
+		if (!plain || !critical) return null;
+		if (Math.max.apply(null, plain.concat(critical)) <= 0) return null;
+
+		var lump = {
+			noCrit: plain,
+			crit: critical,
+			hits: n,
+			perHit: [{noCrit: plain, crit: critical}]
+		};
+		if (n === 1) return lump;
+
+		var split = splitByDifference(totalFor, plain, critical, n);
+		if (!split) split = splitByDivision(plain, critical, n);
+		if (!split) return lump;
+		return {noCrit: plain, crit: critical, hits: n, perHit: split};
+	}
+
+	/**
+	 * Per-hit arrays from successive cumulative totals, for a move whose hit
+	 * count the calculator lets us choose. Null if it does not, or if a hit
+	 * comes out negative (which would mean the two calls were not comparable).
+	 */
+	function splitByDifference(totalFor, plain, critical, n) {
+		var perHit = [];
+		var prevPlain = null, prevCrit = null;
+		for (var k = 1; k <= n; k++) {
+			var cumPlain = k === n ? plain : totalFor(k, false);
+			var cumCrit = k === n ? critical : totalFor(k, true);
+			if (!cumPlain || !cumCrit) return null;
+			var hitPlain = [], hitCrit = [];
+			for (var i = 0; i < cumPlain.length; i++) {
+				var a = prevPlain ? cumPlain[i] - prevPlain[i] : cumPlain[i];
+				var b = prevCrit ? cumCrit[i] - prevCrit[i] : cumCrit[i];
+				if (a < 0 || b < 0) return null;
+				hitPlain.push(a);
+				hitCrit.push(b);
+			}
+			perHit.push({noCrit: hitPlain, crit: hitCrit});
+			prevPlain = cumPlain;
+			prevCrit = cumCrit;
+		}
+		return perHit;
+	}
+
+	/**
+	 * Per-hit arrays for a move whose hits are all identical: the total divides
+	 * evenly by the hit count. Null if it does not divide, since that would
+	 * mean the hits were not identical after all.
+	 */
+	function splitByDivision(plain, critical, n) {
+		var one = [], oneCrit = [];
+		for (var i = 0; i < plain.length; i++) {
+			if (plain[i] % n !== 0 || critical[i] % n !== 0) return null;
+			one.push(plain[i] / n);
+			oneCrit.push(critical[i] / n);
+		}
+		var perHit = [];
+		for (var h = 0; h < n; h++) {
+			perHit.push({noCrit: one, crit: oneCrit});
+		}
+		return perHit;
+	}
+
+	/**
 	 * Full crit-aware analysis for one attacker/defender/move.
 	 *
 	 * Returns null when the move deals no damage.
@@ -255,36 +395,24 @@ var RRCritKO = (function () {
 		opts = opts || {};
 		var bonus = opts.critStageBonus || 0;
 
-		// Single-hit damage arrays, so multi-hit moves can crit per hit.
-		var hits = move.hits || 1;
-		var single = new calc.Move(gen, move.name, {
-			hits: 1,
-			useMax: move.useMax,
-			isStellarFirstUse: move.isStellarFirstUse
-		});
-		var singleCrit = new calc.Move(gen, move.name, {
-			hits: 1, isCrit: true,
-			useMax: move.useMax,
-			isStellarFirstUse: move.isStellarFirstUse
-		});
-
-		var plain, critical;
-		try {
-			plain = rolls(calc.calculate(gen, attacker, defender, single, field).damage);
-			critical = rolls(calc.calculate(gen, attacker, defender, singleCrit, field).damage);
-		} catch (e) {
-			return null;
-		}
-
-		var maxRoll = Math.max.apply(null, plain.concat(critical));
-		if (maxRoll <= 0) return null;
+		var arrays = hitArrays(gen, attacker, defender, move, field);
+		if (!arrays) return null;
+		var hits = arrays.hits;
 
 		var c = critChance(attacker, defender, move, bonus);
 		var hp = defender.curHP();
-		var chances = koChances(plain, critical, c, hp, hits, 6);
-		var without = koChances(plain, critical, 0, hp, hits, 6);
+		var shot = {
+			noCrit: arrays.noCrit, crit: arrays.crit,
+			critChance: c, hits: hits, perHit: arrays.perHit
+		};
+		var chances = koChancesMulti([shot], hp, 6);
+		var without = koChancesMulti(
+			[{noCrit: arrays.noCrit, crit: arrays.crit, critChance: 0,
+				hits: hits, perHit: arrays.perHit}], hp, 6);
 
-		var span = damageSpan(plain, critical, c, hits);
+		// The range is the calculator's own turn total, never a hand-scaled
+		// single hit, so it is exactly what the stock calculator would print.
+		var span = damageSpan(arrays.noCrit, arrays.crit, c, 1);
 		return {
 			critChance: c,
 			critStage: critStage(attacker, move, bonus),
@@ -340,34 +468,16 @@ var RRCritKO = (function () {
 	 * combined without recomputing anything twice.
 	 */
 	function shotFor(gen, attacker, defender, move, field, bonus) {
-		var hits = move.hits || 1;
-		var opts = {
-			hits: 1,
-			useMax: move.useMax,
-			isStellarFirstUse: move.isStellarFirstUse
-		};
-		var single = new calc.Move(gen, move.name, opts);
-		var critOpts = {
-			hits: 1, isCrit: true,
-			useMax: move.useMax,
-			isStellarFirstUse: move.isStellarFirstUse
-		};
-		var singleCrit = new calc.Move(gen, move.name, critOpts);
-		var plain, critical;
-		try {
-			plain = rolls(calc.calculate(gen, attacker, defender, single, field).damage);
-			critical = rolls(calc.calculate(gen, attacker, defender, singleCrit, field).damage);
-		} catch (e) {
-			return null;
-		}
-		if (Math.max.apply(null, plain.concat(critical)) <= 0) return null;
+		var arrays = hitArrays(gen, attacker, defender, move, field);
+		if (!arrays) return null;
 		var rate = critChance(attacker, defender, move, bonus);
-		var span = damageSpan(plain, critical, rate, hits);
+		var span = damageSpan(arrays.noCrit, arrays.crit, rate, 1);
 		return {
-			noCrit: plain,
-			crit: critical,
+			noCrit: arrays.noCrit,
+			crit: arrays.crit,
+			perHit: arrays.perHit,
 			critChance: rate,
-			hits: hits,
+			hits: arrays.hits,
 			attacker: attacker.name,
 			move: move.name,
 			min: span.min,
@@ -379,6 +489,7 @@ var RRCritKO = (function () {
 	return {
 		analyse: analyse,
 		shotFor: shotFor,
+		hitArrays: hitArrays,
 		targetsHit: targetsHit,
 		fieldForMove: fieldForMove,
 		critChance: critChance,
