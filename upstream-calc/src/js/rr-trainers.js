@@ -55,7 +55,7 @@
 	// The team as it was before the last clear, so the button has a way back.
 	var cleared = null;
 	var prefs = {mgm: false, myLevel: 100, focusEnergy: false, segment: 0,
-		applyEffects: true, followCap: true};
+		applyEffects: true, followCap: true, starter: ""};
 	var team = [];
 	var currentBattle = null;
 	var currentMon = -1;
@@ -125,6 +125,76 @@
 		var zero = {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0};
 		if (isMgmException(battle, mon)) zero.hp = 252;
 		return zero;
+	}
+
+	// ------------------------------------------------------------- starter
+
+	/**
+	 * Which starter the rival ends up with, given the type of yours.
+	 *
+	 * The sheet splits every rival battle three ways by the rival's starter,
+	 * which is not something you choose -- the rival takes whichever one beats
+	 * yours. So the question the panel asks is about YOUR starter's type, the
+	 * thing you actually know, and this is the translation. Pick Water and the
+	 * rival has Bulbasaur.
+	 */
+	var RIVAL_STARTER = {grass: "CHARMANDER", fire: "SQUIRTLE", water: "BULBASAUR"};
+
+	function rivalStarter() {
+		return RIVAL_STARTER[prefs.starter] || "";
+	}
+
+	/** The starter named by an "IF RIVAL HAS ..." variant, or "" for anything else. */
+	function variantStarter(battle) {
+		if (!battle || !battle.variant) return "";
+		var match = /^IF RIVAL HAS\s+(.+)$/i.exec(battle.variant);
+		return match ? match[1].trim().toUpperCase() : "";
+	}
+
+	/** A rival variant the chosen starter rules out. Nothing else is ever hidden. */
+	function ruledOutByStarter(battle) {
+		var want = rivalStarter();
+		if (!want) return false;
+		var has = variantStarter(battle);
+		return has !== "" && has !== want;
+	}
+
+	/**
+	 * The same rival encounter as fought by a different rival starter.
+	 *
+	 * The three variants of each encounter sit in one segment in a repeating
+	 * run, so an encounter is identified by its position within its own
+	 * variant's run: the second SQUIRTLE battle and the second BULBASAUR battle
+	 * are the same fight. Lets a change of starter keep your place instead of
+	 * dumping you back to an empty panel.
+	 */
+	function starterSibling(battle) {
+		var want = rivalStarter();
+		if (!want || !variantStarter(battle)) return null;
+		for (var s = 0; s < data.segments.length; s++) {
+			var list = data.segments[s].battles;
+			var runs = {}, position = -1;
+			var b, other, key;
+			for (b = 0; b < list.length; b++) {
+				other = list[b];
+				if (other.trainer !== battle.trainer) continue;
+				key = variantStarter(other);
+				if (!key) continue;
+				runs[key] = (runs[key] || 0) + 1;
+				if (other.id === battle.id) position = runs[key];
+			}
+			if (position < 0) continue;
+			runs = {};
+			for (b = 0; b < list.length; b++) {
+				other = list[b];
+				if (other.trainer !== battle.trainer) continue;
+				key = variantStarter(other);
+				if (!key) continue;
+				runs[key] = (runs[key] || 0) + 1;
+				if (key === want && runs[key] === position) return other;
+			}
+		}
+		return null;
 	}
 
 	// -------------------------------------------------------- battle effects
@@ -580,6 +650,9 @@
 			var isRematchSegment = /REMATCH/.test(data.segments[s].name.toUpperCase());
 			for (var b = 0; b < battles.length; b++) {
 				var battle = battles[b];
+				// With a starter chosen the rival's team is not ambiguous, so
+				// the order list should link to the one you will actually fight.
+				if (ruledOutByStarter(battle)) continue;
 				var trainer = battle.trainer.toUpperCase();
 				if (trainer !== last && trainer !== cleaned &&
 					(!lastTwo || trainer !== lastTwo)) continue;
@@ -714,6 +787,7 @@
 			for (var b = 0; b < segment.battles.length; b++) {
 				var battle = segment.battles[b];
 				if (!matchesQuery(battle, query)) continue;
+				if (ruledOutByStarter(battle)) continue;
 				var on = currentBattle && currentBattle.id === battle.id;
 				html += '<button class="rr-battle' + (on ? " rr-on" : "") +
 					'" data-id="' + esc(battle.id) + '">' +
@@ -1015,6 +1089,14 @@
 					'My highest Lv <input type="number" id="rr-mylevel" min="1" max="250" /></label>' +
 				'<label title="Assume you are at the level cap for whichever battle you pick">' +
 					'<input type="checkbox" id="rr-followcap" /> at cap</label>' +
+				'<label title="Your starter\'s type. The rival takes the starter ' +
+					'that beats it, so this picks which rival teams you see">' +
+					'Starter <select id="rr-starter">' +
+						'<option value="">any</option>' +
+						'<option value="grass">Grass</option>' +
+						'<option value="fire">Fire</option>' +
+						'<option value="water">Water</option>' +
+					'</select></label>' +
 				'<label title="Focus Energy or Dire Hit: +2 crit stages">' +
 					'<input type="checkbox" id="rr-focus" /> Focus Energy</label>' +
 				'<label title="Set weather, terrain and stat boosts from the ' +
@@ -1034,6 +1116,7 @@
 		'<div id="rr-crit" class="rr-crit"></div>';
 	}
 
+	/** Segment tabs, the battle list, the detail panel and the team bar. */
 	function bind() {
 		$("#rr-collapse").click(function () {
 			var $body = $("#rr-panel .rr-body");
@@ -1053,30 +1136,59 @@
 		});
 
 		$("#rr-battles").on("click", ".rr-battle", function () {
-			currentBattle = findBattle($(this).data("id"));
-			currentMon = -1;
-			facing = [];
-			applyLevelCap(currentBattle);
-			// Put the lead on the field straight away. Doubles already did this
-			// for its two slots; leaving singles empty until a chip was clicked
-			// was just an inconsistency.
-			if (currentBattle && currentBattle.team.length) {
-				facing = [0];
-				currentMon = 0;
-				loadEnemy(currentBattle, currentBattle.team[0]);
+			selectBattle(findBattle($(this).data("id")));
+		});
+
+		$("#rr-starter").change(function () {
+			prefs.starter = $(this).val() || "";
+			save(STORE_PREFS, prefs);
+			// Both order-list caches now hold the wrong answer: which battle
+			// each entry points at, and which battle carries each level cap.
+			// The cap matters -- it is what "at cap" levels you to, so leaving
+			// it attached to a rival team you will never fight would quietly
+			// change every damage figure for that fight.
+			orderMatchCache = null;
+			capByBattle = null;
+			if (currentBattle && ruledOutByStarter(currentBattle)) {
+				var sibling = starterSibling(currentBattle);
+				if (sibling) {
+					selectBattle(sibling);
+					return;
+				}
+				currentBattle = null;
 			}
-			lastEffects = applyBattleEffects(currentBattle);
 			render();
-			for (var i = 0; i < battleListeners.length; i++) {
-				try { battleListeners[i](currentBattle); } catch (e) { /* isolate */ }
-			}
 		});
 
 		$("#rr-detail").on("click", ".rr-chip", function () {
 			if (!currentBattle) return;
 			chooseEnemy(~~$(this).data("mon"));
 		});
+	}
 
+	/** Make a battle the current one and put its lead on the field. */
+	function selectBattle(battle) {
+		currentBattle = battle;
+		currentMon = -1;
+		facing = [];
+		applyLevelCap(currentBattle);
+		// Put the lead on the field straight away. Doubles already did this
+		// for its two slots; leaving singles empty until a chip was clicked
+		// was just an inconsistency.
+		if (currentBattle && currentBattle.team.length) {
+			facing = [0];
+			currentMon = 0;
+			loadEnemy(currentBattle, currentBattle.team[0]);
+		}
+		lastEffects = applyBattleEffects(currentBattle);
+		render();
+		for (var i = 0; i < battleListeners.length; i++) {
+			try { battleListeners[i](currentBattle); } catch (e) { /* isolate */ }
+		}
+	}
+
+	/** The head's own controls: the toggles, the level box, the starter. */
+	function bindControls() {
 		$("#rr-mgm").change(function () {
 			prefs.mgm = $(this).prop("checked");
 			save(STORE_PREFS, prefs);
@@ -1508,7 +1620,9 @@
 		$("#rr-effects").prop("checked", prefs.applyEffects !== false);
 		$("#rr-followcap").prop("checked", prefs.followCap !== false);
 		$("#rr-mylevel").val(prefs.myLevel);
+		$("#rr-starter").val(prefs.starter || "");
 		bind();
+		bindControls();
 		render();
 	});
 })();
