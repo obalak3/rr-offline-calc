@@ -249,17 +249,46 @@
 	}
 
 	/** Build a calc.Pokemon straight from sheet data, for the matrix. */
+	/**
+	 * Does this battle boost the enemy's stats by one stage across the board?
+	 *
+	 * The Ghost Marowak and the postgame Spirit's Mew are the only two, but
+	 * both are bosses where the boost is the whole difficulty.
+	 */
+	function omniBoosted(battle) {
+		if (!battle || !prefs.applyEffects) return false;
+		var text = ((battle.effects || []).join(" | ")).toUpperCase();
+		return /OMNI-?BOOSTED/.test(text);
+	}
+
+	/**
+	 * The enemy as a calc.Pokemon, for anything computed without going through
+	 * the panel's DOM -- currently the speed order.
+	 *
+	 * Note the EV and IV keys: calc.Pokemon wants the modern hp/atk/def/spa/
+	 * spd/spe, NOT the legacy hp/at/df/sa/sd/sp that setdex entries use. This
+	 * used to run them through toCalcStats like the setdex builders do, and the
+	 * constructor silently dropped every one it did not recognise -- so the
+	 * speed order was computed for a 0 EV version of each enemy. The Ghost
+	 * Marowak showed as 82 Speed against its real 122, which turned "it
+	 * outruns you" into "you outspeed the whole team".
+	 */
 	function enemyPokemon(battle, mon) {
 		var generation = calc.Generations.get(gen);
 		var options = {
 			level: resolveLevel(mon),
 			nature: mon.nature || "Serious",
-			evs: toCalcStats(effectiveEVs(battle, mon)),
-			ivs: toCalcStats(mon.ivs),
+			evs: effectiveEVs(battle, mon),
+			ivs: mon.ivs,
 			item: mon.item || undefined,
 			moves: mon.moves.slice(0, 4)
 		};
 		if (mon.ability) options.ability = mon.ability;
+		// A boosted boss moves at its boosted Speed, and the speed order is the
+		// one place that matters.
+		if (omniBoosted(battle)) {
+			options.boosts = {atk: 1, def: 1, spa: 1, spd: 1, spe: 1};
+		}
 		try {
 			return new calc.Pokemon(generation, mon.species, options);
 		} catch (e) {
@@ -1144,10 +1173,37 @@
 			}
 		});
 
+		// A new Pokemon in a slot starts at full health. Bound on the document
+		// so it fires after the calculator's own set-selector handler has
+		// applied the set and recomputed max HP.
+		$(document).on("change", "input.set-selector", function () {
+			var panel = $(this).closest("#p1, #p2, #p3, #p4").attr("id");
+			if (panel) resetHP("#" + panel);
+			resetChangedPanels();
+		});
+
+		// The health bar is not a calc-trigger upstream, so dragging it changed
+		// nothing on our side -- and the KO text is computed against current HP,
+		// so it went on describing the HP you had before you touched it.
+		$(document).on("change keyup", ".current-hp, .percent-hp", function () {
+			if (rendering) return;
+			if (typeof window.performCalculations === "function") {
+				window.performCalculations();
+			}
+		});
+
 		// Keep the crit box in step with the calculator's own recalculation.
 		if (typeof window.performCalculations === "function") {
 			var original = window.performCalculations;
 			window.performCalculations = function () {
+				// Not gated on `rendering`: that flag suppresses re-entrant
+				// redraws of our own HTML, but the loads it guards -- a trainer
+				// chip, a team member, a dropped save -- are exactly the ones
+				// that put a different Pokemon in the slot, which is when the
+				// health bar most needs refilling.
+				try {
+					resetChangedPanels();
+				} catch (e) { /* never let our panel break the calculator */ }
 				var out = original.apply(this, arguments);
 				try {
 					if (!rendering) {
@@ -1157,6 +1213,59 @@
 				} catch (e) { /* never let our panel break the calculator */ }
 				return out;
 			};
+		}
+	}
+
+	// What each panel's set selector held last time we looked, so a change of
+	// Pokemon can be told apart from an edit to the one already there.
+	var lastSet = {};
+
+	/**
+	 * Put a panel's health bar back to full.
+	 *
+	 * calcHP in shared_controls.js preserves the HP *percentage* when a panel's
+	 * contents change. That is right for editing the Pokemon in front of you
+	 * and wrong for swapping in a different one: a bar knocked down once stays
+	 * down through every import afterwards. Since the damage range is printed
+	 * against max HP while the KO text is computed against current HP, the
+	 * result was a line reading "79.3 - 93.8% -- guaranteed OHKO", correct in
+	 * both halves and impossible to reconcile without knowing the HP had been
+	 * left low for a Pokemon that is no longer in the slot.
+	 */
+	function resetHP(panelId) {
+		var $p = $(panelId);
+		if (!$p.length) return;
+		var max = ~~$p.find(".max-hp").text();
+		if (!max) return;
+		if (typeof calcCurrentHP === "function" && typeof calcPercentHP === "function") {
+			calcPercentHP($p, max, calcCurrentHP($p, max, 100));
+		} else {
+			$p.find(".current-hp").val(max);
+			$p.find(".percent-hp").val(100);
+		}
+	}
+
+	/**
+	 * Refill the health bar of any panel whose Pokemon just changed.
+	 *
+	 * Driven from the recalculation rather than from a set-selector event so it
+	 * catches every route in: trainer chips, the team bar, a dropped save, the
+	 * doubles panels, and the calculator's own selector.
+	 */
+	function resetChangedPanels() {
+		var panels = ["#p1", "#p2", "#p3", "#p4"];
+		for (var i = 0; i < panels.length; i++) {
+			var $sel = $(panels[i] + " input.set-selector");
+			if (!$sel.length) continue;
+			var now = String($sel.val() || "");
+			// First sighting is the page's own starting Pokemon, not a change.
+			if (lastSet[panels[i]] === undefined) {
+				lastSet[panels[i]] = now;
+				continue;
+			}
+			if (lastSet[panels[i]] === now) continue;
+			lastSet[panels[i]] = now;
+			resetHP(panels[i]);
 		}
 	}
 
