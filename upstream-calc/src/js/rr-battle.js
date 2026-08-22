@@ -41,6 +41,45 @@ var RRBattle = (function () {
 
 	function gen() { return calc.Generations.get(GEN_NUM); }
 
+	/**
+	 * Damage caching.
+	 *
+	 * The search re-derives the same matchup thousands of times: in "worst" mode
+	 * damage is deterministic, so identical positions recur constantly and each
+	 * one was costing two calc.calculate() calls plus two Pokemon constructions.
+	 * That was the whole cost of the search.
+	 *
+	 * The key has to carry everything damage depends on. Current HP is in it
+	 * because moves like Eruption and Flail scale with it, and leaving it out
+	 * would be a silent wrong answer rather than a slow one.
+	 */
+	var damageCache = {};
+	var damageCacheSize = 0;
+	var CACHE_LIMIT = 300000;
+	var nextSetId = 1;
+
+	function setId(set) {
+		if (!set._rrid) set._rrid = nextSetId++;
+		return set._rrid;
+	}
+
+	function monKey(mon) {
+		var b = mon.boosts;
+		return setId(mon.set) + ":" + mon.curHP + ":" + (mon.status || "-") + ":" +
+			(mon.itemGone ? 1 : 0) + ":" +
+			b.atk + "," + b.def + "," + b.spa + "," + b.spd + "," + b.spe;
+	}
+
+	function screenKey(side) {
+		return (side.screens.reflect ? "R" : "") + (side.screens.lightscreen ? "L" : "") +
+			(side.screens.auroraveil ? "A" : "") + (side.screens.tailwind ? "T" : "");
+	}
+
+	function clearCache() {
+		damageCache = {};
+		damageCacheSize = 0;
+	}
+
 	function moveData(name) {
 		return (typeof RR_MOVE_EFFECTS !== "undefined" && RR_MOVE_EFFECTS.moves[name]) || null;
 	}
@@ -113,6 +152,9 @@ var RRBattle = (function () {
 			// difficulty, and both change what counterplay exists.
 			rules: opts.rules || "restricted",
 			turn: 1,
+			// Product of every per-turn re-roll assumed to go the player's way.
+			// 1 means nothing was assumed; see assume().
+			reliability: 1,
 			unmodelled: []
 		};
 	}
@@ -208,6 +250,12 @@ var RRBattle = (function () {
 		var data = moveData(moveName);
 		if (!data || data.split === "Status") return null;
 
+		var cacheKey = monKey(attacker) + "|" + monKey(defender) + "|" + moveName + "|" +
+			(state.field.weather || "-") + (state.field.terrain || "-") + "|" +
+			screenKey(attackerSide) + "/" + screenKey(defenderSide);
+		var cached = damageCache[cacheKey];
+		if (cached !== undefined) return cached;
+
 		var move;
 		try {
 			move = new calc.Move(gen(), moveName);
@@ -224,15 +272,25 @@ var RRBattle = (function () {
 		if (!arrays) {
 			var zeros = [];
 			for (var z = 0; z < 16; z++) zeros.push(0);
-			return {noCrit: zeros, crit: zeros.slice(), critChance: 0, hits: 1, immune: true};
+			return store(cacheKey, {noCrit: zeros, crit: zeros.slice(),
+				critChance: 0, hits: 1, immune: true});
 		}
-		return {
+		return store(cacheKey, {
 			noCrit: applySpecialStatusScaling(arrays.noCrit, attacker, moveName),
 			crit: applySpecialStatusScaling(arrays.crit, attacker, moveName),
 			critChance: RRCritKO.critChance(toCalcPokemon(attacker),
 				toCalcPokemon(defender), move, 0),
 			hits: arrays.hits
-		};
+		});
+	}
+
+	function store(key, value) {
+		// Dropped wholesale rather than evicted one at a time: the search runs
+		// in bursts, and a plain object of this size is cheap to throw away.
+		if (damageCacheSize >= CACHE_LIMIT) clearCache();
+		damageCache[key] = value;
+		damageCacheSize++;
+		return value;
 	}
 
 	// ------------------------------------------------------------ turn order
@@ -419,6 +477,28 @@ var RRBattle = (function () {
 		// True when this side's luck should be read as bad for the player.
 		return ctx.mode === "worst" && key === "me";
 	}
+
+	/**
+	 * Not every coin can be flipped against you.
+	 *
+	 * Assumptions that hurt you (their crit, their max roll, their secondary
+	 * landing) can be taken at face value: they only make a proof stronger.
+	 * But some checks are re-rolled every single turn, and reading THOSE
+	 * against you compounds to impossibility. Full paralysis is 25% a turn, so
+	 * "paralysed every turn forever" makes any position containing paralysis
+	 * permanently unprovable, which is how a level 45 Blastoise ended up unable
+	 * to beat a level 13 Geodude: one Spark and it never moved again.
+	 *
+	 * So per-turn re-rolls that must go YOUR way to make the line work are
+	 * assumed to go your way, and their probability is multiplied into
+	 * state.reliability instead. A proof then reads "wins under worst-case
+	 * damage and crits, and holds with probability at least R", which is a claim
+	 * that can actually be earned, rather than one that can never be.
+	 */
+	function assume(state, probability) {
+		if (probability >= 1) return;
+		state.reliability *= probability;
+	}
 	function forr(ctx, key) {
 		return ctx.mode === "worst" && key === "foe";
 	}
@@ -573,7 +653,12 @@ var RRBattle = (function () {
 				attacker.status = null;
 			}
 		}
-		if (attacker.status === "par" && against(ctx, key)) return;
+		if (attacker.status === "par") {
+			// 25% full paralysis, re-rolled every turn. Assumed to go your way
+			// at a cost; taken against you it would never resolve.
+			if (against(ctx, key)) assume(state, 0.75);
+			else return;   // their paralysis stopping them would only help you
+		}
 
 		var moveName = action.move;
 		var data = moveData(moveName);
@@ -591,9 +676,13 @@ var RRBattle = (function () {
 			return;
 		}
 
-		// Accuracy.
+		// Accuracy is also re-rolled every turn, so it is priced, not assumed
+		// away. A 70% move used four times is not a 70% line.
 		var accuracy = accuracyOf(state, key, moveName);
-		if (accuracy < 1 && against(ctx, key)) return;
+		if (accuracy < 1) {
+			if (against(ctx, key)) assume(state, accuracy);
+			else return;   // their move missing would only help you
+		}
 
 		if (data.split === "Status") {
 			var effect = data.effect;
@@ -781,6 +870,7 @@ var RRBattle = (function () {
 		active: active,
 		other: other,
 		moveData: moveData,
+		clearCache: clearCache,
 		endOfTurn: endOfTurn,
 		accuracyOf: accuracyOf,
 		_internal: {
