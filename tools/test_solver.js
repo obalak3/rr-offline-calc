@@ -1,6 +1,11 @@
 /**
  * Checks for the search. Run: node tools/test_solver.js
  *
+ * These exercise PROOF mode specifically, which is why every solve() call names
+ * it: odds mode is the default now, and its line is a most-likely path rather
+ * than a tree covering every reply, so the proof checker below does not apply
+ * to it.
+ *
  * The solver makes the strongest claim anything in this repo makes: that a line
  * wins no matter what the opponent does. So the central check here does not
  * trust the search at all. It takes the tree the solver returns and verifies it
@@ -109,7 +114,7 @@ const provable = [
 for (const [name, party, foe] of provable) {
 	B.clearCache();
 	const state = B.createState(party, foe, {});
-	const solved = S.solve(state, {maxDepth: 10, budget: 400000, timeLimitMs: 30000});
+	const solved = S.solve(state, {mode: 'proof', maxDepth: 10, budget: 400000, timeLimitMs: 30000});
 	check(name + ' is proved (' + solved.result + ', depth ' + solved.depth +
 		', ' + solved.nodes + ' nodes, ' + solved.elapsedMs + 'ms)',
 		solved.result === 'win', solved.meaning || '');
@@ -128,7 +133,7 @@ for (const [name, party, foe] of provable) {
 	const state = B.createState(
 		[mine('Charmeleon', 15, ['Ember', 'Metal Claw', 'Dragon Rush', 'Swords Dance'],
 			{nature: 'Adamant'})], [ONIX], {});
-	const solved = S.solve(state, {maxDepth: 6, budget: 200000, timeLimitMs: 20000});
+	const solved = S.solve(state, {mode: 'proof', maxDepth: 6, budget: 200000, timeLimitMs: 20000});
 	check('a fight that cannot be won comes back unproven', solved.result !== 'win',
 		'claimed ' + solved.result);
 	check('  and says so without claiming a loss',
@@ -142,7 +147,7 @@ for (const [name, party, foe] of provable) {
 	const state = B.createState(
 		[mine('Magikarp', 5, ['Splash', 'Tackle'])],
 		battle('kanto-leaders-brock').team.map(m => toSet(m, 15)), {});
-	const solved = S.solve(state, {maxDepth: 6, budget: 200000, timeLimitMs: 20000});
+	const solved = S.solve(state, {mode: 'proof', maxDepth: 6, budget: 200000, timeLimitMs: 20000});
 	check('a hopeless team is not proved to win', solved.result !== 'win');
 }
 
@@ -151,15 +156,15 @@ for (const [name, party, foe] of provable) {
 {
 	const party = [mine('Squirtle', 15, ['Water Gun', 'Tackle', 'Withdraw', 'Bubble'])];
 	B.clearCache();
-	const first = S.solve(B.createState(party, [ONIX], {}), {maxDepth: 8, budget: 200000});
+	const first = S.solve(B.createState(party, [ONIX], {}), {mode: 'proof', maxDepth: 8, budget: 200000});
 	B.clearCache();
-	const second = S.solve(B.createState(party, [ONIX], {}), {maxDepth: 8, budget: 200000});
+	const second = S.solve(B.createState(party, [ONIX], {}), {mode: 'proof', maxDepth: 8, budget: 200000});
 	check('the search is deterministic across runs',
 		first.result === second.result && first.depth === second.depth,
 		first.result + '/' + first.depth + ' vs ' + second.result + '/' + second.depth);
 
 	// The cache must not change any answer, only how long it takes to get it.
-	const cached = S.solve(B.createState(party, [ONIX], {}), {maxDepth: 8, budget: 200000});
+	const cached = S.solve(B.createState(party, [ONIX], {}), {mode: 'proof', maxDepth: 8, budget: 200000});
 	check('  and the damage cache does not change the answer',
 		cached.result === first.result && cached.depth === first.depth);
 }
@@ -170,7 +175,7 @@ for (const [name, party, foe] of provable) {
 	B.clearCache();
 	const state = B.createState(
 		[mine('Squirtle', 15, ['Water Gun', 'Tackle', 'Withdraw', 'Bubble'])], [ONIX], {});
-	const solved = S.solve(state, {maxDepth: 8, budget: 200000});
+	const solved = S.solve(state, {mode: 'proof', maxDepth: 8, budget: 200000});
 	check('the proof states the assumption it rests on',
 		typeof solved.assumption === 'string' && solved.assumption.includes('worst case'),
 		solved.assumption);

@@ -30,6 +30,143 @@ var RRSolver = (function () {
 
 	var WIN = "win", LOSS = "loss", UNKNOWN = "unknown";
 
+	// ------------------------------------------------------- win probability
+
+	/**
+	 * How often you win, if they play to stop you.
+	 *
+	 * Expectimax with the opponent MINIMISING rather than being averaged over,
+	 * so the answer reads "you win at least this often however they play". It is
+	 * a floor, not an estimate, and every approximation below leans the same
+	 * way so it stays one:
+	 *
+	 *   - running out of depth counts as a loss, never as a win
+	 *   - surviving HP is read pessimistically for you in both directions
+	 *   - once the fork budget is spent, the pessimistic branch takes the whole
+	 *     probability mass
+	 *
+	 * Faint chances themselves are exact, computed from the 16 rolls and the
+	 * crit rate, because that is the part the answer actually turns on.
+	 *
+	 * This replaces the old "reliability" figure, which measured whether one
+	 * precise line ran uninterrupted rather than whether you won: it reported a
+	 * level 45 sweep of level 13s as 23.7%, because a single paralysis cost 25%
+	 * a turn, when failing that roll costs a turn and not the game.
+	 */
+	function winProbability(state, depth, ctx) {
+		if (ctx.nodes >= ctx.budget) { ctx.exhausted = true; return 0; }
+		ctx.nodes++;
+
+		var over = RRBattle.isOver(state);
+		if (over === "win") return 1;
+		if (over === "loss") return 0;
+
+		var position = RRBattle.positionKey(state);
+		if (depth <= 0) {
+			// Running out of depth used to count as a loss outright, which is
+			// sound but wildly pessimistic: most of the probability mass ends up
+			// on "did not finish in time" rather than on "lost", and a level 45
+			// sweep came out at 63%. So spend a little worst-case search at the
+			// leaf instead. A proof is a proof, so returning 1 on one is still a
+			// floor, and it converts most truncated branches into real wins.
+			var leafKey = "leaf:" + position;
+			var leaf = ctx.table[leafKey];
+			if (leaf === undefined) {
+				// Bounded globally, not just per leaf. In a losing position every
+				// leaf proof runs to its budget and fails, and paying that at
+				// each of them is what took a two-Pokemon fight to 99 seconds.
+				// Giving up returns 0, which is still a floor.
+				if (ctx.leafSpend >= ctx.leafSpendCap) return 0;
+				var proof = solveProof(state, {
+					maxDepth: ctx.leafDepth, budget: ctx.leafBudget, options: ctx.options
+				});
+				ctx.leafSpend += proof.nodes;
+				leaf = proof.result === WIN ? 1 : 0;
+				ctx.table[leafKey] = leaf;
+			}
+			return leaf;
+		}
+
+		var key = position + "@" + depth;
+		var cached = ctx.table[key];
+		if (cached !== undefined) { ctx.hits++; return cached; }
+
+		var myActions = orderedMyActions(state);
+		var foeActions = RRPlan.plausibleFoeActions(state, ctx.options);
+		var best = 0;
+		var bestAction = null;
+
+		for (var i = 0; i < myActions.length && best < 1; i++) {
+			var worst = 1;
+			for (var j = 0; j < foeActions.length; j++) {
+				var successors = cachedStep(ctx, position, state, myActions[i],
+					foeActions[j]);
+				var probability = 0;
+				for (var k = 0; k < successors.length; k++) {
+					probability += successors[k].probability *
+						winProbability(successors[k].state, depth - 1, ctx);
+				}
+				if (probability < worst) worst = probability;
+				// They will pick this reply, so nothing better can come of the
+				// rest: this action is already no better than one we have.
+				if (worst <= best) break;
+			}
+			if (worst > best) { best = worst; bestAction = myActions[i]; }
+		}
+
+		ctx.table[key] = best;
+		ctx.bestAt[position] = bestAction;
+		return best;
+	}
+
+	/**
+	 * Enumerating a turn re-runs it once per coin-flip path, so the same
+	 * (position, your action, their action) triple was being expanded from
+	 * scratch every time the search came back to it. Caching the successor list
+	 * is the single biggest saving in odds mode.
+	 */
+	function cachedStep(ctx, position, state, myAction, foeAction) {
+		var key = position + "#" +
+			(myAction.type === "switch" ? "s" + myAction.index : myAction.move) + "#" +
+			(foeAction.type === "switch" ? "s" + foeAction.index : foeAction.move);
+		var hit = ctx.steps[key];
+		if (hit) return hit;
+		var successors = RRBattle.step(state, myAction, foeAction,
+			{mode: "odds", forkBudget: ctx.forkBudget});
+		ctx.steps[key] = successors;
+		return successors;
+	}
+
+	/**
+	 * The line to follow, read back off the solved position. Chance is shown at
+	 * its most likely successor only: the full tree branches on every roll and
+	 * is unreadable, while what you want on screen is what to click.
+	 */
+	function readLine(state, depth, ctx, seen) {
+		if (depth <= 0 || RRBattle.isOver(state)) return null;
+		var key = RRBattle.positionKey(state);
+		if (seen[key]) return null;
+		seen[key] = true;
+		var action = ctx.bestAt[key];
+		if (!action) return null;
+
+		var branches = RRPlan.plausibleFoeActions(state, ctx.options).map(function (foeAction) {
+			var successors = RRBattle.step(state, action, foeAction,
+				{mode: "odds", forkBudget: ctx.forkBudget});
+			var likeliest = successors[0];
+			for (var i = 1; i < successors.length; i++) {
+				if (successors[i].probability > likeliest.probability) likeliest = successors[i];
+			}
+			return {
+				foeAction: foeAction,
+				probability: likeliest.probability,
+				next: readLine(likeliest.state, depth - 1, ctx, seen),
+				outcome: RRBattle.isOver(likeliest.state)
+			};
+		});
+		return {action: action, branches: branches};
+	}
+
 	/**
 	 * Everything that distinguishes one position from another. Two positions
 	 * with the same key are the same search problem, which is what makes the
@@ -151,6 +288,56 @@ var RRSolver = (function () {
 	 */
 	function solve(state, options) {
 		var opts = options || {};
+		if ((opts.mode || "odds") === "odds") return solveOdds(state, opts);
+		return solveProof(state, opts);
+	}
+
+	function solveOdds(state, options) {
+		var opts = options || {};
+		var maxDepth = opts.maxDepth || 8;
+		var started = Date.now();
+		var ctx = {
+			nodes: 0, hits: 0, budget: opts.budget || 300000,
+			table: {}, steps: {}, bestAt: {}, exhausted: false, options: opts,
+			forkBudget: opts.forkBudget === undefined ? 6 : opts.forkBudget,
+			leafDepth: opts.leafDepth === undefined ? 6 : opts.leafDepth,
+			leafBudget: opts.leafBudget === undefined ? 1200 : opts.leafBudget,
+			leafSpend: 0,
+			leafSpendCap: opts.leafSpendCap === undefined ? 60000 : opts.leafSpendCap
+		};
+
+		// Deeper can only ever find more wins, so the last pass is the answer;
+		// stop early once it is certain.
+		var probability = 0, reachedDepth = 0;
+		for (var depth = 1; depth <= maxDepth; depth++) {
+			ctx.table = {};   // depth-keyed, so it cannot survive; ctx.steps can
+			probability = winProbability(state, depth, ctx);
+			reachedDepth = depth;
+			if (probability >= 0.999999) break;
+			if (ctx.exhausted) break;
+			if (opts.timeLimitMs && Date.now() - started > opts.timeLimitMs) break;
+		}
+
+		return {
+			mode: "odds",
+			winProbability: probability,
+			result: probability >= 0.999999 ? WIN
+				: (probability > 0 ? "partial" : UNKNOWN),
+			depth: reachedDepth,
+			line: readLine(state, reachedDepth, ctx, {}),
+			nodes: ctx.nodes,
+			elapsedMs: Date.now() - started,
+			exhausted: ctx.exhausted,
+			unmodelled: state.unmodelled.slice(),
+			assumption: RRPlan.advise(state, opts).assumption,
+			meaning: "a floor, not an estimate: they are assumed to play the reply " +
+				"that hurts you most, running out of depth counts as a loss, and " +
+				"surviving HP is read against you. The true figure is higher."
+		};
+	}
+
+	function solveProof(state, options) {
+		var opts = options || {};
 		var maxDepth = opts.maxDepth || 8;
 		var started = Date.now();
 		var totalNodes = 0;
@@ -235,5 +422,11 @@ var RRSolver = (function () {
 		return out;
 	}
 
-	return {solve: solve, describe: describe, stateKey: stateKey};
+	return {
+		solve: solve,
+		solveOdds: solveOdds,
+		solveProof: solveProof,
+		describe: describe,
+		stateKey: stateKey
+	};
 })();

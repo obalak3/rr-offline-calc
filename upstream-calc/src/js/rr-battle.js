@@ -503,6 +503,62 @@ var RRBattle = (function () {
 		return ctx.mode === "worst" && key === "foe";
 	}
 
+	/**
+	 * Odds mode: enumerate the turn's coin flips instead of assuming them.
+	 *
+	 * A decision is reached by re-running the turn along a fixed prefix of
+	 * earlier choices. When the run reaches a decision the prefix does not
+	 * cover, it records the options and aborts; the caller then re-runs once per
+	 * option. Re-running is cheap because damage is cached, and it keeps the
+	 * turn logic in one place rather than forking it per mode.
+	 *
+	 * `pessimistic` names the option to take once the fork budget runs out.
+	 * Collapsing onto it with probability 1 understates your chances, so the
+	 * result stays a lower bound rather than becoming an estimate.
+	 */
+	var ABORT = {abort: true};
+
+	function flip(ctx, options, pessimistic) {
+		if (ctx.cursor < ctx.path.length) {
+			return options[ctx.path[ctx.cursor++]].value;
+		}
+		if (ctx.forks >= ctx.forkBudget) {
+			ctx.collapsed = true;
+			return options[pessimistic].value;
+		}
+		ctx.fork = options;
+		throw ABORT;
+	}
+
+	/**
+	 * Split a damaging hit into "it faints" and "it survives", with the faint
+	 * probability computed exactly from the 16 rolls and the crit rate.
+	 *
+	 * The faint chance is the decision-relevant part and it is exact. The
+	 * surviving HP is read pessimistically for the player in both directions:
+	 * when you attack, the survivor keeps the most HP it could; when they
+	 * attack, you keep the least. That is what makes the final number a floor.
+	 */
+	function damageOutcomes(rolls, targetHP, attackerKey) {
+		var outcomes = RRCritKO.outcomesFor(rolls.noCrit, rolls.crit, rolls.critChance);
+		var faintP = 0, survivors = [];
+		for (var i = 0; i < outcomes.length; i++) {
+			if (outcomes[i][0] >= targetHP) faintP += outcomes[i][1];
+			else survivors.push(outcomes[i][0]);
+		}
+		var options = [];
+		if (faintP > 0) options.push({p: faintP, value: targetHP});
+		if (survivors.length) {
+			var dealt = attackerKey === "me"
+				? Math.min.apply(null, survivors)      // they keep the most HP
+				: Math.max.apply(null, survivors);     // you keep the least
+			options.push({p: 1 - faintP, value: dealt});
+		}
+		if (!options.length) options.push({p: 1, value: 0});
+		// Pessimistic index: the survive branch when it exists, else the faint.
+		return {options: options, pessimistic: options.length > 1 ? 1 : 0};
+	}
+
 	function pickRolls(rolls, ctx, key) {
 		if (ctx.mode === "worst") {
 			return key === "me" ? rolls.noCrit[0] : rolls.crit[rolls.crit.length - 1];
@@ -654,10 +710,16 @@ var RRBattle = (function () {
 			}
 		}
 		if (attacker.status === "par") {
-			// 25% full paralysis, re-rolled every turn. Assumed to go your way
-			// at a cost; taken against you it would never resolve.
-			if (against(ctx, key)) assume(state, 0.75);
-			else return;   // their paralysis stopping them would only help you
+			if (ctx.mode === "odds") {
+				if (!flip(ctx, [{p: 0.75, value: true}, {p: 0.25, value: false}],
+					key === "me" ? 1 : 0)) return;
+			} else if (against(ctx, key)) {
+				// 25% full paralysis, re-rolled every turn. Assumed to go your
+				// way at a cost; taken against you it would never resolve.
+				assume(state, 0.75);
+			} else {
+				return;   // their paralysis stopping them would only help you
+			}
 		}
 
 		var moveName = action.move;
@@ -680,8 +742,14 @@ var RRBattle = (function () {
 		// away. A 70% move used four times is not a 70% line.
 		var accuracy = accuracyOf(state, key, moveName);
 		if (accuracy < 1) {
-			if (against(ctx, key)) assume(state, accuracy);
-			else return;   // their move missing would only help you
+			if (ctx.mode === "odds") {
+				if (!flip(ctx, [{p: accuracy, value: true},
+					{p: 1 - accuracy, value: false}], key === "me" ? 1 : 0)) return;
+			} else if (against(ctx, key)) {
+				assume(state, accuracy);
+			} else {
+				return;   // their move missing would only help you
+			}
 		}
 
 		if (data.split === "Status") {
@@ -696,7 +764,13 @@ var RRBattle = (function () {
 		// Damage.
 		var rolls = damageRolls(state, key, moveName);
 		if (!rolls) { note(state, "no damage array for " + moveName); return; }
-		var dealt = pickRolls(rolls, ctx, key);
+		var dealt;
+		if (ctx.mode === "odds" && !rolls.immune) {
+			var split = damageOutcomes(rolls, defender.curHP, key);
+			dealt = flip(ctx, split.options, split.pessimistic);
+		} else {
+			dealt = pickRolls(rolls, ctx, key);
+		}
 
 		if (defender.volatiles.substitute) {
 			var sub = defender.volatiles.substitute;
@@ -728,7 +802,16 @@ var RRBattle = (function () {
 		// Secondary effect.
 		var secondary = data.effect && data.effect.secondary;
 		if (secondary && !defender.fainted) {
-			var fires = forr(ctx, key) || (ctx.mode !== "worst" && data.secondaryChance >= 100);
+			var chance = data.secondaryChance;
+			var fires;
+			if (ctx.mode === "odds" && chance > 0 && chance < 100) {
+				fires = flip(ctx, [{p: chance / 100, value: true},
+					{p: 1 - chance / 100, value: false}], key === "me" ? 1 : 0);
+			} else if (ctx.mode === "odds") {
+				fires = chance >= 100;
+			} else {
+				fires = forr(ctx, key) || (ctx.mode !== "worst" && chance >= 100);
+			}
 			if (fires) {
 				if (secondary.status) setStatus(defender, secondary.status);
 				if (secondary.boosts) {
@@ -819,41 +902,133 @@ var RRBattle = (function () {
 
 	// --------------------------------------------------------------- step
 
-	/**
-	 * Advance one turn. Returns successors with probabilities summing to 1.
-	 * In "worst" and "expected" modes that is always a single successor.
-	 */
-	function step(state, myAction, foeAction, options) {
-		var ctx = {mode: (options && options.mode) || "worst"};
-		var orders = [];
-		var order = turnOrder(state, myAction, foeAction);
-		if (order) {
-			orders.push({order: order, probability: 1});
-		} else if (ctx.mode === "worst") {
-			// A genuine speed tie is a coin flip, so the guarantee has to hold
-			// for the losing side of it.
-			orders.push({order: ["foe", "me"], probability: 1});
-		} else {
-			orders.push({order: ["me", "foe"], probability: 0.5});
-			orders.push({order: ["foe", "me"], probability: 0.5});
+	/** Run one turn to completion along a fixed sequence of coin flips. */
+	function runTurn(state, myAction, foeAction, ctx) {
+		var next = clone(state);
+		var actions = {me: myAction, foe: foeAction};
+
+		var order = turnOrder(next, myAction, foeAction);
+		if (!order) {
+			// A genuine speed tie. Worst mode hands it to them, since the proof
+			// has to survive losing the flip; odds mode calls it properly.
+			if (ctx.mode === "odds") {
+				order = flip(ctx, [{p: 0.5, value: ["me", "foe"]},
+					{p: 0.5, value: ["foe", "me"]}], 1);
+			} else {
+				order = ["foe", "me"];
+			}
 		}
 
-		return orders.map(function (entry) {
-			var next = clone(state);
-			var actions = {me: myAction, foe: foeAction};
-
-			entry.order.forEach(function (key) {
-				if (actions[key].type === "switch") {
-					switchIn(next, key, actions[key].index);
-				}
-			});
-			entry.order.forEach(function (key) {
-				if (actions[key].type === "move") executeMove(next, key, actions[key], ctx);
-			});
-
-			if (!isOver(next)) endOfTurn(next, ctx);
-			return {state: next, probability: entry.probability};
+		order.forEach(function (key) {
+			if (actions[key].type === "switch") switchIn(next, key, actions[key].index);
 		});
+		order.forEach(function (key) {
+			if (actions[key].type === "move") executeMove(next, key, actions[key], ctx);
+		});
+		if (!isOver(next)) endOfTurn(next, ctx);
+		return next;
+	}
+
+	/**
+	 * Advance one turn. Returns successors whose probabilities sum to 1.
+	 *
+	 * "worst" and "expected" always give a single successor. "odds" enumerates
+	 * the turn's coin flips: it re-runs the turn once per path, forking wherever
+	 * a decision has not already been fixed by the prefix. Identical resulting
+	 * positions are merged, which collapses a lot of the tree, since most
+	 * combinations of misses and rolls land on the same board.
+	 */
+	function step(state, myAction, foeAction, options) {
+		var opts = options || {};
+		var mode = opts.mode || "worst";
+
+		if (mode !== "odds") {
+			var ctx = {mode: mode, cursor: 0, path: [], forks: 0, forkBudget: 0};
+			return [{state: runTurn(state, myAction, foeAction, ctx), probability: 1}];
+		}
+
+		var budget = opts.forkBudget === undefined ? 6 : opts.forkBudget;
+		var results = [];
+		var queue = [{path: [], probability: 1}];
+		var guard = 0;
+
+		while (queue.length && guard++ < 512) {
+			var item = queue.shift();
+			var runCtx = {
+				mode: "odds", path: item.path, cursor: 0,
+				fork: null, forks: item.path.length, forkBudget: budget,
+				collapsed: false
+			};
+			var next = null;
+			try {
+				next = runTurn(state, myAction, foeAction, runCtx);
+			} catch (e) {
+				if (e !== ABORT) throw e;
+			}
+			if (runCtx.fork) {
+				for (var i = 0; i < runCtx.fork.length; i++) {
+					if (runCtx.fork[i].p <= 0) continue;
+					queue.push({
+						path: item.path.concat([i]),
+						probability: item.probability * runCtx.fork[i].p
+					});
+				}
+			} else if (next) {
+				if (runCtx.collapsed) next.collapsed = true;
+				results.push({state: next, probability: item.probability});
+			}
+		}
+
+		return mergeSuccessors(results);
+	}
+
+	/**
+	 * Fold successors that reached the same position. Without this the tree
+	 * carries duplicates that differ only in which coin produced them, and the
+	 * search re-solves each one.
+	 */
+	function mergeSuccessors(results) {
+		var byKey = {};
+		var order = [];
+		for (var i = 0; i < results.length; i++) {
+			var key = positionKey(results[i].state);
+			if (byKey[key]) {
+				byKey[key].probability += results[i].probability;
+			} else {
+				byKey[key] = results[i];
+				order.push(key);
+			}
+		}
+		return order.map(function (key) { return byKey[key]; });
+	}
+
+	/** Everything that distinguishes one position from another. */
+	function positionKey(state) {
+		var parts = [];
+		["me", "foe"].forEach(function (sideKey) {
+			var side = state[sideKey];
+			parts.push(side.active);
+			side.team.forEach(function (mon) {
+				parts.push(mon.curHP, mon.fainted ? 1 : 0, mon.status || "-",
+					mon.sleepTurns, mon.toxicCounter, mon.itemGone ? 1 : 0,
+					mon.boosts.atk, mon.boosts.def, mon.boosts.spa, mon.boosts.spd,
+					mon.boosts.spe, mon.boosts.acc, mon.boosts.eva,
+					mon.pp.join("."),
+					mon.volatiles.substitute || 0,
+					mon.volatiles.leechSeed ? 1 : 0,
+					mon.volatiles.taunt || 0,
+					mon.volatiles.confused || 0);
+			});
+			parts.push(side.hazards.stealthrock, side.hazards.spikes,
+				side.hazards.toxicspikes, side.hazards.stickyweb);
+			var names = Object.keys(side.screens).sort();
+			parts.push(names.map(function (n) { return n + side.screens[n]; }).join(","));
+		});
+		var f = state.field;
+		parts.push(f.weather || "-", f.weatherTurns === Infinity ? "P" : f.weatherTurns,
+			f.terrain || "-", f.terrainTurns === Infinity ? "P" : f.terrainTurns,
+			f.trickRoom);
+		return parts.join("|");
 	}
 
 	return {
@@ -871,6 +1046,7 @@ var RRBattle = (function () {
 		other: other,
 		moveData: moveData,
 		clearCache: clearCache,
+		positionKey: positionKey,
 		endOfTurn: endOfTurn,
 		accuracyOf: accuracyOf,
 		_internal: {
