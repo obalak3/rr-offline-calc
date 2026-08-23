@@ -142,16 +142,67 @@ function scoreOf(state, key, move, flags) {
 		loose >= tight);
 }
 
+// --------------------------------------------------------- the switch gate
+
+// ShouldSwitch (ai_switching.c:50) is a gate run BEFORE move selection, not an
+// option weighed against moves, so when it says no the AI cannot switch at all.
+{
+	const state = B.createState([set('Squirtle', ['Water Gun'], {level: 16})],
+		[set('Geodude', ['Rock Throw'], {level: 14, ability: 'Sturdy'}),
+		 set('Onix', ['Rock Tomb'], {level: 14})], {});
+	// ShouldSwitchToAvoidDeath is gated on smarter-than-basic AI, so a plain
+	// route trainer stands there and dies.
+	const route = AI.switchGate(state, 'foe', {checkBadMove: true});
+	const boss = AI.switchGate(state, 'foe', {checkBadMove: true, checkGoodMove: true});
+	check('a route trainer will not switch to save a Pokemon',
+		route.maySwitch === false, route.reasons.join('; '));
+	check('a boss will', boss.maySwitch === true, boss.reasons.join('; '));
+
+	// switchingCooldown makes ShouldSwitch bail immediately.
+	const after = B.clone(state);
+	B.switchIn(after, 'foe', 1);
+	check('nothing switches out the turn after switching in',
+		AI.switchGate(after, 'foe', {checkBadMove: true, checkGoodMove: true})
+			.maySwitch === false);
+	check('  so the plausible set loses its switches',
+		AI.plausible(after, 'foe', {}).actions.every(a => a.type !== 'switch'));
+}
+
+// With nothing to switch to, the gate is closed whatever the flags.
+{
+	const state = B.createState([set('Squirtle', ['Water Gun'])],
+		[set('Geodude', ['Rock Throw'])], {});
+	check('a lone Pokemon cannot switch',
+		AI.switchGate(state, 'foe', {checkBadMove: true, checkGoodMove: true})
+			.maySwitch === false);
+}
+
 // ------------------------------------------------------- gaps are reported
 
+// When the gate is CLOSED the reason is recorded, not silently applied.
 {
 	const state = B.createState([set('Blissey', ['Tackle'])],
 		[set('Garchomp', ['Earthquake', 'Swords Dance']), set('Gengar', ['Shadow Ball'])], {});
 	const result = AI.plausible(state, 'foe', {});
-	check('switching being unported is reported rather than hidden',
+	check('a closed switch gate is explained rather than silent',
+		Array.isArray(result.notes.switchGate), JSON.stringify(result.notes));
+	check('  and no switch survives it',
+		result.actions.every(a => a.type !== 'switch'));
+}
+
+// When the gate is OPEN, switches come back, and the fact that their SCORING is
+// unported is what keeps them there rather than any judgement about them.
+{
+	const state = B.createState([set('Blissey', ['Tackle'])],
+		[set('Garchomp', ['Earthquake'], {level: 5}), set('Gengar', ['Shadow Ball'])], {});
+	const boss = {checkBadMove: true, checkGoodMove: true};
+	const gate = AI.switchGate(state, 'foe', boss);
+	const result = AI.plausible(state, 'foe', {flagSets: [boss]});
+	check('a Pokemon about to be knocked out may switch (' +
+		gate.reasons.join('; ') + ')', gate.maySwitch === true);
+	check('  its switches are in the set', result.actions.some(a => a.type === 'switch'));
+	check('  and switch scoring being unported is reported',
 		result.notes.switching === true, JSON.stringify(result.notes));
-	check('  and switches stay in the set because of it',
-		result.actions.some(a => a.type === 'switch'));
 }
 
 console.log('\n%d failure(s)', failures);

@@ -131,6 +131,7 @@ var RRBattle = (function () {
 			team: sets.map(makeMon),
 			active: 0,
 			hazards: {stealthrock: 0, spikes: 0, toxicspikes: 0, stickyweb: 0},
+			switchCooldown: 0,
 			screens: {}        // name -> turns remaining
 		};
 	}
@@ -466,6 +467,9 @@ var RRBattle = (function () {
 		outgoing.boosts = emptyBoosts();
 		outgoing.volatiles = {};
 		side.active = index;
+		// CFRU's ShouldSwitch bails immediately on switchingCooldown, so a
+		// Pokemon that just came in will not be pulled straight back out.
+		side.switchCooldown = 1;
 		applyHazards(state, key);
 	}
 
@@ -923,6 +927,10 @@ var RRBattle = (function () {
 			mon.volatiles.protecting = false;
 			if (mon.volatiles.taunt > 0) mon.volatiles.taunt--;
 			if (mon.volatiles.encore > 0) mon.volatiles.encore--;
+		});
+
+		["me", "foe"].forEach(function (key) {
+			if (state[key].switchCooldown > 0) state[key].switchCooldown--;
 		});
 
 		["me", "foe"].forEach(function (key) {

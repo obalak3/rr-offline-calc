@@ -19,7 +19,7 @@
  *
  * No DOM, so it runs in Node for the tests and in the worker for the search.
  */
-/* global RRBattle, RRCritKO */
+/* global RRBattle, RRCritKO, RRAI */
 var RRPlan = (function () {
 	"use strict";
 
@@ -32,12 +32,20 @@ var RRPlan = (function () {
 	 */
 	function plausibleFoeActions(state, options) {
 		var opts = options || {};
-		var actions = RRBattle.legalActions(state, "foe");
 		if (opts.foeMovesOnly) {
-			var moves = actions.filter(function (a) { return a.type === "move"; });
+			var moves = RRBattle.legalActions(state, "foe")
+				.filter(function (a) { return a.type === "move"; });
 			if (moves.length) return moves;
 		}
-		return actions;
+		// Use the AI model when it is loaded, unless the caller explicitly wants
+		// the fully conservative reading. Narrowing is the direction that can be
+		// wrong, so rr-ai only ever drops an action it can show the AI will not
+		// take -- most usefully a switch the ShouldSwitch gate rules out.
+		if (opts.useAI !== false && typeof RRAI !== "undefined") {
+			var narrowed = RRAI.plausible(state, "foe", opts).actions;
+			if (narrowed.length) return narrowed;
+		}
+		return RRBattle.legalActions(state, "foe");
 	}
 
 	function fraction(mon) {
@@ -260,9 +268,11 @@ var RRPlan = (function () {
 			foeActionCount: foeActions.length,
 			// Stated so the caller can report the assumption rather than imply
 			// a confidence the model has not earned.
-			assumption: opts.foeMovesOnly ?
-				"worst case over every enemy move (switching not considered)" :
-				"worst case over every legal enemy action",
+			assumption: opts.foeMovesOnly
+				? "worst case over every enemy move (switching not considered)"
+				: (opts.useAI !== false && typeof RRAI !== "undefined"
+					? "worst case over what the AI model says it might do"
+					: "worst case over every legal enemy action"),
 			unmodelled: unmodelled
 		};
 	}

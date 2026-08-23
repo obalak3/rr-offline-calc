@@ -47,6 +47,112 @@ var RRAI = (function () {
 		"Flash Fire": "Fire", "Sap Sipper": "Grass"
 	};
 
+	/**
+	 * Whether the AI would consider switching at all.
+	 *
+	 * This is the single biggest narrowing available, and it comes from the
+	 * shape of the upstream code rather than from any score: ShouldSwitch
+	 * (ai_switching.c:50) is a GATE run before move selection, not an option
+	 * weighed against moves. When it returns false the AI cannot switch, full
+	 * stop, so every switch drops out of the plausible set.
+	 *
+	 * The gate is a fixed sequence of triggers. Most are not ported, but nearly
+	 * all of them have a cheap precondition -- a status, a volatile, an ability,
+	 * a type matchup -- and if no precondition holds, no trigger can fire. So
+	 * this reports "cannot switch" only when every trigger is ruled out, and
+	 * defaults to "might switch" otherwise. Wrong in the safe direction: a
+	 * spurious "might" only widens the set.
+	 */
+	function switchGate(state, key, flags) {
+		var side = state[key];
+		var self = RRBattle.active(side);
+		var foe = RRBattle.active(state[RRBattle.other(key)]);
+		var reasons = [];
+
+		var benched = side.team.filter(function (mon, i) {
+			return i !== side.active && !mon.fainted;
+		});
+		if (!benched.length) return {maySwitch: false, reasons: ["nothing to switch to"]};
+
+		// ShouldSwitch returns FALSE outright while this is set.
+		if (side.switchCooldown > 0) {
+			return {maySwitch: false, reasons: ["just switched in (cooldown)"]};
+		}
+		if (self.volatiles.trapped) {
+			return {maySwitch: false, reasons: ["trapped"]};
+		}
+
+		// ShouldSwitchIfNaturalCureOrRegenerator, ShouldSwitchWhileAsleep,
+		// IsTakingAnnoyingSecondaryDamage all need a status to be present.
+		if (self.status) reasons.push("has a status (" + self.status + ")");
+		if (self.volatiles.leechSeed) reasons.push("seeded");
+		if (self.volatiles.yawn) reasons.push("yawned");
+		if (self.volatiles.perish) reasons.push("perish count running");
+
+		// ShouldSwitchToAvoidDeath is explicitly gated on smarter-than-basic AI
+		// (ai_switching.c: aiFlags > AI_SCRIPT_CHECK_BAD_MOVE), so a plain route
+		// trainer will stand there and die.
+		if (flags[GOOD] || flags[SEMI]) {
+			var incoming = worstIncomingDamage(state, key);
+			if (incoming >= self.curHP) reasons.push("would be knocked out");
+		}
+
+		// ShouldSwitchWhenOffensiveStatsAreLow.
+		if ((self.boosts.atk || 0) < 0 || (self.boosts.spa || 0) < 0) {
+			reasons.push("offensive stats dropped");
+		}
+
+		// ShouldSwitchIfOnlyBadMovesLeft, and FindMonThatAbsorbsOpponentsMove.
+		if (!hasAnyUsefulMove(state, key)) reasons.push("no move does anything");
+		if (foe.set.ability === "Wonder Guard") reasons.push("foe has Wonder Guard");
+		if (benchAbsorbsSomething(state, key, benched)) {
+			reasons.push("someone on the bench absorbs a move");
+		}
+
+		return {maySwitch: reasons.length > 0, reasons: reasons};
+	}
+
+	function worstIncomingDamage(state, key) {
+		var foeKey = RRBattle.other(key);
+		var worst = 0;
+		RRBattle.legalActions(state, foeKey).forEach(function (action) {
+			if (action.type !== "move") return;
+			var rolls = RRBattle.damageRolls(state, foeKey, action.move);
+			if (rolls && !rolls.immune) {
+				var top = rolls.crit[rolls.crit.length - 1];
+				if (top > worst) worst = top;
+			}
+		});
+		return worst;
+	}
+
+	function hasAnyUsefulMove(state, key) {
+		var actions = RRBattle.legalActions(state, key);
+		for (var i = 0; i < actions.length; i++) {
+			if (actions[i].type !== "move") continue;
+			var data = RRBattle.moveData(actions[i].move);
+			if (data && data.split === "Status") return true;
+			var rolls = RRBattle.damageRolls(state, key, actions[i].move);
+			if (rolls && !rolls.immune && rolls.noCrit[0] > 0) return true;
+		}
+		return false;
+	}
+
+	function benchAbsorbsSomething(state, key, benched) {
+		var foeKey = RRBattle.other(key);
+		var types = {};
+		RRBattle.legalActions(state, foeKey).forEach(function (action) {
+			if (action.type !== "move") return;
+			var data = RRBattle.moveData(action.move);
+			if (data && data.split !== "Status") types[data.type] = true;
+		});
+		for (var i = 0; i < benched.length; i++) {
+			var absorbs = ABSORB[benched[i].set.ability];
+			if (absorbs && types[absorbs]) return true;
+		}
+		return false;
+	}
+
 	function typesOf(mon) {
 		return RRBattle._internal.toCalcPokemon(mon).types;
 	}
@@ -253,7 +359,12 @@ var RRAI = (function () {
 		var seen = {};
 
 		flagSets.forEach(function (flags) {
-			var scored = scoreAll(state, key, flags, notes);
+			var gate = switchGate(state, key, flags);
+			if (!gate.maySwitch) notes.switchGate = gate.reasons;
+			var scored = scoreAll(state, key, flags, notes).filter(function (entry) {
+				// ShouldSwitch said no, so a switch is not on the table at all.
+				return gate.maySwitch || entry.action.type !== "switch";
+			});
 			var best = -Infinity;
 			scored.forEach(function (entry) { if (entry.score > best) best = entry.score; });
 			scored.forEach(function (entry) {
@@ -276,6 +387,7 @@ var RRAI = (function () {
 
 	return {
 		scoreAll: scoreAll,
+		switchGate: switchGate,
 		scoreAction: scoreAction,
 		plausible: plausible,
 		BASE: BASE,
