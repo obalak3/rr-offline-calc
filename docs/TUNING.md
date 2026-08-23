@@ -32,11 +32,24 @@ Set to 300. Zero measures the same but the term encodes something real.
 
 ## What does not help
 
-**Deeper search makes it worse.** 1 -> 50%, 2 -> 59%, 3 -> 56%. With a correct
-objective depth can never hurt, so something in the evaluation is still
-misaligned. Best current hypothesis: depth compounds AI-model error, since a
-3-ply plan rests on two predicted replies instead of one. Untested -- the
-adversarial control run times out at depth 3.
+**Deeper search makes it worse -- and the reason is now measured.** Depth
+compounds AI-model error. Running the same search against a worst-case opponent,
+where there is no model to be wrong about, flips the direction:
+
+                    depth 2    depth 3
+    AI model          59%        56%     depth HURTS
+    worst case        49%        56%     depth HELPS (+7, 90 fights)
+
+So the model is worth 10 points at depth 2 and worth nothing at depth 3 -- by
+then its errors have eaten its value, and both arms land in the same place. A
+3-ply plan rests on two predicted replies instead of one, and each is a chance
+to be wrong.
+
+The consequence matters more than the finding: **more search cannot help until
+the opponent model is better.** Depth is not the lever; AI fidelity is. That
+puts the unported parts of CFRU's scoring -- ai_switching.c, the fighting-class
+system, most of the ~880 scoring sites -- on the critical path, with a
+measurable payoff rather than a hoped-for one.
 
 **Playout evaluation.** 52% against 59%. Judged useless once before when the
 evaluator was inert, so this retest was the real one. The playout POLICY is the
