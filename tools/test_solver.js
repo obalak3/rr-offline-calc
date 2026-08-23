@@ -212,21 +212,31 @@ for (const [name, party, foe] of provable) {
 		intends.some(m => (B.moveData(m) || {}).type === 'Electric'));
 
 	B.clearCache();
-	const route = S.planRoute(state, {lookahead: 4, budget: 60000, maxTurns: 6,
+	const route = S.planRoute(state, {lookahead: 4, budget: 60000, maxTurns: 8,
 		risks: {roll: 'median'}});
-	check('the planner baits it with the absorber rather than attacking (' +
-		(route.steps[0] ? route.steps[0].label : 'no route') + ')',
-		route.steps.length > 0 && route.steps[0].action.type === 'switch',
-		route.steps.slice(0, 3).map(s2 => s2.label).join(' -> '));
-	check('  switching to the Pokemon that absorbs it',
-		route.steps[0] && route.steps[0].label.indexOf('Lanturn') >= 0,
-		route.steps[0] ? route.steps[0].label : '');
 
-	// And it must not turn into a pure stall: once the absorber is healthy the
-	// plan has to go back to dealing damage.
+	// This used to assert that turn one switches Lanturn in to absorb the
+	// Discharge. It no longer does, and that is not a regression to paper over:
+	// the behaviour came from an evaluator whose health term, KO reward and
+	// progress term were all silently inert. With them actually wired up it
+	// opens Fake Out instead -- a flinch for free damage -- and the early-game
+	// benchmark went from 54% to 59% clean wins. So what is asserted now is the
+	// thing that must be true rather than the move that happened to appear:
+	// the engine understands the absorber, and the plan is not passive.
+	check('the absorber is understood as immune (Volt Absorb)',
+		B.damageRolls(state, 'foe', 'Discharge') !== null);
+	const lanturn = state.me.team.find(m => m.species === 'Lanturn');
+	const view = B.clone(state);
+	view.me.active = state.me.team.indexOf(lanturn);
+	const soak = B.damageRolls(view, 'foe', 'Discharge');
+	check('  and Discharge does nothing to it', soak && soak.immune === true);
+
 	const attacks = route.steps.filter(s2 => s2.action.type === 'move');
-	check('  then attacks rather than cycling forever (' + attacks.length +
-		' of ' + route.steps.length + ' turns attack)', attacks.length > 0,
+	check('the plan is not passive (' + attacks.length + ' of ' +
+		route.steps.length + ' turns attack)',
+		attacks.length > route.steps.length / 2,
+		route.steps.map(s2 => s2.label).join(' -> '));
+	check('  and it makes progress', route.steps.some(s2 => s2.knockedOut),
 		route.steps.map(s2 => s2.label).join(' -> '));
 }
 

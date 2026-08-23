@@ -427,6 +427,11 @@ var RRSolver = (function () {
 		// party one Pokemon at a time. Against Misty it switched three turns
 		// running into the same Ice Punch and made no progress at all.
 		deathRisk: 1000,
+		// What one of YOUR Pokemon dying costs. In a Nuzlocke it is meant to
+		// dominate, and it does: at 1000 against positional terms capped near
+		// 900, no other weight can flip a decision. That is why sweeping the
+		// others changed nothing -- they are tiebreakers, not levers.
+		lossCost: 1000,
 		turnCost: 8
 	};
 	function weights(opts) {
@@ -436,6 +441,7 @@ var RRSolver = (function () {
 			progress: w.progress === undefined ? WEIGHTS.progress : w.progress,
 			health: w.health === undefined ? WEIGHTS.health : w.health,
 			deathRisk: w.deathRisk === undefined ? WEIGHTS.deathRisk : w.deathRisk,
+			lossCost: w.lossCost === undefined ? WEIGHTS.lossCost : w.lossCost,
 			turnCost: w.turnCost === undefined ? WEIGHTS.turnCost : w.turnCost
 		};
 	}
@@ -631,33 +637,46 @@ var RRSolver = (function () {
 		var myLosses = countFainted(state.me);
 		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
 		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
-
 		var odds = state.planProb === undefined ? 1 : state.planProb;
+
+		// A win beats every unfinished position, full stop; the odds only
+		// separate one win from another. Scaling the whole win by them meant a
+		// certain win could score BELOW staying healthy after enough turns of
+		// compounding, and the planner sat on a Manectric with 10 HP while
+		// holding three moves that would have killed it.
 		if (!foeAlive && meAlive) {
-			// A win beats every unfinished position, full stop, and the odds
-			// only separate one win from another.
-			//
-			// Multiplying the whole win by the odds was wrong: after twenty
-			// turns of compounding, a certain win scored BELOW simply staying
-			// healthy, and the planner sat on a Manectric with 10 HP switching
-			// back and forth while holding three moves that would have killed it.
-			return WON - myLosses * LOST_POKEMON + odds * 10000 - depthUsed;
+			return WON - myLosses * w.lossCost + odds * 10000 - depthUsed;
 		}
 		if (!meAlive) return -WON;
 
-		// Unfinished: reward progress through their team, penalise your losses
-		// heavily, and use HP only to separate otherwise equal routes. The
-		// expected loss term is what keeps it from parking a Pokemon in front of
-		// something that kills it four times in five.
-		// Progress is what is rewarded, weighted by how likely the line is.
-		// Penalising uncertainty directly made standing still the safest thing
-		// in the position, and the search pivoted between two Pokemon for forty
-		// turns rather than commit to anything.
-		return -myLosses * LOST_POKEMON -
-			deathChance(state) * LOST_POKEMON +
-			(1 - teamHP(state.foe)) * 500 * odds +
-			teamHP(state.me) * 60 -
-			depthUsed * 8;
+		return (
+			// Losing one of yours is the worst thing that can happen short of
+			// losing the battle.
+			-myLosses * w.lossCost
+
+			// The chance the Pokemon standing there dies next. Careful: this can
+			// be reset by switching, so if it outweighs the free hit a switch
+			// concedes, the planner passes the problem down the party one
+			// Pokemon at a time.
+			- deathChance(state) * w.deathRisk
+
+			// Removing one of theirs for good is worth far more than the HP it
+			// had left: taking the last 10 off a Manectric is not the same as
+			// taking 10 off a healthy Bellibolt.
+			+ countFainted(state.foe) * w.foeDown
+
+			// Damage dealt. NOT scaled by odds -- damage already dealt is not
+			// contingent on anything, and planProb hits exactly 0 the moment any
+			// step contains a certain death, which silently erased this term.
+			+ (1 - teamHP(state.foe)) * w.progress
+
+			// Your side, counted concavely, so a point of HP is worth far more
+			// near a knockout than near full. That is what makes healing a hurt
+			// Pokemon valuable and healing a healthy one nearly worthless.
+			+ survivability(state.me) * w.health
+
+			- depthUsed * w.turnCost
+		);
 	}
 
 	function searchRoute(state, depth, ctx, alpha, beta, depthUsed) {
