@@ -76,6 +76,59 @@ any Pokémon by hand for wild encounters that aren't in the sheet.
 
 ---
 
+## The battle advisor
+
+A panel under the trainer panel that answers the question the calculator cannot:
+**what should I click, and is this fight safe.**
+
+Pick a battle, pick which of your Pokemon is out and which of theirs, type in
+current HP if you are mid-fight, and press a button:
+
+- **What should I click?** ranks every option you have, switches included, on the
+  worst reply the opponent has rather than the likeliest one. It shows the damage
+  range, what the opponent threatens back, and which reply it is defending
+  against.
+- **Check this fight** asks the Nuzlocke question instead: is there a route where
+  *nothing of yours dies*, and how much bad luck does that route survive.
+
+**Nuzlocke mode is on by default**, which changes the objective rather than
+tuning it: losing one Pokemon counts as losing the battle even if you would go
+on to win it.
+
+Damage is read as **they roll high, you roll low, no crits**. That keeps the
+search deterministic, and it is why the advice is usable at all -- assuming a
+critical hit every turn makes every option come back "you lose this Pokemon",
+which ranks nothing. "Assume they crit" is a checkbox, because it asks a
+different and also useful question.
+
+### What it will and will not claim
+
+The honesty rules are load-bearing, since the whole point is a claim about
+safety:
+
+- It never says a Pokemon dies. A search can find a route or fail to find one;
+  it cannot prove none exists. "No route found" means exactly that, and a longer
+  route may still exist.
+- The risk ladder reports the highest rung that holds, so "safe unless they crit"
+  and "safe even if they crit" are distinguishable. In a run where a mistake is
+  permanent those are different decisions, and one number hides which is which.
+- Anything it cannot simulate is listed on screen rather than quietly skipped.
+
+### Known limits
+
+- The opponent model is ported from Complete FireRed Upgrade (see
+  `docs/RR-AI.md`) but is partial. Unported rules leave a move at its base score,
+  where it stays in the set of things the AI might do -- wider than the truth,
+  which is the safe direction.
+- Switching is scored by a 100KB file upstream that is not ported. What *is*
+  ported is the gate in front of it, which is what actually decides whether a
+  switch is possible at all.
+- Singles only. Doubles falls back to the existing panel.
+- The search runs on the main thread, so a hard fight can hang the page for a few
+  seconds.
+
+---
+
 ## Running it
 
 ```bash

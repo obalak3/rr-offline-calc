@@ -91,7 +91,9 @@ const KINDS = [
 	'taunt', 'encore', 'destinyBond', 'forceSwitch', 'selfSwitch', 'swapItems',
 	'curse', 'noop', 'unsupported', 'secondary', 'selfDebuff', 'removeItem',
 	'breakScreens', 'trap', 'throatChop', 'glaiveRush', 'fickleBeam',
-	'physicalDefence', 'multiHit', 'lockedIn'
+	'physicalDefence', 'multiHit', 'lockedIn',
+	// player-side additions
+	'focusEnergy', 'defog', 'healBell', 'rapidSpin', 'torment', 'disable', 'psychUp'
 ];
 
 const badKind = [], badStat = [], badStatus = [], badBoost = [], badPriority = [];

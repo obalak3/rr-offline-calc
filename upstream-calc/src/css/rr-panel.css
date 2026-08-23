@@ -586,3 +586,21 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 }
 #rr-panel .rr-team-head #rr-clear-team:hover { color: var(--rr-accent); }
 #rr-panel #rr-undo-clear { margin-left: 4px; }
+
+/* ---------------------------------------------------------- battle advisor */
+
+#rr-advisor { margin-top: 8px; }
+#rr-advisor.rr-collapsed .rr-body { display: none; }
+.rr-adv-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.rr-adv-row label { font-size: 11px; opacity: 0.75; }
+.rr-adv-row select { max-width: 190px; }
+.rr-adv-row input[type="number"] { width: 68px; }
+.rr-adv-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+.rr-adv-table th { text-align: left; opacity: 0.6; font-weight: normal; padding: 2px 4px; }
+.rr-adv-table td { padding: 3px 4px; border-top: 1px solid rgba(128,128,128,0.25); vertical-align: top; }
+.rr-adv-best td { background: rgba(90, 190, 120, 0.14); }
+.rr-adv-safe td { background: rgba(90, 190, 120, 0.14); }
+.rr-adv-none td { background: rgba(210, 90, 90, 0.14); }
+.rr-adv-budget td { background: rgba(200, 170, 70, 0.14); }
+.rr-adv-note { font-size: 11px; margin-top: 6px; line-height: 1.45; }
+.rr-adv-caveat { opacity: 0.65; }

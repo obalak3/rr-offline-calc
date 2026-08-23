@@ -77,8 +77,15 @@ var RRPlan = (function () {
 	 * One exchange, read at its worst for the player. Returns what the board
 	 * looks like afterwards plus the facts the ranking needs.
 	 */
-	function exchange(state, myAction, foeAction) {
-		var results = RRBattle.step(state, myAction, foeAction, {mode: "worst"});
+	function exchange(state, myAction, foeAction, opts) {
+		// Max roll, no crit, by default. Reading a crit into every exchange
+		// makes every option come back "loses this Pokemon", which ranks nothing
+		// and is the same over-pessimism that made proofs unreachable. Crits are
+		// a risk you switch on to ask a different question.
+		var results = RRBattle.step(state, myAction, foeAction, {
+			mode: (opts && opts.mode) || "maxroll",
+			risks: (opts && opts.risks) || {}
+		});
 		var after = results[0].state;
 		var mine = RRBattle.active(after.me);
 		var theirs = RRBattle.active(after.foe);
@@ -202,11 +209,11 @@ var RRPlan = (function () {
 	 * Evaluate one of your actions against every plausible reply.
 	 * The reported outcome is the worst of them.
 	 */
-	function evaluateAction(state, myAction, foeActions) {
+	function evaluateAction(state, myAction, foeActions, opts) {
 		var worst = null;
 		var worstKey = null;
 		for (var i = 0; i < foeActions.length; i++) {
-			var result = exchange(state, myAction, foeActions[i]);
+			var result = exchange(state, myAction, foeActions[i], opts);
 			var key = rankKey(result);
 			if (worst === null || compareKeys(key, worstKey) > 0) {
 				worst = result;
@@ -241,7 +248,7 @@ var RRPlan = (function () {
 		var foeActions = plausibleFoeActions(state, opts);
 
 		var entries = myActions.map(function (action) {
-			return evaluateAction(state, action, foeActions);
+			return evaluateAction(state, action, foeActions, opts);
 		});
 		entries.sort(function (a, b) { return compareKeys(a.key, b.key); });
 
@@ -268,6 +275,9 @@ var RRPlan = (function () {
 			foeActionCount: foeActions.length,
 			// Stated so the caller can report the assumption rather than imply
 			// a confidence the model has not earned.
+			reading: (opts.risks && opts.risks.crit)
+				? "they roll high AND crit"
+				: "they roll high, no crits",
 			assumption: opts.foeMovesOnly
 				? "worst case over every enemy move (switching not considered)"
 				: (opts.useAI !== false && typeof RRAI !== "undefined"

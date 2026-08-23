@@ -707,6 +707,42 @@ var RRBattle = (function () {
 		case "breakScreens":
 			foeSide.screens = {};
 			return true;
+		case "focusEnergy":
+			self.volatiles.focusEnergy = true;
+			return true;
+		case "defog":
+			// Clears hazards from BOTH sides, and screens from theirs.
+			side.hazards = {stealthrock: 0, spikes: 0, toxicspikes: 0, stickyweb: 0};
+			foeSide.hazards = {stealthrock: 0, spikes: 0, toxicspikes: 0, stickyweb: 0};
+			foeSide.screens = {};
+			// Restricted mode: terrain removal does not work, so terrain is left
+			// alone rather than cleared.
+			if (state.rules !== "restricted") state.field.terrain = null;
+			return true;
+		case "healBell":
+			side.team.forEach(function (mon) {
+				mon.status = null; mon.sleepTurns = 0; mon.toxicCounter = 0;
+			});
+			return true;
+		case "rapidSpin":
+			side.hazards = {stealthrock: 0, spikes: 0, toxicspikes: 0, stickyweb: 0};
+			self.volatiles.leechSeed = false;
+			// Restricted mode removes the Speed boost, which is the ruleset in use.
+			if (state.rules !== "restricted") applyBoosts(self, {spe: 1});
+			return true;
+		case "torment":
+			foe.volatiles.torment = true;
+			return true;
+		case "disable":
+			foe.volatiles.disabled = 4;
+			return true;
+		case "psychUp":
+			for (var stat in foe.boosts) {
+				if (Object.prototype.hasOwnProperty.call(foe.boosts, stat)) {
+					self.boosts[stat] = foe.boosts[stat];
+				}
+			}
+			return true;
 		case "noop":
 			return true;
 		default:
