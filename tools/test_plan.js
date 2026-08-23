@@ -21,12 +21,25 @@ const calc = require(path.join(root, 'upstream-calc/calc/dist/index.js'));
 
 const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number};
 vm.createContext(sandbox);
-for (const file of ['src/js/data/rr-move-effects.js', 'src/js/rr-critko.js',
-	'src/js/rr-battle.js', 'src/js/rr-plan.js']) {
+for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
+	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-plan.js']) {
 	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
 }
 const B = sandbox.RRBattle;
 const P = sandbox.RRPlan;
+const TRAINERS = sandbox.RR_TRAINER_DATA;
+
+function battle(id) {
+	for (const segment of TRAINERS.segments) {
+		for (const b of (segment.battles || [])) if (b.id === id) return b;
+	}
+	return null;
+}
+function enemySet(mon) {
+	return {species: mon.species, level: mon.level.value, nature: mon.nature,
+		ability: mon.ability, item: mon.item || '', moves: mon.moves.slice(0, 4),
+		evs: mon.evs, ivs: mon.ivs};
+}
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -136,6 +149,41 @@ const ONIX = {species: 'Onix', level: 14, nature: 'Bashful', ability: 'Sturdy',
 	}
 	check('no considered reply is worse than the one reported', violations === 0,
 		violations + ' replies beat the stated worst case');
+}
+
+// ------------------------------ a KO is the best outcome, not an unrankable one
+
+// Found against Giovanni: Surf for 116 into a 141 HP Nidoking ranked FIFTH,
+// below Rapid Spin for 17. Two causes, both worth keeping caught.
+{
+	// 1. The race was measured after their reply, so a strong move was punished
+	//    for provoking a switch into something that walls it.
+	// 2. When the move actually KOed, raceFrom returned "unknown" because a side
+	//    had fainted, and the verdict fell through to "survives, N% off it".
+	// Giovanni's real team, because the bug needed his actual Nidoking: its
+	// Earth Power drops Blastoise below a third, Torrent turns on, and the
+	// boosted Surf then KOs. A hand-built approximation does not reproduce it.
+	const state = B.createState(
+		[set('Blastoise', {level: 46, nature: 'Modest', ability: 'Torrent',
+			moves: ['Surf', 'Ice Beam', 'Earthquake', 'Rapid Spin']})],
+		battle('team-rocket-giovanni').team.map(enemySet), {});
+	const plan = P.advise(state, {});
+	const surf = plan.entries.find(e => e.label === 'Surf');
+	const spin = plan.entries.find(e => e.label === 'Rapid Spin');
+
+	check('the move that KOs outranks the one that chips (' +
+		plan.entries[0].label + ' first)',
+		plan.entries.indexOf(surf) < plan.entries.indexOf(spin),
+		plan.entries.map(e => e.label).join(' > '));
+	check('  and its verdict says it KOs rather than "survives"',
+		/KOs/.test(surf.verdict), surf.verdict);
+
+	// The race must describe the Pokemon in front of you, not the one they
+	// might bring in, or it is not comparable between your own options.
+	const races = plan.entries.filter(e => e.race && e.race.mine !== null);
+	check('  every race is measured against a live matchup',
+		races.every(e => typeof e.race.mine === 'number'),
+		races.map(e => e.label + '=' + e.race.mine).join(', '));
 }
 
 // ------------------------------------------------------ it states its footing

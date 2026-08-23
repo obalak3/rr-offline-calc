@@ -615,3 +615,12 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 .rr-adv-max { opacity: 0.55; min-width: 34px; }
 .rr-adv-mon .rr-adv-status { max-width: 104px; }
 .rr-adv-mon input[type="checkbox"]:not(:checked) ~ .rr-adv-name { opacity: 0.4; text-decoration: line-through; }
+.rr-adv-party { margin: 6px 0; }
+.rr-adv-partynames { font-size: 11px; margin: 1px 0 2px; }
+.rr-adv-link { background: none; border: 0; padding: 0 0 0 6px; font-size: 11px;
+	text-decoration: underline; cursor: pointer; color: inherit; opacity: 0.7; }
+.rr-adv-partylist { max-height: 148px; overflow-y: auto; display: flex;
+	flex-wrap: wrap; gap: 2px 8px; padding: 4px 2px; font-size: 11px;
+	border: 1px solid rgba(128,128,128,0.3); border-radius: 3px; }
+.rr-adv-pick { display: flex; align-items: center; gap: 3px; opacity: 0.55; }
+.rr-adv-pick.rr-adv-picked { opacity: 1; }

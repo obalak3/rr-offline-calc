@@ -191,6 +191,64 @@ server.listen(0, '127.0.0.1', () => {
 			}
 		}
 
+		// The real case: a save import brings the PC boxes too, so the saved list
+		// is routinely twenty-odd Pokemon and only six of them are fighting.
+		const BIG = [];
+		for (let i = 0; i < 19; i++) {
+			BIG.push({
+				species: ['Squirtle','Pidgey','Rattata','Caterpie','Weedle','Nidoran-M',
+					'Oddish','Abra','Machop','Geodude','Magnemite','Gastly','Onix',
+					'Krabby','Voltorb','Cubone','Koffing','Horsea','Goldeen'][i],
+				level: 16, nature: 'Serious', ability: undefined, item: '',
+				moves: ['Tackle'],
+				evs: {hp:0,atk:0,def:0,spa:0,spd:0,spe:0},
+				ivs: {hp:31,atk:31,def:31,spa:31,spd:31,spe:31}
+			});
+		}
+		window.localStorage.setItem('rrTeam', JSON.stringify(BIG));
+		window.localStorage.removeItem('rrAdvParty');
+		$('#rr-adv-mine').empty();
+		window.RRAdvisor.refresh();
+
+		check('a 19-Pokemon save does not become a 19-Pokemon party (' +
+			$('#rr-adv-mine .rr-adv-mon').length + ' rows)',
+			$('#rr-adv-mine .rr-adv-mon').length === 6);
+		check('  the picker offers all of them (' +
+			$('.rr-adv-partybox').length + ')', $('.rr-adv-partybox').length === 19);
+		const big = window.RRAdvisor.buildState();
+		check('  and the position holds six', big.me.team.length === 6);
+		check('  defaulting to the first six',
+			window.RRBattle.active(big.me).species === 'Squirtle');
+
+		// Switching must only ever offer Pokemon that are actually with you.
+		const names = big.me.team.map(m => m.species);
+		check('  nothing from the boxes is switchable',
+			!names.includes('Goldeen') && !names.includes('Horsea'), names.join(','));
+
+		// Choosing a different six has to change who is in the fight.
+		window.RRAdvisor.setParty([10, 11, 12]);
+		const picked = window.RRAdvisor.buildState();
+		check('choosing a party of three gives a party of three',
+			picked.me.team.length === 3, picked.me.team.map(m => m.species).join(','));
+		check('  starting with the one you chose',
+			window.RRBattle.active(picked.me).species === 'Magnemite');
+		check('  and it survives a refresh',
+			JSON.parse(window.localStorage.getItem('rrAdvParty')).join() === '10,11,12');
+
+		// A party slot pointing at a Pokemon that no longer exists must not
+		// leave a hole in the team.
+		window.localStorage.setItem('rrTeam', JSON.stringify(BIG.slice(0, 5)));
+		window.RRAdvisor.refresh();
+		const shrunk = window.RRAdvisor.buildState();
+		check('dropping Pokemon from the saved team does not leave dangling slots',
+			shrunk === null || shrunk.me.team.every(m => !!m.species),
+			shrunk ? shrunk.me.team.map(m => m && m.species).join(',') : 'null state');
+
+		// Put the original team back for the error check.
+		window.localStorage.setItem('rrTeam', JSON.stringify(TEAM));
+		window.localStorage.removeItem('rrAdvParty');
+		window.RRAdvisor.refresh();
+
 		check('the page threw no errors', errors.length === 0, errors.slice(0, 2).join('; '));
 
 		console.log('\n%d failure(s)', failures);

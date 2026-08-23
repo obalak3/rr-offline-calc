@@ -19,6 +19,9 @@
 (function () {
 	"use strict";
 
+	var PARTY_KEY = "rrAdvParty";
+	var PARTY_MAX = 6;
+
 	var STATUSES = [["", "healthy"], ["par", "paralysed"], ["brn", "burned"],
 		["psn", "poisoned"], ["tox", "badly poisoned"], ["slp", "asleep"],
 		["frb", "frostbitten"]];
@@ -51,7 +54,46 @@
 		};
 	}
 
-	function myTeamSets() {
+	/**
+	 * Which of the saved Pokemon are actually in the party.
+	 *
+	 * Importing a save brings in your PC boxes as well, so the saved list is
+	 * routinely twenty-odd Pokemon. Treating all of them as the party is not a
+	 * cosmetic problem: the search offers switches to Pokemon sitting in a box,
+	 * which invents options you do not have, and the advice is only worth
+	 * anything if every option it lists is one you could actually take.
+	 */
+	function loadParty() {
+		try {
+			var raw = JSON.parse(window.localStorage.getItem(PARTY_KEY) || "null");
+			return Array.isArray(raw) ? raw : null;
+		} catch (e) {
+			return null;
+		}
+	}
+
+	function saveParty(indices) {
+		try {
+			window.localStorage.setItem(PARTY_KEY, JSON.stringify(indices));
+		} catch (e) { /* private browsing, quota */ }
+	}
+
+	/** Indices into the saved team, defaulting to the first six. */
+	function partyIndices() {
+		var all = savedTeam();
+		var chosen = loadParty();
+		if (!chosen) {
+			chosen = [];
+			for (var i = 0; i < Math.min(PARTY_MAX, all.length); i++) chosen.push(i);
+			return chosen;
+		}
+		// Drop anything that no longer exists, so removing a Pokemon from the
+		// saved team cannot leave a dangling party slot.
+		return chosen.filter(function (index) { return index < all.length; })
+			.slice(0, PARTY_MAX);
+	}
+
+	function savedTeam() {
 		var team = window.RRTrainers.getTeam() || [];
 		// The trainer panel caches the team at startup, so fall back to what is
 		// actually stored. That covers a team saved in another tab, and it is
@@ -63,18 +105,28 @@
 				team = [];
 			}
 		}
-		return team.map(function (member) {
-			return {
-				species: member.species,
-				level: member.level,
-				nature: member.nature || "Serious",
-				ability: member.ability || undefined,
-				item: member.item || "",
-				moves: (member.moves || []).slice(0, 4),
-				evs: member.evs,
-				ivs: member.ivs
-			};
-		});
+		return team;
+	}
+
+	function toSet(member) {
+		return {
+			species: member.species,
+			level: member.level,
+			nature: member.nature || "Serious",
+			ability: member.ability || undefined,
+			item: member.item || "",
+			moves: (member.moves || []).slice(0, 4),
+			evs: member.evs,
+			ivs: member.ivs,
+			nickname: member.nickname || null
+		};
+	}
+
+	/** The battle party: the chosen Pokemon, in the order you chose them. */
+	function myTeamSets() {
+		var all = savedTeam();
+		return partyIndices().map(function (index) { return toSet(all[index]); })
+			.filter(function (set) { return !!set; });
 	}
 
 	function enemySets() {
@@ -271,6 +323,43 @@
 		}).join("");
 	}
 
+	/**
+	 * The party picker: every saved Pokemon, six of which are fighting.
+	 *
+	 * Collapsed to a summary line, because after a save import the list is long
+	 * and you change it once a session at most.
+	 */
+	function partyPicker() {
+		var all = savedTeam();
+		var chosen = partyIndices();
+		if (!all.length) return "";
+
+		var names = chosen.map(function (index) {
+			var member = all[index];
+			return esc(member.nickname || member.species);
+		}).join(", ");
+
+		var list = all.map(function (member, index) {
+			var on = chosen.indexOf(index) >= 0;
+			return '<label class="rr-adv-pick' + (on ? " rr-adv-picked" : "") + '">' +
+				'<input type="checkbox" class="rr-adv-partybox" data-index="' + index + '"' +
+				(on ? " checked" : "") + " />" +
+				esc(member.nickname || member.species) +
+				' <span class="rr-adv-lv">Lv' + member.level + "</span></label>";
+		}).join("");
+
+		return '<div class="rr-adv-party">' +
+			'<div class="rr-adv-sidehead">Party ' +
+			'<span class="rr-adv-hint">' + chosen.length + " of " + PARTY_MAX +
+			(all.length > chosen.length
+				? " chosen from " + all.length + " saved" : "") + "</span>" +
+			'<button type="button" id="rr-adv-editparty" class="rr-adv-link">change</button>' +
+			"</div>" +
+			'<div class="rr-adv-partynames">' + (names || "none chosen") + "</div>" +
+			'<div id="rr-adv-partylist" class="rr-adv-partylist" style="display:none">' +
+			list + "</div></div>";
+	}
+
 	function rowsFor(side) {
 		return $("#rr-adv-" + side + " .rr-adv-mon");
 	}
@@ -288,8 +377,15 @@
 	function refreshPickers() {
 		var mine = myTeamSets();
 		var theirs = enemySets();
+		$("#rr-adv-partywrap").html(partyPicker());
 		$("#rr-adv-mine").html(teamRows("mine", mine, activeIndexOf("mine")));
 		$("#rr-adv-theirs").html(teamRows("theirs", theirs, activeIndexOf("theirs")));
+
+		var battle = window.RRTrainers.getBattle();
+		$("#rr-adv-who").text(battle
+			? (battle.title ? battle.title + " " : "") + battle.trainer +
+				(battle.variant ? " (" + battle.variant + ")" : "")
+			: "pick a battle above");
 		syncHP();
 		if (!mine.length) {
 			$("#rr-adv-out").html('<div class="rr-adv-note">Save a Pokemon to ' +
@@ -321,10 +417,12 @@
 			'<div class="rr-head"><span class="rr-title">Battle advisor</span>' +
 			'<button type="button" id="rr-adv-collapse" class="rr-collapse">&minus;</button></div>' +
 			'<div class="rr-body">' +
+			'<div id="rr-adv-partywrap"></div>' +
 			'<div class="rr-adv-side"><div class="rr-adv-sidehead">Your team ' +
 			'<span class="rr-adv-hint">dot = out, tick = alive</span></div>' +
 			'<div id="rr-adv-mine"></div></div>' +
-			'<div class="rr-adv-side"><div class="rr-adv-sidehead">Their team</div>' +
+			'<div class="rr-adv-side"><div class="rr-adv-sidehead">Facing ' +
+			'<span id="rr-adv-who" class="rr-adv-hint"></span></div>' +
 			'<div id="rr-adv-theirs"></div></div>' +
 			'<div class="rr-adv-row">' +
 			'<label><input type="checkbox" id="rr-adv-nuzlocke" checked /> Nuzlocke ' +
@@ -371,6 +469,27 @@
 			" #rr-adv-mine .rr-adv-alive, #rr-adv-theirs .rr-adv-alive", function () {
 			syncHP();
 		});
+		$(document).on("click", "#rr-adv-editparty", function () {
+			$("#rr-adv-partylist").toggle();
+		});
+		$(document).on("change", ".rr-adv-partybox", function () {
+			var chosen = [];
+			$(".rr-adv-partybox:checked").each(function () {
+				chosen.push(~~$(this).attr("data-index"));
+			});
+			if (chosen.length > PARTY_MAX) {
+				// Refuse the sixth-and-first rather than silently dropping one,
+				// so it is clear which Pokemon is not coming.
+				$(this).prop("checked", false);
+				return;
+			}
+			saveParty(chosen);
+			// Their side is untouched, so keep its typed HP.
+			$("#rr-adv-mine").empty();
+			refreshPickers();
+			$("#rr-adv-partylist").show();
+		});
+
 		$("#rr-adv-run").click(function () {
 			run(renderAdvice, "Working out this turn...");
 		});
@@ -412,6 +531,8 @@
 	// selected battle to a position is the part worth checking.
 	window.RRAdvisor = {
 		refresh: refreshPickers,
+		party: partyIndices,
+		setParty: function (indices) { saveParty(indices); refreshPickers(); },
 		buildState: buildState,
 		advice: function () { return renderAdvice(buildState()); },
 		ladder: function (budgetMs) {

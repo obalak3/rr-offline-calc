@@ -52,6 +52,25 @@ var RRPlan = (function () {
 		return mon.maxHP ? mon.curHP / mon.maxHP : 0;
 	}
 
+	/**
+	 * How much of a side is left, counting the whole team.
+	 *
+	 * Ranking on the ACTIVE Pokemon's HP looks reasonable until the opponent
+	 * switches. Then a strong move is punished for provoking the switch: Surf
+	 * for 116 into a 141 HP Nidoking ranked below Rapid Spin for 17, because
+	 * after the switch the damage sat on a different Pokemon and the active one
+	 * was untouched. Damage to their team is damage to their team, wherever it
+	 * lands, so that is what gets counted.
+	 */
+	function teamFraction(side) {
+		var current = 0, total = 0;
+		side.team.forEach(function (mon) {
+			current += mon.curHP;
+			total += mon.maxHP;
+		});
+		return total ? current / total : 0;
+	}
+
 	/** Turns to KO with this move, and the phrasing the calculator already uses. */
 	function koProfile(state, attackerKey, moveName) {
 		var rolls = RRBattle.damageRolls(state, attackerKey, moveName);
@@ -94,6 +113,8 @@ var RRPlan = (function () {
 			foeAction: foeAction,
 			myHP: fraction(mine),
 			foeHP: fraction(theirs),
+			myTeamHP: teamFraction(after.me),
+			foeTeamHP: teamFraction(after.foe),
 			iFainted: mine.fainted,
 			foeFainted: theirs.fainted,
 			over: RRBattle.isOver(after)
@@ -114,7 +135,13 @@ var RRPlan = (function () {
 	function raceFrom(state) {
 		var mine = RRBattle.active(state.me);
 		var theirs = RRBattle.active(state.foe);
-		if (mine.fainted || theirs.fainted) return {mine: null, foe: null};
+		// A knocked-out opponent is the race already won, not a race that
+		// cannot be measured. Returning "unknown" here ranked a move that KOs
+		// below one that chips, which is the opposite of the truth.
+		if (theirs.fainted && !mine.fainted) {
+			return {mine: 0, foe: null, movesFirst: "me", knockedOut: true};
+		}
+		if (mine.fainted) return {mine: null, foe: 0, lost: true};
 
 		function fastest(key) {
 			var best = null, bestMove = null;
@@ -151,22 +178,52 @@ var RRPlan = (function () {
 	 * Kept as ordered components rather than a weighted sum so the panel can
 	 * say WHY one option beat another, instead of showing an opaque number.
 	 */
-	function rankKey(worst, race) {
-		var winsRace = 0;
-		if (race && race.mine !== null) {
-			if (race.foe === null || race.mine < race.foe) winsRace = 3;
-			else if (race.mine === race.foe) {
-				// Level on the clock: moving first wins it, a speed tie is a
-				// coin flip and is not counted as winning.
-				winsRace = race.movesFirst === "me" ? 2 : 1;
-			}
-		}
-		return [
+	/**
+	 * Survival is judged on the worst reply, damage on what is actually in
+	 * front of you.
+	 *
+	 * Both have to be, and for different reasons. You can genuinely die to the
+	 * worst reply, so survival cannot be optimistic. But damage measured after
+	 * their pivot is not comparable between your own options: the opponent
+	 * picks a different switch to blunt each one, so a super effective move is
+	 * scored against whatever resists it. That ranked Bite above Water Gun into
+	 * a Rock/Ground lead, which is not advice.
+	 */
+	function rankKey(worst, race, stable) {
+		var damage = stable || worst;
+		if (race && race.knockedOut) return [
 			worst.iFainted ? 0 : 1,
-			worst.foeFainted ? 1 : 0,
-			winsRace,
-			1 - worst.foeHP,
-			worst.myHP
+			1,                       // it kills what is out; that is the point
+			99,
+			1 - damage.foeTeamHP,
+			1,
+			worst.myTeamHP
+		];
+
+		// How many turns ahead you are on the clock. Six stands in for "it
+		// cannot get there", which is as good as a large lead.
+		var mineTurns = (race && race.mine !== null) ? race.mine : 6;
+		var foeTurns = (race && race.foe !== null) ? race.foe : 6;
+		var turnLead = foeTurns - mineTurns;
+
+		// The SIGN of the lead, not its size. Magnitude rewarded stalling:
+		// Withdraw beat Water Gun into an Onix because raising Defence stretched
+		// the opponent's clock further than attacking shortened yours, and a
+		// move that never wins should not outrank one that does.
+		var clock = turnLead > 0 ? 2 : (turnLead === 0 ? 1 : 0);
+
+		return [
+			worst.iFainted ? 0 : 1,                        // survival: worst case
+			damage.foeFainted ? 1 : 0,                     // a kill on what is out
+			clock,                                         // ahead, level, behind
+			1 - damage.foeTeamHP,                          // then: actual damage
+			// Moving first only breaks a tie. It used to sit above damage, which
+			// ranked Bite over Water Gun into a Rock/Ground lead: both needed one
+			// more turn, but Water Gun triggered Sturdy, which put Geodude under
+			// a quarter and switched on its Custap Berry, so it moved first. A
+			// speed tiebreak should not outweigh five times the damage.
+			(race && race.movesFirst === "me") ? 1 : 0,
+			worst.myTeamHP
 		];
 	}
 
@@ -184,18 +241,28 @@ var RRPlan = (function () {
 		return action.move;
 	}
 
-	function verdictFor(worst, race) {
+	function verdictFor(worst, race, stable) {
 		if (worst.over === "win") return "wins the battle";
-		if (worst.foeFainted && !worst.iFainted) return "KOs it and survives";
+		if ((stable || worst).foeFainted && !worst.iFainted) return "KOs it and survives";
 		if (worst.foeFainted && worst.iFainted) return "trades, both faint";
 		if (worst.iFainted) return "loses this Pokemon";
+		if (race && race.knockedOut) {
+			return "KOs what is in front of you" +
+				(worst.foeAction && worst.foeAction.type === "switch"
+					? ", unless they pivot" : "");
+		}
 		if (!race || race.mine === null) {
 			return "survives, " + Math.round((1 - worst.foeHP) * 100) + "% off it";
 		}
+		// A race that only gets worse because they pivoted is not a reason to
+		// avoid the move, so say what actually happened.
+		var pivoted = worst.foeAction && worst.foeAction.type === "switch";
+		var pivotNote = pivoted ? " (they may pivot)" : "";
 		// Counted from AFTER this turn resolves, so these are turns remaining,
 		// not turns from now.
 		var clock = "you need " + race.mine + " more" +
-			(race.foe === null ? ", it cannot KO you" : ", it needs " + race.foe);
+			(race.foe === null ? ", it cannot KO you" : ", it needs " + race.foe) +
+			pivotNote;
 		if (race.foe === null || race.mine < race.foe) return "wins the race: " + clock;
 		if (race.mine === race.foe) {
 			if (race.movesFirst === "me") return "wins on speed: " + clock;
@@ -212,9 +279,10 @@ var RRPlan = (function () {
 	function evaluateAction(state, myAction, foeActions, opts) {
 		var worst = null;
 		var worstKey = null;
+		var foeActions = foeActions || [];
 		for (var i = 0; i < foeActions.length; i++) {
 			var result = exchange(state, myAction, foeActions[i], opts);
-			var key = rankKey(result);
+			var key = rankKey(result, null, null);
 			if (worst === null || compareKeys(key, worstKey) > 0) {
 				worst = result;
 				worstKey = key;
@@ -222,19 +290,31 @@ var RRPlan = (function () {
 		}
 		var myKO = myAction.type === "move" ?
 			koProfile(state, "me", myAction.move) : null;
-		// Priced only on the worst exchange, not on every one: the race costs a
-		// damage calc per move per side, and the worst reply is the one the
-		// ranking is defending against anyway.
-		var race = raceFrom(worst.state);
+
+		// The race is measured against the Pokemon in front of you, NOT against
+		// whoever they pivot to. Measuring it after their switch made it
+		// incomparable between your options: a strong move provokes a switch
+		// into something that walls it, so Surf for 116 into a 141 HP Nidoking
+		// "lost the race" while Rapid Spin for 17 "won on speed". Their pivot is
+		// already priced in the damage and survival terms; the race is there to
+		// answer "can I out-trade what is actually out".
+		var stable = null;
+		for (var f = 0; f < foeActions.length; f++) {
+			if (foeActions[f].type !== "move") continue;
+			var attempt = exchange(state, myAction, foeActions[f], opts);
+			if (!stable || attempt.myTeamHP < stable.myTeamHP) stable = attempt;
+		}
+		var race = raceFrom((stable || worst).state);
+		var damageAgainst = stable || worst;
 		return {
 			action: myAction,
 			label: labelFor(state, myAction),
 			worst: worst,
 			worstReply: worst.foeAction,
-			key: rankKey(worst, race),
+			key: rankKey(worst, race, damageAgainst),
 			ko: myKO,
 			race: race,
-			verdict: verdictFor(worst, race),
+			verdict: verdictFor(worst, race, damageAgainst),
 			unmodelled: worst.state.unmodelled.slice()
 		};
 	}
