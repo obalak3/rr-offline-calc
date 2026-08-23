@@ -39,45 +39,80 @@ const IVS = {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31};
 const mon = (species, nature, ability, moves) => level => ({
 	species, level, nature, ability, item: 'Sitrus Berry', moves, evs: EVS, ivs: IVS});
 
-// A mid-game team, deliberately ordinary: this measures the planner, not a
-// hand-picked answer to each fight.
-const TEAM = [
-	mon('Mienshao', 'Adamant', 'Regenerator', ['Fake Out', 'Drain Punch', 'Detect', 'Rock Tomb']),
-	mon('Lanturn', 'Lonely', 'Volt Absorb', ['Scald', 'Confuse Ray', 'Signal Beam', 'Shock Wave']),
-	mon('Victreebel', 'Modest', 'Chlorophyll', ['Mega Drain', 'Sludge', 'Sleep Powder', 'Leaf Storm']),
-	mon('Diggersby', 'Impish', 'Cheek Pouch', ['Take Down', 'Bulldoze', 'Double Kick', 'Odor Sleuth']),
-	mon('Breloom', 'Adamant', 'Effect Spore', ['Headbutt', 'Mach Punch', 'Force Palm', 'Bullet Seed']),
-	mon('Lilligant', 'Modest', 'Own Tempo', ['Recover', 'Baby-Doll Eyes', 'Sleep Powder', 'Mega Drain'])
-];
-const IN_RANGE = 40;   // the level band this team is built for
+/**
+ * Several teams, because one team measures that team.
+ *
+ * These are BENCHMARK FIXTURES, not advice: ordinary movesets chosen to be
+ * unremarkable rather than to answer any particular fight. A planner change
+ * that helps one archetype and hurts another is exactly what a single-team
+ * benchmark hides.
+ */
+const TEAMS = {
+	balanced: [
+		mon('Mienshao', 'Adamant', 'Regenerator', ['Fake Out', 'Drain Punch', 'Detect', 'Rock Tomb']),
+		mon('Lanturn', 'Lonely', 'Volt Absorb', ['Scald', 'Confuse Ray', 'Signal Beam', 'Shock Wave']),
+		mon('Victreebel', 'Modest', 'Chlorophyll', ['Mega Drain', 'Sludge', 'Sleep Powder', 'Leaf Storm']),
+		mon('Diggersby', 'Impish', 'Cheek Pouch', ['Take Down', 'Bulldoze', 'Double Kick', 'Odor Sleuth']),
+		mon('Breloom', 'Adamant', 'Effect Spore', ['Headbutt', 'Mach Punch', 'Force Palm', 'Bullet Seed']),
+		mon('Lilligant', 'Modest', 'Own Tempo', ['Recover', 'Baby-Doll Eyes', 'Sleep Powder', 'Mega Drain'])
+	],
+	offensive: [
+		mon('Arcanine', 'Adamant', 'Intimidate', ['Flare Blitz', 'Wild Charge', 'Extreme Speed', 'Crunch']),
+		mon('Gyarados', 'Adamant', 'Intimidate', ['Waterfall', 'Crunch', 'Ice Fang', 'Dragon Dance']),
+		mon('Alakazam', 'Timid', 'Synchronize', ['Psychic', 'Shadow Ball', 'Focus Blast', 'Calm Mind']),
+		mon('Snorlax', 'Adamant', 'Thick Fat', ['Body Slam', 'Crunch', 'Earthquake', 'Rest']),
+		mon('Jolteon', 'Timid', 'Volt Absorb', ['Thunderbolt', 'Shadow Ball', 'Signal Beam', 'Agility']),
+		mon('Nidoking', 'Modest', 'Sheer Force', ['Earth Power', 'Sludge Bomb', 'Ice Beam', 'Thunderbolt'])
+	],
+	defensive: [
+		mon('Blastoise', 'Modest', 'Torrent', ['Surf', 'Ice Beam', 'Withdraw', 'Rapid Spin']),
+		mon('Venusaur', 'Modest', 'Overgrow', ['Giga Drain', 'Sludge Bomb', 'Sleep Powder', 'Growth']),
+		mon('Skarmory', 'Impish', 'Sturdy', ['Brave Bird', 'Iron Head', 'Roost', 'Spikes']),
+		mon('Clefable', 'Bold', 'Magic Guard', ['Moonblast', 'Soft-Boiled', 'Thunder Wave', 'Calm Mind']),
+		mon('Slowbro', 'Bold', 'Regenerator', ['Scald', 'Psychic', 'Slack Off', 'Toxic']),
+		mon('Steelix', 'Impish', 'Sturdy', ['Earthquake', 'Iron Head', 'Rock Slide', 'Roar'])
+	]
+};
+const IN_RANGE = 45;
 
+/**
+ * Scaled-level battles are usable and were being thrown away.
+ *
+ * Only 37 singles battles carry fixed levels, and just 9 sit at or below the
+ * band a mid-game team belongs in -- far too few to tune against without simply
+ * fitting those nine. The other 103 say "Highest Lv" or "Highest Lv -2", which
+ * resolves against whatever cap you give them, so they benchmark perfectly well
+ * and take the sample from 9 to over a hundred.
+ */
 const battles = [];
 for (const segment of TRAINERS.segments) {
 	for (const b of (segment.battles || [])) {
 		if ((b.effects || []).some(e => /DOUBLES/i.test(e))) continue;
-		if (b.team[0].level.type !== 'fixed') continue;   // scaled levels need a cap
-		battles.push(b);
+		const fixed = b.team[0].level.type === 'fixed';
+		battles.push({battle: b, fixed: fixed,
+			level: fixed ? b.team[0].level.value : null});
 	}
 }
 
-function play(battle, edge, opts) {
-	const level = battle.team[0].level.value;
-	const foe = battle.team.map(m => ({
+function play(entry, level, edge, team, opts) {
+	const foe = entry.battle.team.map(m => ({
 		species: m.species, level: m.level.type === 'fixed' ? m.level.value : level,
 		nature: m.nature, ability: m.ability, item: m.item || '',
 		moves: m.moves.slice(0, 4), evs: m.evs, ivs: m.ivs}));
 	B.clearCache();
-	return S.planRoute(B.createState(TEAM.map(f => f(level + edge)), foe, {}),
+	return S.planRoute(B.createState(team.map(f => f(level + edge)), foe, {}),
 		Object.assign({lookahead: 2, budget: 20000, maxTurns: 30,
 			risks: {roll: 'median'}}, opts || {}));
 }
 
-function group(name, keep, edge, opts) {
+function group(name, keep, edge, team, opts) {
 	let won = 0, lost = 0, turns = 0, count = 0, ms = 0;
-	for (const battle of battles) {
-		if (!keep(battle.team[0].level.value)) continue;
+	for (const entry of battles) {
+		// A scaled-level battle is run at the cap it is being benchmarked at.
+		const level = entry.fixed ? entry.level : keep.at;
+		if (!keep.test(level, entry)) continue;
 		const started = Date.now();
-		const route = play(battle, edge, opts);
+		const route = play(entry, level, edge, team, opts);
 		ms += Date.now() - started;
 		count++;
 		if (route.won) won++;
@@ -85,28 +120,31 @@ function group(name, keep, edge, opts) {
 		turns += route.turns;
 	}
 	if (!count) return null;
-	console.log('  ' + name.padEnd(30) + 'won ' + String(won).padStart(3) + '/' +
+	console.log('  ' + name.padEnd(24) + 'won ' + String(won).padStart(3) + '/' +
 		String(count).padEnd(4) + ' (' + String(Math.round(100 * won / count)).padStart(3) + '%)' +
-		'   lost ' + String(lost).padStart(3) + ' mons' +
+		'   lost ' + String(lost).padStart(4) + ' mons' +
 		'   avg ' + (turns / count).toFixed(1) + ' turns' +
 		'   ' + (ms / count / 1000).toFixed(1) + 's each');
 	return {won, count, lost};
 }
 
 const opts = process.argv[2] ? JSON.parse(process.argv[2]) : {};
-console.log('Battles this team is built for (level <= ' + IN_RANGE + '):');
-const fair = group('+3 levels', lv => lv <= IN_RANGE, 3, opts);
-group('+8 levels', lv => lv <= IN_RANGE, 8, opts);
+const inRange = {at: 35, test: lv => lv <= IN_RANGE};
 
-console.log('\nBattles it has no business in (level > ' + IN_RANGE + '):');
-group('+3 levels', lv => lv > IN_RANGE, 3, opts);
-group('+15 levels', lv => lv > IN_RANGE, 15, opts);
-
-console.log('\nThe first group is the planner. The second is mostly the team:');
-console.log('six ordinary Pokemon do not beat six optimised ones at any level.');
-if (fair) {
-	const rate = fair.won / fair.count;
-	console.log('\nHeadline: ' + Math.round(rate * 100) + '% of in-range fights won, ' +
-		fair.lost + ' Pokemon lost across ' + fair.count + '.');
-	process.exit(rate >= 0.6 ? 0 : 1);
+let totalWon = 0, totalCount = 0, totalLost = 0;
+for (const name of Object.keys(TEAMS)) {
+	console.log(name + ', in range, +3 levels:');
+	const r = group('  ' + name, inRange, 3, TEAMS[name], opts);
+	if (r) { totalWon += r.won; totalCount += r.count; totalLost += r.lost; }
 }
+
+console.log('\nout of range (level > ' + IN_RANGE + '), balanced team:');
+group('  +3 levels', {at: 70, test: lv => lv > IN_RANGE}, 3, TEAMS.balanced, opts);
+group('  +15 levels', {at: 70, test: lv => lv > IN_RANGE}, 15, TEAMS.balanced, opts);
+
+console.log('\nThe in-range rows measure the planner. The out-of-range rows are');
+console.log('mostly the team: ordinary Pokemon do not beat optimised ones at any level.');
+const rate = totalCount ? totalWon / totalCount : 0;
+console.log('\nHEADLINE: ' + Math.round(rate * 100) + '% of ' + totalCount +
+	' in-range fights won, ' + totalLost + ' Pokemon lost.');
+process.exit(rate >= 0.6 ? 0 : 1);
