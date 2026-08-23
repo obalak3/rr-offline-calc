@@ -873,8 +873,16 @@ var RRBattle = (function () {
 			state.field.trickRoom = state.field.trickRoom > 0 ? 0 : effect.turns;
 			return true;
 		case "protect":
+			// Protect and Detect fail when used twice running. Without this the
+			// planner found an infinite stall: Detect every turn, which also
+			// blocks the opponent's Volt Switch, so neither side could do
+			// anything and five turns of a plan evaporated.
+			if (self.volatiles.protectChain > 0) {
+				self.volatiles.protectChain = 0;
+				return true;   // the move happens, and fails
+			}
 			self.volatiles.protecting = true;
-			self.volatiles.protectChain = (self.volatiles.protectChain || 0) + 1;
+			self.volatiles.protectChain = 1;
 			return true;
 		case "substitute":
 			var cost = Math.floor(self.maxHP * effect.hpCost);
@@ -1056,6 +1064,11 @@ var RRBattle = (function () {
 			} else {
 				return;   // their move missing would only help you
 			}
+		}
+
+		// Any other move breaks the Protect chain.
+		if (!(data.effect && data.effect.kind === "protect")) {
+			attacker.volatiles.protectChain = 0;
 		}
 
 		if (data.split === "Status") {

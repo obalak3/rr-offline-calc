@@ -206,8 +206,15 @@ var RRSolver = (function () {
 	 * position good ordering is what makes the difference between finishing and
 	 * hitting the budget.
 	 */
-	function orderedMyActions(state) {
+	function orderedMyActions(state, noSwitch) {
 		var actions = RRBattle.legalActions(state, "me");
+		if (noSwitch) {
+			// Forced-progress mode: attacks only, so the fight resolves. Still
+			// chosen by the real search rather than a crude heuristic -- forcing
+			// it onto a rule of thumb threw whole fights away.
+			var attacks = actions.filter(function (a) { return a.type === "move"; });
+			if (attacks.length) actions = attacks;
+		}
 		var scored = actions.map(function (action) {
 			var weight = -1;
 			if (action.type === "move") {
@@ -659,7 +666,7 @@ var RRSolver = (function () {
 		var cached = ctx.table[key];
 		if (cached !== undefined) return cached;
 
-		var myActions = orderedMyActions(state);
+		var myActions = orderedMyActions(state, ctx.noSwitch);
 		// Pick your move against the SAME opponent the rollout then plays.
 		// Choosing against the worst reply while simulating the predicted one is
 		// incoherent: the search sees attacking punished, switches to escape,
@@ -884,7 +891,7 @@ var RRSolver = (function () {
 		var current = state;
 		var steps = [];
 		var nodes = 0;
-		var lastTheirHP = null, stuckTurns = 0, stalled = false;
+		var lastTheirHP = null, stuckTurns = 0, stalled = false, forcing = false;
 
 		while (steps.length < maxTurns) {
 			var meAlive = current.me.team.some(function (m) { return !m.fainted; });
@@ -898,6 +905,12 @@ var RRSolver = (function () {
 				predict: opts.opponent !== "adversarial"
 			};
 			var choice;
+			if (forcing) {
+				ctx.noSwitch = true;
+				choice = searchRoute(current, lookahead, ctx, -Infinity, Infinity, 0);
+				nodes += ctx.nodes;
+				if (!choice.action) choice = {action: playoutAction(current, opts)};
+			} else
 			// Off by default. The playout evaluator finds better OPENINGS than
 			// the static one -- it is the only thing that has ever chosen the
 			// absorber on turn one -- but its playout policy is too crude to
@@ -963,15 +976,20 @@ var RRSolver = (function () {
 				knockedOut: countFainted(next.foe) > countFainted(before.foe)
 			});
 
-			// A rollout that stops making progress is stuck. Repeating the exact
-			// position is one way; making no dent in their team over several
-			// turns is the other, and pivoting back and forth produced that.
-			if (RRBattle.positionKey(next) === RRBattle.positionKey(before)) break;
+			// A rollout that stops making progress used to ABORT here, which is
+			// why the plan had no ending: it walked away at turn 25 with the
+			// fight unresolved, which is no use to someone who has to play it.
+			// Now it commits instead -- forced onto attacks until the battle
+			// actually resolves, win or lose. An honest loss is worth more than
+			// a plan that stops halfway.
+			if (RRBattle.positionKey(next) === RRBattle.positionKey(before)) {
+				if (forcing) break;   // genuinely nothing left to do
+				forcing = true;
+			}
 			var theirHP = 0;
 			next.foe.team.forEach(function (m) { theirHP += m.curHP; });
 			if (lastTheirHP !== null && theirHP >= lastTheirHP) {
-				stuckTurns++;
-				if (stuckTurns >= 4) { stalled = true; break; }
+				if (++stuckTurns >= 4) { stalled = true; forcing = true; }
 			} else {
 				stuckTurns = 0;
 			}
