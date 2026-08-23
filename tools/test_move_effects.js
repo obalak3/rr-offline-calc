@@ -94,7 +94,7 @@ const KINDS = [
 	'physicalDefence', 'multiHit', 'lockedIn',
 	// player-side additions
 	'focusEnergy', 'defog', 'healBell', 'rapidSpin', 'torment', 'disable', 'psychUp',
-	'identify'
+	'identify', 'firstTurnOnly'
 ];
 
 const badKind = [], badStat = [], badStatus = [], badBoost = [], badPriority = [];
@@ -134,7 +134,10 @@ check('every priority is in [-7, 5]', badPriority.length === 0, badPriority.join
 // A secondary effect that can never trigger is a transcription error one way or
 // the other, so the two sources have to agree that there is something to roll.
 const deadSecondary = Object.entries(MOVES).filter(function ([, move]) {
-	return move.effect && move.effect.kind === 'secondary' && move.secondaryChance === 0;
+	// `guaranteed` is the exception: Fake Out always flinches, but the ROM codes
+	// that as a move effect rather than a secondary, so its chance reads 0.
+	return move.effect && move.effect.kind === 'secondary' &&
+		move.secondaryChance === 0 && !move.effect.guaranteed;
 }).map(([name]) => name);
 check('no secondary effect has a zero trigger chance',
 	deadSecondary.length === 0, deadSecondary.join(', '));

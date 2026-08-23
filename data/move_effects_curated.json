@@ -1814,5 +1814,18 @@
  "Odor Sleuth": {
   "kind": "identify",
   "note": "Resets the target's evasion and lets Normal/Fighting hit Ghost. Evasion reset is applied; the type override is not."
+ },
+ "Fake Out": {
+  "kind": "secondary",
+  "secondary": {
+   "flinch": true
+  },
+  "guaranteed": true,
+  "firstTurnOnly": true,
+  "note": "Always flinches, and only works on the turn the user comes in. The ROM codes this as a move effect rather than a secondary, so its secondaryEffectChance is 0."
+ },
+ "First Impression": {
+  "kind": "firstTurnOnly",
+  "note": "Only usable on the turn the user comes in."
  }
 }

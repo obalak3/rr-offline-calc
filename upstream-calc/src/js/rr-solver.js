@@ -24,7 +24,7 @@
  *
  * No DOM: this is what the worker runs.
  */
-/* global RRBattle, RRPlan, RRAI */
+/* global RRBattle, RRPlan, RRAI, RRCritKO */
 var RRSolver = (function () {
 	"use strict";
 
@@ -438,22 +438,120 @@ var RRSolver = (function () {
 		return total ? current / total : 0;
 	}
 
+	/**
+	 * The chance the Pokemon you have out is knocked out by their best attack.
+	 *
+	 * Planning on high rolls alone finds lines that look clean and are not: one
+	 * route left Mienshao in front of a Waterfall that kills it 94% of the time
+	 * and still scored as "loses nothing", because on the high roll it survived.
+	 * Pricing that as an EXPECTED loss makes the search treat a coin-flip death
+	 * as half a Pokemon gone, which is what stops it walking into them.
+	 */
+	function deathChance(state) {
+		var mine = RRBattle.active(state.me);
+		if (mine.fainted) return 0;
+		var worst = 0;
+		var actions = RRBattle.legalActions(state, "foe");
+		for (var i = 0; i < actions.length; i++) {
+			if (actions[i].type !== "move") continue;
+			var rolls = RRBattle.damageRolls(state, "foe", actions[i].move);
+			if (!rolls || rolls.immune) continue;
+			var outcomes = RRCritKO.outcomesFor(rolls.noCrit, rolls.crit, rolls.critChance);
+			var dies = 0;
+            for (var j = 0; j < outcomes.length; j++) {
+				if (outcomes[j][0] >= mine.curHP) dies += outcomes[j][1];
+			}
+			if (dies > worst) worst = dies;
+		}
+		return worst;
+	}
+
+	/**
+	 * The chance that what we just simulated is what actually happens.
+	 *
+	 * Computing this AFTER the search meant the search never tried to raise it:
+	 * a twenty turn plan that held 22% of the time scored the same as a six turn
+	 * plan that held 80%, because both "won". Carrying it through the search
+	 * makes the value what James asked for -- the plan most likely to work --
+	 * rather than any plan that works on paper.
+	 */
+	function stepProbability(before, myAction, foeAction, after) {
+		var p = 1;
+		var myMon = RRBattle.active(before.me);
+		var foeMon = RRBattle.active(before.foe);
+		var order = RRBattle.turnOrder(before, myAction, foeAction);
+		var youWentFirst = order && order[0] === "me";
+		var killed = countFainted(after.foe) > countFainted(before.foe);
+
+		// If the plan needs this move to kill, price how often it does.
+		if (killed && myAction.type === "move") {
+			var rolls = RRBattle.damageRolls(before, "me", myAction.move);
+			if (rolls && !rolls.immune) {
+				var outs = RRCritKO.outcomesFor(rolls.noCrit, rolls.crit, rolls.critChance);
+				var kills = 0;
+				for (var i = 0; i < outs.length; i++) {
+					if (outs[i][0] >= foeMon.curHP) kills += outs[i][1];
+				}
+				if (kills > 0) p *= kills;
+			}
+			var acc = RRBattle.accuracyOf(before, "me", myAction.move);
+			if (acc < 1) p *= acc;
+		}
+
+		// If the plan needs someone to survive, price how often they do -- and
+		// against the Pokemon that actually takes the hit. Reading it off the
+		// one that left had Charge Beam "killing" a Ground type it cannot touch,
+		// because the damage was still being measured against Gyarados.
+		if (foeAction && foeAction.type === "move" && !(youWentFirst && killed)) {
+			var view = before;
+			if (myAction.type === "switch") {
+				view = RRBattle.clone(before);
+				RRBattle.switchIn(view, "me", myAction.index);
+			}
+			var facing = RRBattle.active(view.me);
+			if (facing && !facing.fainted &&
+				countFainted(after.me) === countFainted(before.me)) {
+				var theirs = RRBattle.damageRolls(view, "foe", foeAction.move);
+				if (theirs && !theirs.immune) {
+					var outs2 = RRCritKO.outcomesFor(theirs.noCrit, theirs.crit, theirs.critChance);
+					var dies = 0;
+					for (var j = 0; j < outs2.length; j++) {
+						if (outs2[j][0] >= facing.curHP) dies += outs2[j][1];
+					}
+					p *= (1 - dies);
+				}
+			}
+		}
+		return p;
+	}
+
 	function positionValue(state, depthUsed) {
 		var myLosses = countFainted(state.me);
 		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
 		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
 
+		var odds = state.planProb === undefined ? 1 : state.planProb;
 		if (!foeAlive && meAlive) {
-			// Won. Prefer fewer losses, then fewer turns spent.
-			return WON - myLosses * LOST_POKEMON - depthUsed;
+			// Won, weighted by how likely the line that got here actually is.
+			// Without the weighting a twenty turn plan holding 22% outscored a
+			// six turn plan holding 80%, since both reached the same place.
+			return WON * odds - myLosses * LOST_POKEMON - depthUsed;
 		}
 		if (!meAlive) return -WON;
 
 		// Unfinished: reward progress through their team, penalise your losses
-		// heavily, and use HP only to separate otherwise equal routes.
-		return -myLosses * LOST_POKEMON +
-			(1 - teamHP(state.foe)) * 400 +
-			teamHP(state.me) * 60;
+		// heavily, and use HP only to separate otherwise equal routes. The
+		// expected loss term is what keeps it from parking a Pokemon in front of
+		// something that kills it four times in five.
+		// Progress is what is rewarded, weighted by how likely the line is.
+		// Penalising uncertainty directly made standing still the safest thing
+		// in the position, and the search pivoted between two Pokemon for forty
+		// turns rather than commit to anything.
+		return -myLosses * LOST_POKEMON -
+			deathChance(state) * LOST_POKEMON +
+			(1 - teamHP(state.foe)) * 500 * odds +
+			teamHP(state.me) * 60 -
+			depthUsed * 8;
 	}
 
 	function searchRoute(state, depth, ctx, alpha, beta, depthUsed) {
@@ -488,6 +586,8 @@ var RRSolver = (function () {
 			for (var j = 0; j < foeActions.length; j++) {
 				var next = RRBattle.step(state, myActions[i], foeActions[j],
 					{mode: "maxroll", risks: ctx.risks})[0].state;
+				next.planProb = (state.planProb === undefined ? 1 : state.planProb) *
+					stepProbability(state, myActions[i], foeActions[j], next);
 				var child = searchRoute(next, depth - 1, ctx, alpha, beta, depthUsed + 1);
 				if (child.value < worst.value) {
 					worst = {value: child.value, branches: [{
@@ -545,6 +645,7 @@ var RRSolver = (function () {
 		var current = state;
 		var steps = [];
 		var nodes = 0;
+		var lastTheirHP = null, stuckTurns = 0, stalled = false;
 
 		while (steps.length < maxTurns) {
 			var meAlive = current.me.team.some(function (m) { return !m.fainted; });
@@ -574,6 +675,8 @@ var RRSolver = (function () {
 			var before = current;
 			var next = RRBattle.step(current, choice.action, reply,
 				{mode: "maxroll", risks: opts.risks || {}})[0].state;
+			next.planProb = (current.planProb === undefined ? 1 : current.planProb) *
+				stepProbability(current, choice.action, reply, next);
 
 			steps.push({
 				turn: steps.length + 1,
@@ -594,9 +697,19 @@ var RRSolver = (function () {
 				knockedOut: countFainted(next.foe) > countFainted(before.foe)
 			});
 
-			// A rollout that stops making progress is stuck; better to say so
-			// than to fill forty turns with it.
+			// A rollout that stops making progress is stuck. Repeating the exact
+			// position is one way; making no dent in their team over several
+			// turns is the other, and pivoting back and forth produced that.
 			if (RRBattle.positionKey(next) === RRBattle.positionKey(before)) break;
+			var theirHP = 0;
+			next.foe.team.forEach(function (m) { theirHP += m.curHP; });
+			if (lastTheirHP !== null && theirHP >= lastTheirHP) {
+				stuckTurns++;
+				if (stuckTurns >= 4) { stalled = true; break; }
+			} else {
+				stuckTurns = 0;
+			}
+			lastTheirHP = theirHP;
 			current = next;
 		}
 
@@ -608,10 +721,136 @@ var RRSolver = (function () {
 			lostNames: current.me.team.filter(function (m) { return m.fainted; })
 				.map(function (m) { return m.species; }),
 			turns: steps.length,
-			stalled: !wonIt && steps.length < maxTurns,
+			stalled: stalled || (!wonIt && steps.length < maxTurns),
 			nodes: nodes,
 			elapsedMs: Date.now() - started
 		};
+	}
+
+	/**
+	 * Where a route can go wrong, and how likely each way is.
+	 *
+	 * The route is planned on high rolls, which is the right way to FIND a line
+	 * but says nothing about whether it holds. So every step is re-examined
+	 * against the real damage distribution and the real accuracy: if the plan
+	 * needs a kill this turn, what are the odds it actually kills; if it needs
+	 * to survive, what are the odds it survives; and what can interrupt it.
+	 *
+	 * Multiplying those gives the plan's chance of running as written, and
+	 * listing the worst of them says where to worry.
+	 */
+	function stepRisks(before, step, after) {
+		var risks = [];
+		var myKey = "me", foeKey = "foe";
+		var myMon = RRBattle.active(before.me);
+		var foeMon = RRBattle.active(before.foe);
+
+		// 1. If the plan kills this turn, how often does it really?
+		if (step.knockedOut && step.action.type === "move") {
+			var rolls = RRBattle.damageRolls(before, myKey, step.action.move);
+			if (rolls && !rolls.immune) {
+				var outcomes = RRCritKO.outcomesFor(rolls.noCrit, rolls.crit, rolls.critChance);
+				var kills = 0;
+				for (var i = 0; i < outcomes.length; i++) {
+					if (outcomes[i][0] >= foeMon.curHP) kills += outcomes[i][1];
+				}
+				if (kills < 0.999) {
+					risks.push({
+						turn: step.turn, chance: kills,
+						what: step.action.move + " needs to KO " + foeMon.species,
+						detail: "it does " + Math.round(kills * 100) + "% of the time"
+					});
+				}
+			}
+		}
+
+		// 2. Accuracy: a move that misses is a wasted turn.
+		if (step.action.type === "move") {
+			var acc = RRBattle.accuracyOf(before, myKey, step.action.move);
+			if (acc < 0.999) {
+				risks.push({
+					turn: step.turn, chance: acc,
+					what: step.action.move + " can miss",
+					detail: Math.round(acc * 100) + "% to hit"
+				});
+			}
+		}
+
+		// 3. Their attack: does the Pokemon that FACED it survive?
+		//
+		// Two ways this was wrong. If you move first and kill them, their attack
+		// never happens, and it was still being charged: Breloom was shown dying
+		// 100% of the time to a Drain Punch from a Pawmot it had already knocked
+		// out with Mach Punch. And if you switch, the hit lands on whoever came
+		// in, not on the Pokemon that left.
+		var order = RRBattle.turnOrder(before, step.action, step.theirAction);
+		var youWentFirst = order && order[0] === "me";
+		var theyNeverActed = youWentFirst && step.knockedOut;
+		// Read the damage in the position AFTER your switch resolves, or it is
+		// measured against the Pokemon that left while being labelled with the
+		// name of the one that arrived.
+		var view = before;
+		if (step.action.type === "switch") {
+			view = RRBattle.clone(before);
+			RRBattle.switchIn(view, "me", step.action.index);
+		}
+		var facing = RRBattle.active(view.me);
+
+		if (step.theirAction && step.theirAction.type === "move" && !theyNeverActed &&
+			facing && !facing.fainted) {
+			var theirs = RRBattle.damageRolls(view, foeKey, step.theirAction.move);
+			if (theirs && !theirs.immune) {
+				var out2 = RRCritKO.outcomesFor(theirs.noCrit, theirs.crit, theirs.critChance);
+				var dies = 0;
+				for (var j = 0; j < out2.length; j++) {
+					if (out2[j][0] >= facing.curHP) dies += out2[j][1];
+				}
+				if (dies > 0.0005) {
+					risks.push({
+						turn: step.turn, chance: 1 - dies,
+						what: facing.species + " can be KOd by " + step.theirAction.move,
+						detail: Math.round(dies * 1000) / 10 + "% chance it dies, mostly on a crit"
+					});
+				}
+			}
+
+			// 4. Their secondary effects that would derail the next turn.
+			var theirData = RRBattle.moveData(step.theirAction.move);
+			var sec = theirData && theirData.effect && theirData.effect.secondary;
+			if (sec && theirData.secondaryChance > 0 && theirData.secondaryChance < 100) {
+				var label = sec.flinch ? "flinch"
+					: (sec.status ? sec.status : (sec.boosts ? "a stat drop" : null));
+				if (label) {
+					risks.push({
+						turn: step.turn, chance: 1 - theirData.secondaryChance / 100,
+						what: step.theirAction.move + " can cause " + label,
+						detail: theirData.secondaryChance + "% chance"
+					});
+				}
+			}
+		}
+		return risks;
+	}
+
+	/**
+	 * Replay a route step by step, collecting the risks at each one.
+	 * The state has to be rebuilt as we go: a risk on turn six is about the
+	 * board on turn six, not the board at the start.
+	 */
+	function routeRisks(state, route, opts) {
+		var current = state;
+		var all = [];
+		for (var i = 0; i < route.steps.length; i++) {
+			var step = route.steps[i];
+			var next = RRBattle.step(current, step.action, step.theirAction,
+				{mode: "maxroll", risks: (opts && opts.risks) || {}})[0].state;
+			all = all.concat(stepRisks(current, step, next));
+			current = next;
+		}
+		var overall = 1;
+		all.forEach(function (r) { overall *= r.chance; });
+		all.sort(function (a, b) { return a.chance - b.chance; });
+		return {risks: all, overall: overall};
 	}
 
 	/**
@@ -711,8 +950,10 @@ var RRSolver = (function () {
 	 * is a strong signal and not quite a proof.
 	 */
 	var RISK_LADDER = [
-		{name: "clean rolls", risks: {},
-			blurb: "they roll high, you roll low, nothing else goes wrong"},
+		{name: "high rolls", risks: {},
+			blurb: "both sides roll high, no crits"},
+		{name: "your low rolls", risks: {cautious: true},
+			blurb: "you roll low while they still roll high"},
 		{name: "they crit", risks: {crit: true},
 			blurb: "every hit you take is a critical"},
 		{name: "their secondaries land", risks: {crit: true, secondary: true},
@@ -841,6 +1082,7 @@ var RRSolver = (function () {
 		solve: solve,
 		solveOdds: solveOdds,
 		bestRoute: bestRoute,
+		routeRisks: routeRisks,
 		planRoute: planRoute,
 		routeOutcome: routeOutcome,
 		solveNuzlocke: solveNuzlocke,

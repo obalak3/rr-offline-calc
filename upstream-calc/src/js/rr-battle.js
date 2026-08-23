@@ -122,6 +122,7 @@ var RRBattle = (function () {
 			pp: pp,
 			itemGone: false,
 			fainted: false,
+			turnsOut: 0,
 			volatiles: {}     // substitute, leechSeed, taunt, protectChain, ...
 		};
 	}
@@ -138,7 +139,7 @@ var RRBattle = (function () {
 
 	function createState(mySets, foeSets, options) {
 		var opts = options || {};
-		return {
+		return openState({
 			me: makeSide(mySets),
 			foe: makeSide(foeSets),
 			field: {
@@ -163,7 +164,14 @@ var RRBattle = (function () {
 			// 1 means nothing was assumed; see assume().
 			reliability: 1,
 			unmodelled: []
-		};
+		});
+	}
+
+	/** Leads have entry abilities too, so the opening position needs them. */
+	function openState(state) {
+		applyEntryAbility(state, "foe");
+		applyEntryAbility(state, "me");
+		return state;
 	}
 
 	function clone(state) {
@@ -418,9 +426,26 @@ var RRBattle = (function () {
 		return toCalcPokemon(mon).types;
 	}
 
-	function canTakeStatus(mon, status) {
+	/** Flying types and Levitate are not standing on the terrain. */
+	function isGrounded(mon) {
+		if (typesOf(mon).indexOf("Flying") >= 0) return false;
+		if (mon.set.ability === "Levitate") return false;
+		if (!mon.itemGone && mon.set.item === "Air Balloon") return false;
+		return true;
+	}
+
+	function canTakeStatus(mon, status, state) {
 		if (mon.status) return false;
 		if (mon.volatiles.substitute) return false;
+
+		// Terrain blocks status on anything standing on it. This decides whole
+		// fights: Pincurchin's Electric Surge means Sleep Powder does nothing to
+		// Surge's grounded team, and a plan built on putting something to sleep
+		// would simply fail in front of you.
+		if (state && state.field && isGrounded(mon)) {
+			if (state.field.terrain === "Electric" && status === "slp") return false;
+			if (state.field.terrain === "Misty") return false;
+		}
 		var immune = STATUS_IMMUNE_TYPES[status];
 		if (!immune) return true;
 		var types = typesOf(mon);
@@ -430,8 +455,8 @@ var RRBattle = (function () {
 		return true;
 	}
 
-	function setStatus(mon, status) {
-		if (!canTakeStatus(mon, status)) return false;
+	function setStatus(mon, status, state) {
+		if (!canTakeStatus(mon, status, state)) return false;
 		mon.status = status;
 		if (status === "slp") mon.sleepTurns = 2;
 		if (status === "tox") mon.toxicCounter = 1;
@@ -470,10 +495,57 @@ var RRBattle = (function () {
 			damage(mon, mon.maxHP / (10 - 2 * side.hazards.spikes));
 		}
 		if (grounded && side.hazards.toxicspikes && !mon.status) {
-			setStatus(mon, side.hazards.toxicspikes >= 2 ? "tox" : "psn");
+			setStatus(mon, side.hazards.toxicspikes >= 2 ? "tox" : "psn", state);
 		}
 		if (grounded && side.hazards.stickyweb) {
 			applyBoosts(mon, {spe: -1});
+		}
+	}
+
+	/**
+	 * Abilities that fire the moment a Pokemon comes in.
+	 *
+	 * Not a completeness exercise: these two decide the Surge fight. Electric
+	 * Surge means Pincurchin sets Electric Terrain on sight, which powers up
+	 * every Electric move on their team AND blocks sleep on anything grounded --
+	 * so a plan built around Spore or Sleep Powder simply does not work, and
+	 * without this the search would happily build one. Intimidate cuts your
+	 * Attack the turn Manectric arrives, which changes every physical number
+	 * after it.
+	 */
+	var TERRAIN_SETTERS = {
+		"Electric Surge": "Electric", "Grassy Surge": "Grassy",
+		"Misty Surge": "Misty", "Psychic Surge": "Psychic"
+	};
+	var WEATHER_SETTERS = {
+		"Drizzle": "Rain", "Drought": "Sun", "Sand Stream": "Sand", "Snow Warning": "Snow"
+	};
+
+	function applyEntryAbility(state, key) {
+		var side = state[key];
+		var mon = active(side);
+		if (mon.fainted) return;
+		var ability = mon.set.ability;
+		if (!ability) return;
+
+		var terrain = TERRAIN_SETTERS[ability];
+		if (terrain) {
+			state.field.terrain = terrain;
+			// Terrain Extender takes it from five turns to eight. Restricted
+			// mode makes terrain the AI sets permanent anyway.
+			state.field.terrainTurns = (key === "foe" && state.rules === "restricted")
+				? Infinity
+				: (!mon.itemGone && mon.set.item === "Terrain Extender" ? 8 : 5);
+		}
+		var weather = WEATHER_SETTERS[ability];
+		if (weather) {
+			state.field.weather = weather;
+			state.field.weatherTurns = (key === "foe" && state.rules === "restricted")
+				? Infinity : 5;
+		}
+		if (ability === "Intimidate") {
+			var foe = active(state[other(key)]);
+			if (foe && !foe.fainted) applyBoosts(foe, {atk: -1});
 		}
 	}
 
@@ -484,10 +556,12 @@ var RRBattle = (function () {
 		outgoing.boosts = emptyBoosts();
 		outgoing.volatiles = {};
 		side.active = index;
+		side.team[index].turnsOut = 0;
 		// CFRU's ShouldSwitch bails immediately on switchingCooldown, so a
 		// Pokemon that just came in will not be pulled straight back out.
 		side.switchCooldown = 1;
 		applyHazards(state, key);
+		applyEntryAbility(state, key);
 	}
 
 
@@ -597,15 +671,26 @@ var RRBattle = (function () {
 			return key === "me" ? rolls.noCrit[0] : rolls.crit[rolls.crit.length - 1];
 		}
 		if (ctx.mode === "maxroll") {
-			// Deterministic, so the tree has no chance nodes at all. Each side
-			// is still read against you -- they roll high, you roll low -- but
-			// crits are OFF unless the caller asks for them. Assuming a crit
-			// every turn on top of a max roll is what made everything look
-			// unwinnable; here it is a risk you switch on, not a baseline.
-			if (key === "me") return rolls.noCrit[0];
-			return ctx.risks.crit
-				? rolls.crit[rolls.crit.length - 1]
-				: rolls.noCrit[rolls.noCrit.length - 1];
+			// Both sides roll high, no crits. Deterministic, so the tree has no
+			// chance nodes at all.
+			//
+			// Reading YOUR damage at the minimum instead was too pessimistic to
+			// plan with: Fake Out plus Drain Punch takes Loudred to 2 HP on the
+			// low roll and kills it on nearly every other, so the route avoided
+			// a line that works in practice. `cautious` restores the low reading
+			// for when the question is safety rather than route-finding.
+			// `roll` picks where on the range to read. Planning on the high roll
+			// builds lines that need luck: a Drain Punch that KOs Pincurchin
+			// only 10% of the time still looked like a kill, and the whole plan
+			// downstream was built on it. "median" is what a plan should assume
+			// happens; the real odds are reported separately per step.
+			var pick = ctx.risks.roll || "max";
+			var band = rolls.noCrit;
+			if (key === "foe" && ctx.risks.crit) band = rolls.crit;
+			if (key === "me" && ctx.risks.cautious) return band[0];
+			if (pick === "median") return band[Math.floor(band.length / 2)];
+			if (pick === "min") return band[0];
+			return band[band.length - 1];
 		}
 		return rolls.noCrit[Math.floor(rolls.noCrit.length / 2)];
 	}
@@ -648,7 +733,7 @@ var RRBattle = (function () {
 			if (effect.trapsSelf) self.volatiles.trapped = true;
 			return true;
 		case "status":
-			setStatus(targetMon(state, key, effect.target || "foe"), effect.status);
+			setStatus(targetMon(state, key, effect.target || "foe"), effect.status, state);
 			return true;
 		case "heal":
 			var fraction = effect.fraction;
@@ -708,7 +793,7 @@ var RRBattle = (function () {
 			foe.volatiles.confused = 3;
 			return true;
 		case "yawn":
-			if (!foe.status) foe.volatiles.yawn = 2;
+			if (!foe.status && canTakeStatus(foe, "slp", state)) foe.volatiles.yawn = 2;
 			return true;
 		case "strengthSap":
 			var stolen = toCalcPokemon(foe).stats.atk;
@@ -779,6 +864,15 @@ var RRBattle = (function () {
 		var defender = active(defenderSide);
 		if (attacker.fainted || defender.fainted) return;
 
+		// Flinching only works on someone who has not moved yet, which is why it
+		// is checked here and set below rather than at the end of the turn.
+		if (attacker.volatiles.flinched) {
+			attacker.volatiles.flinched = false;
+			attacker.volatiles.moved = true;
+			return;
+		}
+		attacker.volatiles.moved = true;
+
 		// Sleep. Worst case for the player is waking as late as possible.
 		if (attacker.status === "slp") {
 			if (attacker.sleepTurns > 0) {
@@ -819,6 +913,11 @@ var RRBattle = (function () {
 			attacker.pp[action.index]--;
 		}
 		if (!data) { note(state, "unknown move: " + moveName); return; }
+
+		if (data.effect && (data.effect.firstTurnOnly ||
+			data.effect.kind === "firstTurnOnly") && attacker.turnsOut > 0) {
+			return;   // Fake Out and First Impression only work on the way in
+		}
 
 		if (data.effect && data.effect.kind === "unsupported") {
 			note(state, moveName + " is not simulated (" + data.effect.why + ")");
@@ -903,7 +1002,9 @@ var RRBattle = (function () {
 		if (secondary && !defender.fainted) {
 			var chance = data.secondaryChance;
 			var fires;
-			if (ctx.mode === "odds" && chance > 0 && chance < 100) {
+			if (data.effect.guaranteed) {
+				fires = true;
+			} else if (ctx.mode === "odds" && chance > 0 && chance < 100) {
 				fires = flip(ctx, [{p: chance / 100, value: true},
 					{p: 1 - chance / 100, value: false}], key === "me" ? 1 : 0);
 			} else if (ctx.mode === "odds") {
@@ -914,12 +1015,16 @@ var RRBattle = (function () {
 				fires = forr(ctx, key) || (ctx.mode !== "worst" && chance >= 100);
 			}
 			if (fires) {
-				if (secondary.status) setStatus(defender, secondary.status);
+				if (secondary.status) setStatus(defender, secondary.status, state);
 				if (secondary.boosts) {
 					applyBoosts(secondary.target === "self" ? attacker : defender,
 						secondary.boosts);
 				}
 				if (secondary.removeItem) defender.itemGone = true;
+				// Only lands if they have not already acted this turn.
+				if (secondary.flinch && !defender.volatiles.moved) {
+					defender.volatiles.flinched = true;
+				}
 			}
 		}
 
@@ -990,9 +1095,12 @@ var RRBattle = (function () {
 
 			if (mon.volatiles.yawn) {
 				mon.volatiles.yawn--;
-				if (mon.volatiles.yawn === 0) setStatus(mon, "slp");
+				if (mon.volatiles.yawn === 0) setStatus(mon, "slp", state);
 			}
 			mon.volatiles.protecting = false;
+			mon.volatiles.flinched = false;
+			mon.volatiles.moved = false;
+			mon.turnsOut++;
 			if (mon.volatiles.taunt > 0) mon.volatiles.taunt--;
 			if (mon.volatiles.encore > 0) mon.volatiles.encore--;
 		});
@@ -1165,6 +1273,7 @@ var RRBattle = (function () {
 		damageRolls: damageRolls,
 		switchIn: switchIn,
 		applyHazards: applyHazards,
+		applyEntryAbility: applyEntryAbility,
 		active: active,
 		other: other,
 		moveData: moveData,
@@ -1178,6 +1287,7 @@ var RRBattle = (function () {
 			setStatus: setStatus,
 			applyBoosts: applyBoosts,
 			canTakeStatus: canTakeStatus,
+			isGrounded: isGrounded,
 			heal: heal,
 			damage: damage,
 			ACC_STAGES: ACC_STAGES
