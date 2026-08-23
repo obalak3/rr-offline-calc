@@ -99,23 +99,35 @@
 		var theirs = enemySets();
 		if (!mine.length || !theirs.length) return null;
 
-		var myActive = Math.min(~~$("#rr-adv-mine").val() || 0, mine.length - 1);
-		var foeActive = Math.min(~~$("#rr-adv-theirs").val() || 0, theirs.length - 1);
-
 		var state = RRBattle.createState(mine, theirs, {
 			nuzlocke: $("#rr-adv-nuzlocke").is(":checked")
 		});
-		state.me.active = myActive;
-		state.foe.active = foeActive;
 
-		var myHP = ~~$("#rr-adv-myhp").val();
-		var foeHP = ~~$("#rr-adv-foehp").val();
-		var me = RRBattle.active(state.me);
-		var foe = RRBattle.active(state.foe);
-		if (myHP > 0) me.curHP = Math.min(myHP, me.maxHP);
-		if (foeHP > 0) foe.curHP = Math.min(foeHP, foe.maxHP);
-		var status = $("#rr-adv-mystatus").val();
-		if (status) me.status = status;
+		[["mine", state.me], ["theirs", state.foe]].forEach(function (pair) {
+			var side = pair[0], sideState = pair[1];
+			rowsFor(side).each(function () {
+				var index = ~~$(this).attr("data-index");
+				var mon = sideState.team[index];
+				if (!mon) return;
+				if (!$(this).find(".rr-adv-alive").is(":checked")) {
+					mon.fainted = true;
+					mon.curHP = 0;
+					return;
+				}
+				var hp = ~~$(this).find(".rr-adv-hp").val();
+				if (hp > 0) mon.curHP = Math.min(hp, mon.maxHP);
+				var status = $(this).find(".rr-adv-status").val();
+				if (status) mon.status = status;
+			});
+			var active = activeIndexOf(side);
+			// A fainted Pokemon cannot be the one that is out.
+			if (sideState.team[active] && sideState.team[active].fainted) {
+				for (var i = 0; i < sideState.team.length; i++) {
+					if (!sideState.team[i].fainted) { active = i; break; }
+				}
+			}
+			sideState.active = active;
+		});
 		return state;
 	}
 
@@ -178,19 +190,56 @@
 				: "") + "</div>";
 	}
 
-	function options(sets, selectedIndex) {
+	/**
+	 * One editable row per Pokemon: alive, current HP, and which one is out.
+	 *
+	 * A picker alone was not enough to describe a real position. Half way
+	 * through a fight some of their team is already down and yours is not at
+	 * full, and a check that silently assumes four healthy opponents answers a
+	 * question you did not ask. In a Nuzlocke it matters more in the other
+	 * direction too: a Pokemon you have lost is gone, and must not be offered
+	 * as somewhere to switch.
+	 */
+	function teamRows(side, sets, activeIndex) {
 		return sets.map(function (set, index) {
-			return '<option value="' + index + '"' +
-				(index === selectedIndex ? " selected" : "") + ">" +
-				esc(set.species) + " Lv" + set.level + "</option>";
+			var id = "rr-adv-" + side + "-" + index;
+			return '<div class="rr-adv-mon" data-side="' + side + '" data-index="' + index + '">' +
+				'<input type="radio" name="rr-adv-active-' + side + '" class="rr-adv-active"' +
+				(index === activeIndex ? " checked" : "") + ' title="which one is out" />' +
+				'<input type="checkbox" class="rr-adv-alive" id="' + id + '-alive" checked' +
+				' title="uncheck if it has fainted" />' +
+				'<label for="' + id + '-alive" class="rr-adv-name">' + esc(set.species) +
+				" <span class=\"rr-adv-lv\">Lv" + set.level + "</span></label>" +
+				'<input type="number" class="rr-adv-hp" min="0" title="current HP" />' +
+				'<span class="rr-adv-max"></span>' +
+				(side === "mine"
+					? '<select class="rr-adv-status">' + STATUSES.map(function (pair) {
+						return '<option value="' + pair[0] + '">' + pair[1] + "</option>";
+					}).join("") + "</select>"
+					: "") +
+				"</div>";
 		}).join("");
+	}
+
+	function rowsFor(side) {
+		return $("#rr-adv-" + side + " .rr-adv-mon");
+	}
+
+	function activeIndexOf(side) {
+		var found = 0;
+		rowsFor(side).each(function () {
+			if ($(this).find(".rr-adv-active").is(":checked")) {
+				found = ~~$(this).attr("data-index");
+			}
+		});
+		return found;
 	}
 
 	function refreshPickers() {
 		var mine = myTeamSets();
 		var theirs = enemySets();
-		$("#rr-adv-mine").html(options(mine, ~~$("#rr-adv-mine").val()));
-		$("#rr-adv-theirs").html(options(theirs, ~~$("#rr-adv-theirs").val()));
+		$("#rr-adv-mine").html(teamRows("mine", mine, activeIndexOf("mine")));
+		$("#rr-adv-theirs").html(teamRows("theirs", theirs, activeIndexOf("theirs")));
 		syncHP();
 		if (!mine.length) {
 			$("#rr-adv-out").html('<div class="rr-adv-note">Save a Pokemon to ' +
@@ -200,14 +249,21 @@
 		}
 	}
 
-	/** Default the HP boxes to full whenever the chosen Pokemon changes. */
+	/** Fill each blank HP box with that Pokemon's maximum. */
 	function syncHP() {
 		var state = buildState();
 		if (!state) return;
-		$("#rr-adv-myhp").attr("max", RRBattle.active(state.me).maxHP);
-		$("#rr-adv-foehp").attr("max", RRBattle.active(state.foe).maxHP);
-		if (!$("#rr-adv-myhp").val()) $("#rr-adv-myhp").val(RRBattle.active(state.me).maxHP);
-		if (!$("#rr-adv-foehp").val()) $("#rr-adv-foehp").val(RRBattle.active(state.foe).maxHP);
+		[["mine", state.me], ["theirs", state.foe]].forEach(function (pair) {
+			rowsFor(pair[0]).each(function () {
+				var mon = pair[1].team[~~$(this).attr("data-index")];
+				if (!mon) return;
+				$(this).find(".rr-adv-hp").attr("max", mon.maxHP);
+				$(this).find(".rr-adv-max").text("/" + mon.maxHP);
+				if (!$(this).find(".rr-adv-hp").val()) {
+					$(this).find(".rr-adv-hp").val(mon.maxHP);
+				}
+			});
+		});
 	}
 
 	function panelHtml() {
@@ -215,16 +271,11 @@
 			'<div class="rr-head"><span class="rr-title">Battle advisor</span>' +
 			'<button type="button" id="rr-adv-collapse" class="rr-collapse">&minus;</button></div>' +
 			'<div class="rr-body">' +
-			'<div class="rr-adv-row"><label>Yours</label>' +
-			'<select id="rr-adv-mine"></select>' +
-			'<label>HP</label><input type="number" id="rr-adv-myhp" min="1" />' +
-			'<select id="rr-adv-mystatus">' +
-			STATUSES.map(function (pair) {
-				return '<option value="' + pair[0] + '">' + pair[1] + "</option>";
-			}).join("") + "</select></div>" +
-			'<div class="rr-adv-row"><label>Theirs</label>' +
-			'<select id="rr-adv-theirs"></select>' +
-			'<label>HP</label><input type="number" id="rr-adv-foehp" min="1" /></div>' +
+			'<div class="rr-adv-side"><div class="rr-adv-sidehead">Your team ' +
+			'<span class="rr-adv-hint">dot = out, tick = alive</span></div>' +
+			'<div id="rr-adv-mine"></div></div>' +
+			'<div class="rr-adv-side"><div class="rr-adv-sidehead">Their team</div>' +
+			'<div id="rr-adv-theirs"></div></div>' +
 			'<div class="rr-adv-row">' +
 			'<label><input type="checkbox" id="rr-adv-nuzlocke" checked /> Nuzlocke ' +
 			"(losing one Pokemon is losing)</label>" +
@@ -264,8 +315,10 @@
 			$("#rr-advisor").toggleClass("rr-collapsed");
 			$(this).html($("#rr-advisor").hasClass("rr-collapsed") ? "+" : "&minus;");
 		});
-		$("#rr-adv-mine, #rr-adv-theirs").on("change", function () {
-			$("#rr-adv-myhp").val(""); $("#rr-adv-foehp").val("");
+		// Changing which Pokemon is out re-fills only the blank HP boxes, so a
+		// value already typed for another Pokemon is not thrown away.
+		$(document).on("change", "#rr-adv-mine .rr-adv-active, #rr-adv-theirs .rr-adv-active," +
+			" #rr-adv-mine .rr-adv-alive, #rr-adv-theirs .rr-adv-alive", function () {
 			syncHP();
 		});
 		$("#rr-adv-run").click(function () {
@@ -278,7 +331,9 @@
 		// changes, so subscribe rather than watching for clicks on its markup.
 		if (window.RRTrainers.onBattleChange) {
 			window.RRTrainers.onBattleChange(function () {
-				$("#rr-adv-myhp").val(""); $("#rr-adv-foehp").val("");
+				// A different battle means a different enemy team, so their
+				// typed HP is meaningless; yours is still yours.
+				$("#rr-adv-theirs").empty();
 				refreshPickers();
 			});
 		}

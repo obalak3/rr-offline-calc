@@ -89,10 +89,13 @@ server.listen(0, '127.0.0.1', () => {
 		check('Brock can be selected', !!found);
 		window.RRAdvisor.refresh();
 
-		check('your team fills the picker (' + $('#rr-adv-mine option').length + ')',
-			$('#rr-adv-mine option').length === TEAM.length);
-		check('their team fills the picker (' + $('#rr-adv-theirs option').length + ')',
-			$('#rr-adv-theirs option').length === 4);
+		check('your team gets a row each (' + $('#rr-adv-mine .rr-adv-mon').length + ')',
+			$('#rr-adv-mine .rr-adv-mon').length === TEAM.length);
+		check('their team gets a row each (' + $('#rr-adv-theirs .rr-adv-mon').length + ')',
+			$('#rr-adv-theirs .rr-adv-mon').length === 4);
+		check('each row offers alive, HP and which one is out',
+			$('#rr-adv-mine .rr-adv-mon').first().find(
+				'.rr-adv-active, .rr-adv-alive, .rr-adv-hp').length === 3);
 
 		const state = window.RRAdvisor.buildState();
 		check('a position is built from the two panels', !!state);
@@ -105,10 +108,40 @@ server.listen(0, '127.0.0.1', () => {
 		check('  in Nuzlocke mode, since the box is checked', state.nuzlocke === true);
 
 		// Current HP has to reach the engine, or advice mid-battle is wrong.
-		$('#rr-adv-myhp').val(9);
+		const myFull = window.RRBattle.active(state.me).maxHP;
+		$('#rr-adv-mine .rr-adv-mon').first().find('.rr-adv-hp').val(9);
 		check('a typed HP value reaches the position',
 			window.RRBattle.active(window.RRAdvisor.buildState().me).curHP === 9);
-		$('#rr-adv-myhp').val(window.RRBattle.active(state.me).maxHP);
+
+		// Status has to reach it too.
+		$('#rr-adv-mine .rr-adv-mon').first().find('.rr-adv-status').val('par');
+		check('a chosen status reaches the position',
+			window.RRBattle.active(window.RRAdvisor.buildState().me).status === 'par');
+		$('#rr-adv-mine .rr-adv-mon').first().find('.rr-adv-status').val('');
+		$('#rr-adv-mine .rr-adv-mon').first().find('.rr-adv-hp').val(myFull);
+
+		// Half way through a fight some of their team is already down. A check
+		// that assumes four healthy opponents answers a different question.
+		$('#rr-adv-theirs .rr-adv-mon').first().find('.rr-adv-alive')
+			.prop('checked', false);
+		const partway = window.RRAdvisor.buildState();
+		check('an enemy marked down is fainted in the position',
+			partway.foe.team[0].fainted === true);
+		check('  and something else is out instead (' +
+			window.RRBattle.active(partway.foe).species + ')',
+			window.RRBattle.active(partway.foe).species === 'Varoom');
+		$('#rr-adv-theirs .rr-adv-mon').first().find('.rr-adv-alive').prop('checked', true);
+
+		// A Pokemon you have lost is gone, and must not be offered as a switch.
+		$('#rr-adv-mine .rr-adv-mon').last().find('.rr-adv-alive').prop('checked', false);
+		const bereaved = window.RRAdvisor.buildState();
+		check('a lost Pokemon of yours is fainted in the position',
+			bereaved.me.team[1].fainted === true);
+		const switches = window.RRBattle.legalActions(bereaved, 'me')
+			.filter(a => a.type === 'switch');
+		check('  and is not offered as somewhere to switch',
+			switches.length === 0, switches.length + ' switches still offered');
+		$('#rr-adv-mine .rr-adv-mon').last().find('.rr-adv-alive').prop('checked', true);
 
 		const html = window.RRAdvisor.advice();
 		$('#rr-adv-out').html(html);

@@ -604,3 +604,13 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 .rr-adv-budget td { background: rgba(200, 170, 70, 0.14); }
 .rr-adv-note { font-size: 11px; margin-top: 6px; line-height: 1.45; }
 .rr-adv-caveat { opacity: 0.65; }
+.rr-adv-side { margin: 6px 0; }
+.rr-adv-sidehead { font-size: 11px; opacity: 0.7; margin-bottom: 2px; }
+.rr-adv-hint { opacity: 0.55; }
+.rr-adv-mon { display: flex; align-items: center; gap: 5px; padding: 1px 0; font-size: 11px; }
+.rr-adv-mon .rr-adv-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-adv-lv { opacity: 0.55; }
+.rr-adv-mon .rr-adv-hp { width: 56px; }
+.rr-adv-max { opacity: 0.55; min-width: 34px; }
+.rr-adv-mon .rr-adv-status { max-width: 104px; }
+.rr-adv-mon input[type="checkbox"]:not(:checked) ~ .rr-adv-name { opacity: 0.4; text-decoration: line-through; }
