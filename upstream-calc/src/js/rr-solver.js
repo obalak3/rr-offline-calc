@@ -168,36 +168,17 @@ var RRSolver = (function () {
 	}
 
 	/**
-	 * Everything that distinguishes one position from another. Two positions
-	 * with the same key are the same search problem, which is what makes the
-	 * transposition table sound.
+	 * Everything that distinguishes one position from another.
+	 *
+	 * Delegates to the engine rather than keeping a second copy. There WERE two,
+	 * and they drifted: switchCooldown was added to the engine's version but not
+	 * this one, so the proof search handed a cached result from a position that
+	 * could switch to one that could not, and the tree came back missing replies
+	 * it had never considered. Its own independent checker caught it, which is
+	 * exactly what that checker is for.
 	 */
 	function stateKey(state) {
-		var parts = [];
-		["me", "foe"].forEach(function (side) {
-			var s = state[side];
-			parts.push(s.active);
-			s.team.forEach(function (mon) {
-				parts.push(mon.curHP, mon.fainted ? 1 : 0, mon.status || "-",
-					mon.sleepTurns, mon.toxicCounter, mon.itemGone ? 1 : 0,
-					mon.boosts.atk, mon.boosts.def, mon.boosts.spa,
-					mon.boosts.spd, mon.boosts.spe, mon.boosts.acc, mon.boosts.eva,
-					mon.pp.join("."),
-					mon.volatiles.substitute || 0,
-					mon.volatiles.leechSeed ? 1 : 0,
-					mon.volatiles.taunt || 0,
-					mon.volatiles.protecting ? 1 : 0);
-			});
-			parts.push(s.hazards.stealthrock, s.hazards.spikes,
-				s.hazards.toxicspikes, s.hazards.stickyweb);
-			var names = Object.keys(s.screens).sort();
-			parts.push(names.map(function (n) { return n + s.screens[n]; }).join(","));
-		});
-		var f = state.field;
-		parts.push(f.weather || "-", f.weatherTurns === Infinity ? "P" : f.weatherTurns,
-			f.terrain || "-", f.terrainTurns === Infinity ? "P" : f.terrainTurns,
-			f.trickRoom);
-		return parts.join("|");
+		return RRBattle.positionKey(state);
 	}
 
 	/**
