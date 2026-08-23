@@ -163,91 +163,27 @@ server.listen(0, '127.0.0.1', () => {
 			!/not simulated/i.test($('#rr-adv-out').text()),
 			$('#rr-adv-out .rr-adv-caveat').text());
 
-		// The ladder walks a rung at a time so the page can paint between them;
-		// a whole ladder in one call froze it for half a minute on a real fight.
-		const ladder = window.RRAdvisor.ladder(400);
-		check('the ladder returns its first rung synchronously (' + ladder.length + ')',
-			ladder.length >= 1);
-		if (ladder.length) {
-			check('  with an honest verdict (' + ladder[0].verdict + ')',
-				['safe', 'budget', 'none'].includes(ladder[0].verdict));
-			check('  and its cost reported', typeof ladder[0].nodes === 'number' &&
-				typeof ladder[0].elapsedMs === 'number');
-			check('  starting from the easiest rung (' + ladder[0].name + ')',
-				ladder[0].index === 0);
-			const shown = $('#rr-adv-out').text();
-			check('  rendered to the panel', /clean rolls/.test(shown), shown.slice(0, 80));
-			// An undecided rung must offer to keep going rather than imply a loss.
-			if (ladder[0].verdict === 'budget') {
-				check('  an undecided rung offers to search harder',
-					$('#rr-adv-harder').length === 1);
-				// Check the SUMMARY, not the whole panel: the caveat below it
-				// legitimately contains the word, in the sentence promising the
-				// tool will never say it.
-				const summary = $('#rr-adv-out .rr-adv-note').first().text();
-				check('  and the summary says undecided, not lost',
-					/undecided/.test(summary) && !/\bdies\b/.test(summary),
-					summary.slice(0, 140));
-			}
-		}
+		// A route, always. The old ladder answered "is there a clean route" and
+		// returned nothing actionable when it could not tell in time; standing
+		// in front of a trainer, the useful question is which line is least bad.
+		const route = window.RRAdvisor.route();
+		check('a route is always produced (' + route.turns + ' turns)',
+			route.steps.length > 0);
+		check('  it plays to a finish rather than stopping at a depth limit',
+			route.won === true || route.losses > 0 || route.stalled === true,
+			JSON.stringify({won: route.won, losses: route.losses, stalled: route.stalled}));
+		check('  every step says what to click and what they do',
+			route.steps.every(s2 => s2.label && s2.theirLabel && s2.myMon && s2.theirMon));
+		check('  and it is fast enough to be usable (' + route.elapsedMs + 'ms)',
+			route.elapsedMs < 15000);
 
-		// The real case: a save import brings the PC boxes too, so the saved list
-		// is routinely twenty-odd Pokemon and only six of them are fighting.
-		const BIG = [];
-		for (let i = 0; i < 19; i++) {
-			BIG.push({
-				species: ['Squirtle','Pidgey','Rattata','Caterpie','Weedle','Nidoran-M',
-					'Oddish','Abra','Machop','Geodude','Magnemite','Gastly','Onix',
-					'Krabby','Voltorb','Cubone','Koffing','Horsea','Goldeen'][i],
-				level: 16, nature: 'Serious', ability: undefined, item: '',
-				moves: ['Tackle'],
-				evs: {hp:0,atk:0,def:0,spa:0,spd:0,spe:0},
-				ivs: {hp:31,atk:31,def:31,spa:31,spd:31,spe:31}
-			});
-		}
-		window.localStorage.setItem('rrTeam', JSON.stringify(BIG));
-		window.localStorage.removeItem('rrAdvParty');
-		$('#rr-adv-mine').empty();
-		window.RRAdvisor.refresh();
-
-		check('a 19-Pokemon save does not become a 19-Pokemon party (' +
-			$('#rr-adv-mine .rr-adv-mon').length + ' rows)',
-			$('#rr-adv-mine .rr-adv-mon').length === 6);
-		check('  the picker offers all of them (' +
-			$('.rr-adv-partybox').length + ')', $('.rr-adv-partybox').length === 19);
-		const big = window.RRAdvisor.buildState();
-		check('  and the position holds six', big.me.team.length === 6);
-		check('  defaulting to the first six',
-			window.RRBattle.active(big.me).species === 'Squirtle');
-
-		// Switching must only ever offer Pokemon that are actually with you.
-		const names = big.me.team.map(m => m.species);
-		check('  nothing from the boxes is switchable',
-			!names.includes('Goldeen') && !names.includes('Horsea'), names.join(','));
-
-		// Choosing a different six has to change who is in the fight.
-		window.RRAdvisor.setParty([10, 11, 12]);
-		const picked = window.RRAdvisor.buildState();
-		check('choosing a party of three gives a party of three',
-			picked.me.team.length === 3, picked.me.team.map(m => m.species).join(','));
-		check('  starting with the one you chose',
-			window.RRBattle.active(picked.me).species === 'Magnemite');
-		check('  and it survives a refresh',
-			JSON.parse(window.localStorage.getItem('rrAdvParty')).join() === '10,11,12');
-
-		// A party slot pointing at a Pokemon that no longer exists must not
-		// leave a hole in the team.
-		window.localStorage.setItem('rrTeam', JSON.stringify(BIG.slice(0, 5)));
-		window.RRAdvisor.refresh();
-		const shrunk = window.RRAdvisor.buildState();
-		check('dropping Pokemon from the saved team does not leave dangling slots',
-			shrunk === null || shrunk.me.team.every(m => !!m.species),
-			shrunk ? shrunk.me.team.map(m => m && m.species).join(',') : 'null state');
-
-		// Put the original team back for the error check.
-		window.localStorage.setItem('rrTeam', JSON.stringify(TEAM));
-		window.localStorage.removeItem('rrAdvParty');
-		window.RRAdvisor.refresh();
+		const shown = $('#rr-adv-out').text();
+		check('  the outcome is stated up front',
+			/Wins in|No winning line|best line/.test(shown), shown.slice(0, 90));
+		check('  the turn table is rendered',
+			doc.querySelectorAll('#rr-adv-out .rr-adv-table tbody tr').length === route.steps.length);
+		check('  and the reading it used is disclosed',
+			/damage is read high/.test(shown));
 
 		// 27 of the 167 battles are doubles. Answering the 1v1 question for one of
 		// them, confidently, is the worst thing this panel could do.

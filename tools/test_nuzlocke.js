@@ -17,12 +17,27 @@ const root = path.join(__dirname, '..');
 const calc = require(path.join(root, 'upstream-calc/calc/dist/index.js'));
 const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number, Date};
 vm.createContext(sandbox);
-for (const file of ['src/js/data/rr-move-effects.js', 'src/js/rr-critko.js',
-	'src/js/rr-battle.js', 'src/js/rr-plan.js', 'src/js/rr-ai.js', 'src/js/rr-solver.js']) {
+for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
+	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-plan.js',
+	'src/js/rr-ai.js', 'src/js/rr-solver.js']) {
 	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
 }
 const B = sandbox.RRBattle;
 const S = sandbox.RRSolver;
+const TRAINERS = sandbox.RR_TRAINER_DATA;
+
+function battle(id) {
+	for (const segment of TRAINERS.segments) {
+		for (const b of (segment.battles || [])) if (b.id === id) return b;
+	}
+	return null;
+}
+function toSet(mon, fallbackLevel) {
+	return {species: mon.species,
+		level: mon.level.type === 'fixed' ? mon.level.value : fallbackLevel,
+		nature: mon.nature, ability: mon.ability, item: mon.item || '',
+		moves: mon.moves.slice(0, 4), evs: mon.evs, ivs: mon.ivs};
+}
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -135,6 +150,38 @@ function set(species, level, moves, extra) {
 		!/dies|died/i.test(result.meaning) ||
 		result.rungs.some(r => r.verdict === 'none'),
 		result.meaning);
+}
+
+// --------------------------------------------------- a route, not a verdict
+
+// The ladder is a decision problem and answers "undecided" often enough to be
+// useless on its own. planRoute is the optimisation: play the fight out and
+// return the best line it saw, whatever it costs.
+{
+	const party = [
+		set('Blastoise', 45, ['Surf', 'Ice Beam', 'Withdraw', 'Rapid Spin']),
+		set('Raichu', 45, ['Thunderbolt', 'Quick Attack']),
+		set('Victreebel', 45, ['Giga Drain', 'Sleep Powder'])
+	];
+	const foe = battle('kanto-leaders-brock').team.map(m => toSet(m, 15));
+	const route = S.planRoute(B.createState(party, foe, {}), {lookahead: 3, budget: 30000});
+
+	check('a route is returned (' + route.turns + ' turns, ' +
+		route.elapsedMs + 'ms)', route.steps.length > 0);
+	check('  it reaches a conclusion rather than a depth limit',
+		route.won || route.stalled || route.losses > 0);
+	check('  every step names an action for both sides',
+		route.steps.every(s2 => s2.label && s2.theirLabel));
+	check('  and the cost is reported honestly',
+		typeof route.losses === 'number' && Array.isArray(route.lostNames));
+
+	// A hopeless team must still get a route back, just a losing one.
+	const doomed = S.planRoute(
+		B.createState([set('Magikarp', 5, ['Splash', 'Tackle'])], foe, {}),
+		{lookahead: 3, budget: 30000});
+	check('even a hopeless fight returns a line rather than nothing',
+		doomed.steps.length > 0, JSON.stringify({turns: doomed.turns}));
+	check('  and does not claim to win it', doomed.won === false);
 }
 
 console.log('\n%d failure(s)', failures);

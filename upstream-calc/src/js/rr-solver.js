@@ -402,6 +402,258 @@ var RRSolver = (function () {
 		};
 	}
 
+	// ----------------------------------------------------------- best route
+
+	/**
+	 * The best route it can find, always.
+	 *
+	 * The ladder answered a decision problem -- is there a route where nothing
+	 * dies -- and when the answer was "I could not tell in the time available"
+	 * it returned nothing you could act on. Standing in front of a trainer that
+	 * is useless: you are going to fight it either way, so the question is which
+	 * line is least bad, not whether a perfect one exists.
+	 *
+	 * So this is an optimisation instead. Every position gets a value, the
+	 * opponent minimises it, and whatever the search liked best is returned even
+	 * when it loses Pokemon. Value order, worst to best:
+	 *
+	 *   losing the battle  <  winning but losing Pokemon  <  a clean sweep
+	 *
+	 * A Pokemon costs far more than any amount of HP, because in a Nuzlocke it
+	 * is gone for good; HP and progress only separate routes that lose the same
+	 * number of them.
+	 */
+	var LOST_POKEMON = 1000;   // dwarfs every HP term below
+	var WON = 100000;
+
+	function countFainted(side) {
+		var n = 0;
+		side.team.forEach(function (mon) { if (mon.fainted) n++; });
+		return n;
+	}
+
+	function teamHP(side) {
+		var current = 0, total = 0;
+		side.team.forEach(function (mon) { current += mon.curHP; total += mon.maxHP; });
+		return total ? current / total : 0;
+	}
+
+	function positionValue(state, depthUsed) {
+		var myLosses = countFainted(state.me);
+		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
+		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
+
+		if (!foeAlive && meAlive) {
+			// Won. Prefer fewer losses, then fewer turns spent.
+			return WON - myLosses * LOST_POKEMON - depthUsed;
+		}
+		if (!meAlive) return -WON;
+
+		// Unfinished: reward progress through their team, penalise your losses
+		// heavily, and use HP only to separate otherwise equal routes.
+		return -myLosses * LOST_POKEMON +
+			(1 - teamHP(state.foe)) * 400 +
+			teamHP(state.me) * 60;
+	}
+
+	function searchRoute(state, depth, ctx, alpha, beta, depthUsed) {
+		if (ctx.nodes >= ctx.budget) { ctx.exhausted = true; return {value: positionValue(state, depthUsed)}; }
+		ctx.nodes++;
+
+		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
+		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
+		if (!meAlive || !foeAlive || depth <= 0) {
+			return {value: positionValue(state, depthUsed)};
+		}
+
+		var key = RRBattle.positionKey(state) + "@" + depth;
+		var cached = ctx.table[key];
+		if (cached !== undefined) return cached;
+
+		var myActions = orderedMyActions(state);
+		var foeActions = RRPlan.plausibleFoeActions(state, ctx.options);
+		var best = {value: -Infinity, action: null, branches: null};
+
+		for (var i = 0; i < myActions.length; i++) {
+			// The opponent replies with whatever is worst for you.
+			var worst = {value: Infinity, branches: []};
+			for (var j = 0; j < foeActions.length; j++) {
+				var next = RRBattle.step(state, myActions[i], foeActions[j],
+					{mode: "maxroll", risks: ctx.risks})[0].state;
+				var child = searchRoute(next, depth - 1, ctx, alpha, beta, depthUsed + 1);
+				if (child.value < worst.value) {
+					worst = {value: child.value, branches: [{
+						foeAction: foeActions[j], next: child.action ? child : null
+					}]};
+				}
+				if (worst.value <= alpha) break;   // this action is already beaten
+			}
+			if (worst.value > best.value) {
+				best = {value: worst.value, action: myActions[i], branches: worst.branches};
+			}
+			if (best.value > alpha) alpha = best.value;
+			if (alpha >= beta) break;
+		}
+
+		ctx.table[key] = best;
+		return best;
+	}
+
+	/**
+	 * Play the fight out, choosing each turn with a shallow search.
+	 *
+	 * Full-depth minimax cannot reach the end of a six-against-four: that is
+	 * fifteen-odd turns, and the tree is hopeless well before then. Searching a
+	 * few turns ahead, committing to the best action, and repeating gets a
+	 * COMPLETE route every time, in a couple of seconds. It is a rollout rather
+	 * than a proof, so it is the best line it can see and not provably the best
+	 * line -- which is the right trade when the alternative is handing back
+	 * "undecided" to someone who has to pick a move now.
+	 */
+	function planRoute(state, options) {
+		var opts = options || {};
+		var lookahead = opts.lookahead || 3;
+		var maxTurns = opts.maxTurns || 40;
+		var started = Date.now();
+		var current = state;
+		var steps = [];
+		var nodes = 0;
+
+		while (steps.length < maxTurns) {
+			var meAlive = current.me.team.some(function (m) { return !m.fainted; });
+			var foeAlive = current.foe.team.some(function (m) { return !m.fainted; });
+			if (!meAlive || !foeAlive) break;
+
+			RRBattle.clearCache();
+			var ctx = {
+				nodes: 0, budget: opts.budget || 40000, table: {},
+				exhausted: false, options: opts, risks: opts.risks || {}
+			};
+			var choice = searchRoute(current, lookahead, ctx, -Infinity, Infinity, 0);
+			nodes += ctx.nodes;
+			if (!choice.action) break;
+
+			var reply = (choice.branches && choice.branches[0])
+				? choice.branches[0].foeAction
+				: RRPlan.plausibleFoeActions(current, opts)[0];
+			if (!reply) break;
+
+			var before = current;
+			var next = RRBattle.step(current, choice.action, reply,
+				{mode: "maxroll", risks: opts.risks || {}})[0].state;
+
+			steps.push({
+				turn: steps.length + 1,
+				myMon: RRBattle.active(before.me).species,
+				action: choice.action,
+				label: choice.action.type === "switch"
+					? "switch to " + before.me.team[choice.action.index].species
+					: choice.action.move,
+				theirMon: RRBattle.active(before.foe).species,
+				theirAction: reply,
+				theirLabel: reply.type === "switch"
+					? "they switch to " + before.foe.team[reply.index].species
+					: "they use " + reply.move,
+				myHP: RRBattle.active(next.me).curHP,
+				myMaxHP: RRBattle.active(next.me).maxHP,
+				theirHP: RRBattle.active(next.foe).curHP,
+				lost: countFainted(next.me),
+				knockedOut: countFainted(next.foe) > countFainted(before.foe)
+			});
+
+			// A rollout that stops making progress is stuck; better to say so
+			// than to fill forty turns with it.
+			if (RRBattle.positionKey(next) === RRBattle.positionKey(before)) break;
+			current = next;
+		}
+
+		var wonIt = !current.foe.team.some(function (m) { return !m.fainted; });
+		return {
+			steps: steps,
+			won: wonIt,
+			losses: countFainted(current.me),
+			lostNames: current.me.team.filter(function (m) { return m.fainted; })
+				.map(function (m) { return m.species; }),
+			turns: steps.length,
+			stalled: !wonIt && steps.length < maxTurns,
+			nodes: nodes,
+			elapsedMs: Date.now() - started
+		};
+	}
+
+	/**
+	 * Find the best route, then work out how much bad luck it survives.
+	 *
+	 * Reported rather than searched for: the route comes first because you need
+	 * one, and the risk is a property of the route you got.
+	 */
+	function bestRoute(state, options) {
+		var opts = options || {};
+		var started = Date.now();
+		var maxDepth = opts.maxDepth || 8;
+		var best = null, reached = 0, exhausted = false;
+
+		// Iterative deepening, keeping the deepest result that finished. Even a
+		// shallow answer is a route, which is the whole point.
+		for (var depth = 2; depth <= maxDepth; depth++) {
+			RRBattle.clearCache();
+			var ctx = {
+				nodes: 0, budget: opts.budget || 250000, table: {},
+				exhausted: false, options: opts, risks: opts.risks || {}
+			};
+			var found = searchRoute(state, depth, ctx, -Infinity, Infinity, 0);
+			if (found.action) { best = found; reached = depth; }
+			exhausted = ctx.exhausted;
+			if (ctx.exhausted) break;
+			if (opts.timeLimitMs && Date.now() - started > opts.timeLimitMs) break;
+		}
+
+		return {
+			mode: "route",
+			line: best && best.action ? best : null,
+			value: best ? best.value : null,
+			depth: reached,
+			exhausted: exhausted,
+			elapsedMs: Date.now() - started
+		};
+	}
+
+	/** Play a route out and report what it costs. */
+	function routeOutcome(state, line, risks, maxTurns) {
+		var current = state;
+		var steps = [];
+		var node = line;
+		var turns = 0;
+		while (node && node.action && turns < (maxTurns || 24)) {
+			var meAlive = current.me.team.some(function (m) { return !m.fainted; });
+			var foeAlive = current.foe.team.some(function (m) { return !m.fainted; });
+			if (!meAlive || !foeAlive) break;
+			var branch = (node.branches && node.branches[0]) || null;
+			if (!branch) break;
+			var next = RRBattle.step(current, node.action, branch.foeAction,
+				{mode: "maxroll", risks: risks || {}})[0].state;
+			steps.push({
+				turn: turns + 1,
+				mine: node.action,
+				myMon: RRBattle.active(current.me).species,
+				theirs: branch.foeAction,
+				theirMon: RRBattle.active(current.foe).species,
+				afterMyHP: RRBattle.active(next.me).curHP,
+				lostSoFar: countFainted(next.me)
+			});
+			current = next;
+			node = branch.next;
+			turns++;
+		}
+		return {
+			steps: steps,
+			losses: countFainted(current.me),
+			won: !current.foe.team.some(function (m) { return !m.fainted; }),
+			survived: current.me.team.some(function (m) { return !m.fainted; }),
+			turns: turns
+		};
+	}
+
 	// ------------------------------------------------------------- Nuzlocke
 
 	/**
@@ -555,6 +807,9 @@ var RRSolver = (function () {
 	return {
 		solve: solve,
 		solveOdds: solveOdds,
+		bestRoute: bestRoute,
+		planRoute: planRoute,
+		routeOutcome: routeOutcome,
 		solveNuzlocke: solveNuzlocke,
 		nuzlockeRung: nuzlockeRung,
 		RISK_LADDER: RISK_LADDER,

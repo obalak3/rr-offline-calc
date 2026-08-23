@@ -236,75 +236,108 @@
 				: "") + "</div>";
 	}
 
-	function rungRow(rung) {
-		var label = rung.verdict === "safe" ? "safe"
-			: (rung.verdict === "budget" ? "undecided" : "no route found");
-		return '<tr class="rr-adv-' + rung.verdict + '"><td>' + esc(label) +
-			"</td><td><b>" + esc(rung.name) + "</b></td><td>" + esc(rung.blurb) +
-			'</td><td class="rr-adv-cost">' + rung.nodes + " nodes, " +
-			(rung.elapsedMs / 1000).toFixed(1) + "s</td></tr>";
+	/**
+	 * A route, always.
+	 *
+	 * The ladder answered "is there a clean route" and, when it could not tell
+	 * in the time available, returned nothing you could act on. You are going to
+	 * fight the trainer either way, so the question is which line is least bad,
+	 * not whether a perfect one exists. This plays the fight out and shows the
+	 * line it likes best, then reports how much bad luck that line survives.
+	 */
+	function routeTable(route) {
+		var rows = route.steps.map(function (step) {
+			return '<tr' + (step.knockedOut ? ' class="rr-adv-ko"' : "") + ">" +
+				"<td>" + step.turn + "</td>" +
+				"<td>" + esc(step.myMon) + "</td>" +
+				"<td><b>" + esc(step.label) + "</b></td>" +
+				"<td>" + esc(step.theirMon) + "</td>" +
+				"<td>" + esc(step.theirLabel) + "</td>" +
+				"<td>" + step.myHP + "/" + step.myMaxHP +
+				(step.knockedOut ? " <b>KO</b>" : "") + "</td></tr>";
+		}).join("");
+		return '<table class="rr-adv-table"><thead><tr><th>#</th><th>You</th>' +
+			"<th>Click</th><th>Them</th><th>They do</th><th>Your HP</th></tr></thead>" +
+			"<tbody>" + rows + "</tbody></table>";
+	}
+
+	function routeHeadline(route) {
+		if (!route.steps.length) return "No route found at all.";
+		if (route.won && route.losses === 0) {
+			return "<b>Wins in " + route.turns + " turns, losing nothing.</b>";
+		}
+		if (route.won) {
+			return "<b>Wins in " + route.turns + " turns, losing " + route.losses +
+				" (" + esc(route.lostNames.join(", ")) + ").</b> " +
+				"This is the best line it found, not a promise that nothing better exists.";
+		}
+		return "<b>No winning line found.</b> The best it managed was " +
+			route.turns + " turns" +
+			(route.losses ? ", losing " + route.losses : "") +
+			". Shown anyway, because it is still the best it saw.";
 	}
 
 	/**
-	 * Walk the ladder a rung at a time, painting between them.
-	 *
-	 * The whole ladder in one call froze the page for half a minute on an
-	 * in-level fight and then reported "undecided", which is the worst of both.
-	 * Each rung gets a short budget and its own tick, so you see the answer
-	 * build up and can stop reading as soon as you have what you need. A rung
-	 * that runs out of budget offers to keep going rather than pretending.
+	 * Re-run the same search under harder assumptions to see where it breaks.
+	 * Reported after the route, because the route is what you came for.
 	 */
-	function runLadder(state, index, rows, budgetMs) {
-		var rung = RRSolver.nuzlockeRung(state, index, {
-			maxDepth: 10, budget: 400000, timeLimitMs: budgetMs
+	function checkRisk(state, index, found, budgetMs) {
+		var ladder = RRSolver.RISK_LADDER;
+		var rung = ladder[index];
+		if (!rung) { paintRoute(state, found, null, true); return; }
+		var route = RRSolver.planRoute(state, {
+			lookahead: 3, budget: 30000, risks: rung.risks
 		});
-		if (!rung) return;
-		rows.push(rung);
-		paintLadder(state, rows, rung, budgetMs);
-		if (rung.safe && !rung.last) {
+		var holds = route.won && route.losses === 0;
+		found.risk.push({name: rung.name, blurb: rung.blurb, holds: holds, route: route});
+		paintRoute(state, found, rung, false);
+		if (holds && index + 1 < ladder.length) {
 			window.setTimeout(function () {
-				runLadder(state, index + 1, rows, budgetMs);
+				checkRisk(state, index + 1, found, budgetMs);
 			}, 30);
 		}
 	}
 
-	function paintLadder(state, rows, latest, budgetMs) {
-		var deepest = null;
-		rows.forEach(function (rung) { if (rung.safe) deepest = rung; });
-		var summary = deepest
-			? "A clean sweep exists that holds <b>" + esc(deepest.name) + "</b>."
-			: "No clean sweep found yet.";
-		if (latest.verdict === "budget") {
-			summary += " The <b>" + esc(latest.name) + "</b> rung ran out of search " +
-				"budget, so it is undecided rather than lost.";
-		} else if (latest.verdict === "none") {
-			summary += " No route survives <b>" + esc(latest.name) + "</b> within 10 turns.";
-		} else if (latest.safe && !latest.last) {
-			summary += " Still checking...";
-		}
+	function paintRoute(state, found, latest, done) {
+		var survived = found.risk.filter(function (r) { return r.holds; });
+		var broke = found.risk.filter(function (r) { return !r.holds; })[0];
+		var riskLine = found.risk.length
+			? ("<b>Survives:</b> " +
+				(survived.length
+					? survived.map(function (r) { return esc(r.name); }).join(", ")
+					: "nothing beyond the plain reading") +
+				(broke
+					? ". <b>Breaks at:</b> " + esc(broke.name) + " (" + esc(broke.blurb) + ")" +
+						(broke.route.won
+							? ", where it still wins but loses " + broke.route.losses
+							: ", where it stops winning")
+					: (done ? ". It survives the whole ladder." : ", still checking..."))) 
+			: "Checking how much bad luck it survives...";
 
 		$("#rr-adv-out").html(
-			'<table class="rr-adv-table"><tbody>' +
-			rows.map(rungRow).join("") + "</tbody></table>" +
-			'<div class="rr-adv-note">' + summary + "</div>" +
-			(latest.verdict === "budget"
-				? '<div class="rr-adv-note"><button type="button" id="rr-adv-harder" ' +
-					'class="btn">Search that rung harder</button></div>'
-				: "") +
-			'<div class="rr-adv-note rr-adv-caveat">A route that is not found may ' +
-			"still exist further ahead: this never claims your Pokemon dies, only " +
-			"that it could not find a way through." +
+			'<div class="rr-adv-note">' + routeHeadline(found.route) + "</div>" +
+			routeTable(found.route) +
+			'<div class="rr-adv-note">' + riskLine + "</div>" +
+			'<div class="rr-adv-note rr-adv-caveat">Their damage is read high and ' +
+			"yours low. The opponent is assumed to answer with whatever is worst " +
+			"for you, so a real fight usually goes better than this. Found in " +
+			(found.route.elapsedMs / 1000).toFixed(1) + "s." +
 			(state.unmodelled.length
 				? "<br><b>Not simulated:</b> " + esc(state.unmodelled.join("; "))
 				: "") + "</div>");
+	}
 
-		$("#rr-adv-harder").off("click").on("click", function () {
-			$(this).prop("disabled", true).text("Searching...");
-			window.setTimeout(function () {
-				rows.pop();
-				runLadder(state, latest.index, rows, budgetMs * 6);
-			}, 30);
-		});
+	function runRoute(state) {
+		var route = RRSolver.planRoute(state, {lookahead: 3, budget: 30000});
+		var found = {route: route, risk: []};
+		paintRoute(state, found, null, false);
+		// Only worth pricing the risk of a line that actually wins.
+		if (route.won) {
+			window.setTimeout(function () { checkRisk(state, 1, found, 2500); }, 30);
+		} else {
+			$("#rr-adv-out").find(".rr-adv-note").eq(1).html(
+				"<b>Risk not priced:</b> there is no winning line to price.");
+		}
 	}
 
 	/**
@@ -458,7 +491,7 @@
 			"</div>" +
 			'<div class="rr-adv-row">' +
 			'<button type="button" id="rr-adv-run" class="btn">What should I click?</button>' +
-			'<button type="button" id="rr-adv-check" class="btn">Check this fight</button>' +
+			'<button type="button" id="rr-adv-check" class="btn">Plan this fight</button>' +
 			"</div>" +
 			'<div id="rr-adv-out"></div>' +
 			"</div></div>";
@@ -529,9 +562,9 @@
 					"team and a selected battle.</div>");
 				return;
 			}
-			$("#rr-adv-out").html('<div class="rr-adv-note">Searching for a route ' +
-				"where nothing dies...</div>");
-			window.setTimeout(function () { runLadder(state, 0, [], 2500); }, 20);
+			$("#rr-adv-out").html('<div class="rr-adv-note">Playing the fight ' +
+				"out...</div>");
+			window.setTimeout(function () { runRoute(state); }, 20);
 		});
 		// The trainer panel owns both the battle and the team and publishes
 		// changes, so subscribe rather than watching for clicks on its markup.
@@ -565,11 +598,11 @@
 		setParty: function (indices) { saveParty(indices); refreshPickers(); },
 		buildState: buildState,
 		advice: function () { return renderAdvice(buildState()); },
-		ladder: function (budgetMs) {
+		route: function () {
 			var state = buildState();
-			var rows = [];
-			runLadder(state, 0, rows, budgetMs || 1500);
-			return rows;
+			var route = RRSolver.planRoute(state, {lookahead: 3, budget: 30000});
+			paintRoute(state, {route: route, risk: []}, null, false);
+			return route;
 		}
 	};
 })();
