@@ -434,9 +434,11 @@ var RRBattle = (function () {
 		return true;
 	}
 
-	function canTakeStatus(mon, status, state) {
+	function canTakeStatus(mon, status, state, moveType) {
 		if (mon.status) return false;
 		if (mon.volatiles.substitute) return false;
+		// Volt Absorb stops Thunder Wave, not just Thunderbolt.
+		if (moveType && absorbs(mon, moveType)) return false;
 
 		// Terrain blocks status on anything standing on it. This decides whole
 		// fights: Pincurchin's Electric Surge means Sleep Powder does nothing to
@@ -455,12 +457,37 @@ var RRBattle = (function () {
 		return true;
 	}
 
-	function setStatus(mon, status, state) {
-		if (!canTakeStatus(mon, status, state)) return false;
+	function setStatus(mon, status, state, moveType) {
+		if (!canTakeStatus(mon, status, state, moveType)) return false;
 		mon.status = status;
 		if (status === "slp") mon.sleepTurns = 2;
 		if (status === "tox") mon.toxicCounter = 1;
 		return true;
+	}
+
+	/**
+	 * Abilities that make a whole type do nothing, and in most cases heal.
+	 *
+	 * The calculator already zeroes the damage, but two consequences are ours:
+	 * the type's STATUS moves are blocked too (Volt Absorb stops Thunder Wave),
+	 * and the absorbing kinds restore a quarter of max HP. Against an Electric
+	 * gym that is the difference between a Pokemon that survives and one that
+	 * gets healthier every time they attack it.
+	 */
+	var ABSORBS = {
+		"Volt Absorb": {type: "Electric", heals: true},
+		"Water Absorb": {type: "Water", heals: true},
+		"Dry Skin": {type: "Water", heals: true},
+		"Sap Sipper": {type: "Grass", boosts: {atk: 1}},
+		"Motor Drive": {type: "Electric", boosts: {spe: 1}},
+		"Lightning Rod": {type: "Electric", boosts: {spa: 1}},
+		"Storm Drain": {type: "Water", boosts: {spa: 1}},
+		"Flash Fire": {type: "Fire", boosts: {spa: 1}}
+	};
+
+	function absorbs(mon, moveType) {
+		var rule = ABSORBS[mon.set.ability];
+		return rule && rule.type === moveType ? rule : null;
 	}
 
 	function heal(mon, amount) {
@@ -549,9 +576,30 @@ var RRBattle = (function () {
 		}
 	}
 
+	/**
+	 * Abilities that fire on the way OUT.
+	 *
+	 * Regenerator is the reason a switch cycle is a strategy rather than a
+	 * retreat: a third of max HP back every time you pivot. Without it the
+	 * search reads switching as pure damage taken, which is why it could not
+	 * see the Lanturn plan -- bait an Electric move to heal Lanturn, pivot to
+	 * Mienshao for anything else, and heal that on the way out too.
+	 */
+	function applyExitAbility(state, key, mon) {
+		if (!mon || mon.fainted) return;
+		if (mon.set.ability === "Regenerator") {
+			heal(mon, mon.maxHP / 3);
+		} else if (mon.set.ability === "Natural Cure") {
+			mon.status = null;
+			mon.sleepTurns = 0;
+			mon.toxicCounter = 0;
+		}
+	}
+
 	function switchIn(state, key, index) {
 		var side = state[key];
 		var outgoing = active(side);
+		applyExitAbility(state, key, outgoing);
 		// Boosts and most volatiles do not survive a switch.
 		outgoing.boosts = emptyBoosts();
 		outgoing.volatiles = {};
@@ -718,6 +766,7 @@ var RRBattle = (function () {
 
 	/** Returns true when the effect was simulated, false when it was not. */
 	function applyEffect(state, key, moveName, effect, ctx) {
+		var data = moveData(moveName);
 		var side = state[key];
 		var foeSide = state[other(key)];
 		var self = active(side);
@@ -733,7 +782,8 @@ var RRBattle = (function () {
 			if (effect.trapsSelf) self.volatiles.trapped = true;
 			return true;
 		case "status":
-			setStatus(targetMon(state, key, effect.target || "foe"), effect.status, state);
+			setStatus(targetMon(state, key, effect.target || "foe"), effect.status,
+				state, data && data.type);
 			return true;
 		case "heal":
 			var fraction = effect.fraction;
@@ -962,6 +1012,14 @@ var RRBattle = (function () {
 		// Damage.
 		var rolls = damageRolls(state, key, moveName);
 		if (!rolls) { note(state, "no damage array for " + moveName); return; }
+
+		// An absorbing ability turns the hit into a gain rather than a nothing.
+		var absorbed = absorbs(defender, data.type);
+		if (absorbed && rolls.immune) {
+			if (absorbed.heals) heal(defender, defender.maxHP / 4);
+			if (absorbed.boosts) applyBoosts(defender, absorbed.boosts);
+			return;
+		}
 		var dealt;
 		if (ctx.mode === "odds" && !rolls.immune) {
 			var split = damageOutcomes(rolls, defender.curHP, key);
@@ -1274,6 +1332,7 @@ var RRBattle = (function () {
 		switchIn: switchIn,
 		applyHazards: applyHazards,
 		applyEntryAbility: applyEntryAbility,
+		applyExitAbility: applyExitAbility,
 		active: active,
 		other: other,
 		moveData: moveData,
@@ -1288,6 +1347,7 @@ var RRBattle = (function () {
 			applyBoosts: applyBoosts,
 			canTakeStatus: canTakeStatus,
 			isGrounded: isGrounded,
+			absorbs: absorbs,
 			heal: heal,
 			damage: damage,
 			ACC_STAGES: ACC_STAGES

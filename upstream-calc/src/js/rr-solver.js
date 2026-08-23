@@ -439,6 +439,27 @@ var RRSolver = (function () {
 	}
 
 	/**
+	 * How healthy your side is, counted so that HP near a knockout is worth far
+	 * more than HP near full.
+	 *
+	 * Straight HP fraction was the reason the Surge plan never appeared. Twenty
+	 * points on something one hit from dying scored the same as twenty on
+	 * something untouched, so healing Lanturn from 80 read as a small gain when
+	 * it was the whole strategy. The square root fixes both ends at once: a
+	 * damaged Pokemon gains a lot from being healed, and a healthy one gains
+	 * almost nothing -- which is exactly the rule James plays by, cycle to heal
+	 * when Lanturn is hurt, attack with it when it is full.
+	 */
+	function survivability(side) {
+		var total = 0, count = 0;
+		side.team.forEach(function (mon) {
+			count++;
+			if (!mon.fainted && mon.maxHP) total += Math.sqrt(mon.curHP / mon.maxHP);
+		});
+		return count ? total / count : 0;
+	}
+
+	/**
 	 * The chance the Pokemon you have out is knocked out by their best attack.
 	 *
 	 * Planning on high rolls alone finds lines that look clean and are not: one
@@ -496,6 +517,34 @@ var RRSolver = (function () {
 			}
 			var acc = RRBattle.accuracyOf(before, "me", myAction.move);
 			if (acc < 1) p *= acc;
+		}
+
+		// A move that paralyses, freezes or flinches you does not have to KO
+		// anything to wreck a plan. Pricing it here is what makes dodging worth
+		// something: three turns of tanking Discharge is a 30% paralysis roll
+		// each time, and switching into Volt Absorb takes all three to zero.
+		if (foeAction && foeAction.type === "move" && !(youWentFirst && killed)) {
+			var view0 = before;
+			if (myAction.type === "switch") {
+				view0 = RRBattle.clone(before);
+				RRBattle.switchIn(view0, "me", myAction.index);
+			}
+			var target = RRBattle.active(view0.me);
+			var theirData = RRBattle.moveData(foeAction.move);
+			var sec0 = theirData && theirData.effect && theirData.effect.secondary;
+			var disabling = sec0 && (sec0.flinch || sec0.status === "par" ||
+				sec0.status === "slp" || sec0.status === "frz" || sec0.status === "frb");
+			if (disabling && theirData.secondaryChance > 0 && target && !target.fainted) {
+				// It only counts if the move can actually land on them.
+				var reach = RRBattle.damageRolls(view0, "foe", foeAction.move);
+				var lands = reach && !reach.immune;
+				if (lands && sec0.status && sec0.status !== "frz" &&
+					!RRBattle._internal.canTakeStatus(target, sec0.status, view0,
+						theirData.type)) {
+					lands = false;   // already statused, immune type, terrain
+				}
+				if (lands) p *= (1 - theirData.secondaryChance / 100);
+			}
 		}
 
 		// If the plan needs someone to survive, price how often they do -- and
@@ -814,16 +863,25 @@ var RRSolver = (function () {
 				}
 			}
 
-			// 4. Their secondary effects that would derail the next turn.
+			// 4. Their secondary effects that would derail the next turn -- but
+			// only if the move can reach at all. Discharge was being reported as
+			// a 30% paralysis risk against a Ground type it cannot touch.
 			var theirData = RRBattle.moveData(step.theirAction.move);
 			var sec = theirData && theirData.effect && theirData.effect.secondary;
-			if (sec && theirData.secondaryChance > 0 && theirData.secondaryChance < 100) {
+			if (sec && theirData.secondaryChance > 0 && theirData.secondaryChance < 100 &&
+				theirs && !theirs.immune) {
 				var label = sec.flinch ? "flinch"
 					: (sec.status ? sec.status : (sec.boosts ? "a stat drop" : null));
-				if (label) {
+				var possible = true;
+				if (sec.status && sec.status !== "frz") {
+					possible = RRBattle._internal.canTakeStatus(facing, sec.status,
+						view, theirData.type);
+				}
+				if (label && possible) {
 					risks.push({
 						turn: step.turn, chance: 1 - theirData.secondaryChance / 100,
-						what: step.theirAction.move + " can cause " + label,
+						what: step.theirAction.move + " can cause " + label +
+							" on " + facing.species,
 						detail: theirData.secondaryChance + "% chance"
 					});
 				}
@@ -838,12 +896,17 @@ var RRSolver = (function () {
 	 * board on turn six, not the board at the start.
 	 */
 	function routeRisks(state, route, opts) {
+		// Accept either {risks:{...}} or the risks object directly. Passing the
+		// wrong shape made the replay use max rolls while the plan used median,
+		// and the two drifted apart until a step that KOs in the plan "never
+		// KOs" in the report.
+		var risks = (opts && opts.risks) || opts || {};
 		var current = state;
 		var all = [];
 		for (var i = 0; i < route.steps.length; i++) {
 			var step = route.steps[i];
 			var next = RRBattle.step(current, step.action, step.theirAction,
-				{mode: "maxroll", risks: (opts && opts.risks) || {}})[0].state;
+				{mode: "maxroll", risks: risks})[0].state;
 			all = all.concat(stepRisks(current, step, next));
 			current = next;
 		}

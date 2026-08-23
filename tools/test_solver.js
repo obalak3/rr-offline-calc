@@ -29,7 +29,8 @@ const calc = require(path.join(root, 'upstream-calc/calc/dist/index.js'));
 const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number, Date};
 vm.createContext(sandbox);
 for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
-	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-plan.js', 'src/js/rr-solver.js']) {
+	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-ai.js',
+	'src/js/rr-plan.js', 'src/js/rr-solver.js']) {
 	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
 }
 const B = sandbox.RRBattle;
@@ -181,6 +182,52 @@ for (const [name, party, foe] of provable) {
 		solved.assumption);
 	check('anything unsimulated is carried with the result',
 		Array.isArray(solved.unmodelled));
+}
+
+// ------------------------------------------------- defence has to be valued
+
+// The Surge fight, which is where all of this came from. With Mienshao out and
+// the AI intending Discharge, switching to something that absorbs it must beat
+// attacking. It did not for a long time: their HP was weighted 500 against your
+// 60, so attacking won at every lookahead from 2 to 5.
+{
+	const surge = battle('kanto-leaders-lt-surge');
+	const mk = (species, nature, ability, moves) => ({
+		species, level: 34, nature, ability, item: 'Sitrus Berry', moves,
+		evs: EVS, ivs: IVS});
+	const party = [
+		mk('Mienshao', 'Adamant', 'Regenerator', ['Fake Out', 'Drain Punch', 'Detect', 'Rock Tomb']),
+		mk('Lanturn', 'Lonely', 'Volt Absorb', ['Scald', 'Confuse Ray', 'Signal Beam', 'Shock Wave'])
+	];
+	const state = B.createState(party, surge.team.map(m => toSet(m, 34)), {});
+
+	check('Pincurchin sets Electric Terrain on sight (Electric Surge)',
+		state.field.terrain === 'Electric', String(state.field.terrain));
+
+	const intent = sandbox.RRAI.scoreAll(state, 'foe',
+		{checkBadMove: true, checkGoodMove: true}, {}).filter(e => e.action.type === 'move');
+	const top = Math.max.apply(null, intent.map(e => e.score));
+	const intends = intent.filter(e => e.score === top).map(e => e.action.move);
+	check('  and intends an Electric move against Mienshao (' + intends.join('/') + ')',
+		intends.some(m => (B.moveData(m) || {}).type === 'Electric'));
+
+	B.clearCache();
+	const route = S.planRoute(state, {lookahead: 4, budget: 60000, maxTurns: 6,
+		risks: {roll: 'median'}});
+	check('the planner baits it with the absorber rather than attacking (' +
+		(route.steps[0] ? route.steps[0].label : 'no route') + ')',
+		route.steps.length > 0 && route.steps[0].action.type === 'switch',
+		route.steps.slice(0, 3).map(s2 => s2.label).join(' -> '));
+	check('  switching to the Pokemon that absorbs it',
+		route.steps[0] && route.steps[0].label.indexOf('Lanturn') >= 0,
+		route.steps[0] ? route.steps[0].label : '');
+
+	// And it must not turn into a pure stall: once the absorber is healthy the
+	// plan has to go back to dealing damage.
+	const attacks = route.steps.filter(s2 => s2.action.type === 'move');
+	check('  then attacks rather than cycling forever (' + attacks.length +
+		' of ' + route.steps.length + ' turns attack)', attacks.length > 0,
+		route.steps.map(s2 => s2.label).join(' -> '));
 }
 
 console.log('\n%d failure(s)', failures);
