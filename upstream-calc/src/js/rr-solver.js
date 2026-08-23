@@ -695,6 +695,154 @@ var RRSolver = (function () {
 	}
 
 	/**
+	 * Score a candidate by finishing the fight, not by grading the position.
+	 *
+	 * A handful of hand-weighted numbers cannot summarise "will I win this", and
+	 * every strategy the weights fail to anticipate stays invisible. Worse, the
+	 * search optimises the proxy rather than the goal, so more depth makes it
+	 * WORSE: measured on the Surge fight, lookahead 3 held 90.8%, lookahead 6
+	 * held 59.3% and took 414 seconds. Nothing with a correct objective behaves
+	 * like that.
+	 *
+	 * So a candidate move is judged by playing the rest of the battle out with a
+	 * cheap policy and reading the result. The objective becomes the real one,
+	 * which makes more search monotonically better instead of worse, and it is
+	 * cheaper: twenty turns of playout costs about what lookahead 2 costs, and
+	 * sees three times as far as lookahead 6.
+	 */
+	/**
+	 * The policy a playout uses: simple, fast, and aimed at winning.
+	 *
+	 * A one-ply search was tried first and was useless, because it optimises the
+	 * same proxy the playout exists to escape -- it picked Detect twice and the
+	 * fight went nowhere. A playout does not need to play well, it needs to be a
+	 * fair sample of how the fight goes, so: get out of the way if you are about
+	 * to die and have somewhere to go, otherwise hit the thing as hard as you
+	 * can, preferring a kill.
+	 */
+	function playoutAction(state, opts) {
+		var mine = RRBattle.active(state.me);
+		var foe = RRBattle.active(state.foe);
+		var actions = RRBattle.legalActions(state, "me");
+		var moves = actions.filter(function (a) { return a.type === "move"; });
+		var switches = actions.filter(function (a) { return a.type === "switch"; });
+
+		var incoming = 0;
+		RRBattle.legalActions(state, "foe").forEach(function (a) {
+			if (a.type !== "move") return;
+			var r = RRBattle.damageRolls(state, "foe", a.move);
+			if (r && !r.immune && r.noCrit[r.noCrit.length - 1] > incoming) {
+				incoming = r.noCrit[r.noCrit.length - 1];
+			}
+		});
+
+		// Can anything of mine end it right now?
+		var best = null, bestDamage = -1;
+		for (var i = 0; i < moves.length; i++) {
+			var rolls = RRBattle.damageRolls(state, "me", moves[i].move);
+			var dealt = rolls && !rolls.immune ? rolls.noCrit[0] : 0;
+			if (dealt >= foe.curHP) return moves[i];
+			if (dealt > bestDamage) { bestDamage = dealt; best = moves[i]; }
+		}
+
+		// Getting low, with somewhere safer to stand? The first version only
+		// pivoted when something would die THIS turn, which left Lanturn in for
+		// three Bug Buzzes down to 11 HP and then had nowhere to put it. Two
+		// hits of headroom is the difference between cycling and dying.
+		if (mine.fainted || (incoming * 2 >= mine.curHP && switches.length)) {
+			var safest = null, safestRoom = -Infinity;
+			for (var j = 0; j < switches.length; j++) {
+				var view = RRBattle.clone(state);
+				RRBattle.switchIn(view, "me", switches[j].index);
+				var candidate = RRBattle.active(view.me);
+				var worst = 0;
+				RRBattle.legalActions(view, "foe").forEach(function (a) {
+					if (a.type !== "move") return;
+					var r2 = RRBattle.damageRolls(view, "foe", a.move);
+					if (r2 && !r2.immune && r2.noCrit[r2.noCrit.length - 1] > worst) {
+						worst = r2.noCrit[r2.noCrit.length - 1];
+					}
+				});
+				var room = candidate.curHP - worst;
+				if (room > safestRoom) { safestRoom = room; safest = switches[j]; }
+			}
+			// Only pivot if it is genuinely safer than staying.
+			if (safest && safestRoom > mine.curHP - incoming) return safest;
+		}
+		// Never stall: if the best "attack" does nothing, take any move that
+		// does damage rather than repeating Detect until the clock runs out.
+		if (bestDamage <= 0) {
+			for (var k = 0; k < moves.length; k++) {
+				var probe = RRBattle.damageRolls(state, "me", moves[k].move);
+				if (probe && !probe.immune && probe.noCrit[0] > 0) return moves[k];
+			}
+		}
+		return best || actions[0] || null;
+	}
+
+	function playout(state, opts, budgetTurns) {
+		var current = state;
+		var turns = 0;
+		var limit = budgetTurns || 30;
+		var lastTheirHP = null, stuck = 0;
+
+		while (turns < limit) {
+			var meAlive = current.me.team.some(function (m) { return !m.fainted; });
+			var foeAlive = current.foe.team.some(function (m) { return !m.fainted; });
+			if (!meAlive || !foeAlive) break;
+
+			var choice = {action: playoutAction(current, opts)};
+			if (!choice.action) break;
+			var reply = predictedReply(current, opts) ||
+				RRPlan.plausibleFoeActions(current, opts)[0];
+			if (!reply) break;
+
+			var next = RRBattle.step(current, choice.action, reply,
+				{mode: "maxroll", risks: opts.risks || {}})[0].state;
+			next.planProb = (current.planProb === undefined ? 1 : current.planProb) *
+				stepProbability(current, choice.action, reply, next);
+			if (RRBattle.positionKey(next) === RRBattle.positionKey(current)) break;
+
+			var theirHP = 0;
+			next.foe.team.forEach(function (m) { theirHP += m.curHP; });
+			if (lastTheirHP !== null && theirHP >= lastTheirHP) {
+				if (++stuck >= 4) break;
+			} else { stuck = 0; }
+			lastTheirHP = theirHP;
+
+			current = next;
+			turns++;
+		}
+
+		var won = !current.foe.team.some(function (m) { return !m.fainted; });
+		return {
+			won: won,
+			losses: countFainted(current.me),
+			turns: turns,
+			odds: current.planProb === undefined ? 1 : current.planProb,
+			state: current
+		};
+	}
+
+	/**
+	 * Rank outcomes the way a Nuzlocke does: losing nothing beats losing one,
+	 * winning beats not winning, and only then does speed or certainty matter.
+	 */
+	function outcomeScore(out) {
+		// Winning and losing nothing dominate everything. But when no playout
+		// reaches a win they would all score alike, and the choice goes noisy --
+		// so how FAR each one got still counts, well below the terms that matter.
+		var progress = 1 - teamHP(out.state.foe);
+		var health = survivability(out.state.me);
+		return (out.won ? 1000000 : 0) -
+			out.losses * 100000 +
+			out.odds * 10000 +
+			progress * 8000 +
+			health * 2000 -
+			out.turns * 10;
+	}
+
+	/**
 	 * Play the fight out, choosing each turn with a shallow search.
 	 *
 	 * Full-depth minimax cannot reach the end of a six-against-four: that is
@@ -745,8 +893,35 @@ var RRSolver = (function () {
 				exhausted: false, options: opts, risks: opts.risks || {},
 				predict: opts.opponent !== "adversarial"
 			};
-			var choice = searchRoute(current, lookahead, ctx, -Infinity, Infinity, 0);
-			nodes += ctx.nodes;
+			var choice;
+			// Off by default. The playout evaluator finds better OPENINGS than
+			// the static one -- it is the only thing that has ever chosen the
+			// absorber on turn one -- but its playout policy is too crude to
+			// sustain a plan, so it currently finishes fewer fights. Kept, and
+			// kept switched off, until the policy is worth trusting.
+			if (!opts.playouts) {
+				choice = searchRoute(current, lookahead, ctx, -Infinity, Infinity, 0);
+				nodes += ctx.nodes;
+			} else {
+				// Try every action, finish the fight from each, keep the best
+				// ending. This is the whole point: the score is an outcome.
+				var best = null, bestScore = -Infinity;
+				var candidates = orderedMyActions(current);
+				for (var c = 0; c < candidates.length; c++) {
+					var replyNow = predictedReply(current, opts) ||
+						RRPlan.plausibleFoeActions(current, opts)[0];
+					if (!replyNow) break;
+					var after = RRBattle.step(current, candidates[c], replyNow,
+						{mode: "maxroll", risks: opts.risks || {}})[0].state;
+					after.planProb = (current.planProb === undefined ? 1 : current.planProb) *
+						stepProbability(current, candidates[c], replyNow, after);
+					var out = playout(after, opts, (opts.maxTurns || 40) - steps.length);
+					var score = outcomeScore(out);
+					if (score > bestScore) { bestScore = score; best = candidates[c]; }
+					nodes += out.turns;
+				}
+				choice = {action: best};
+			}
 			if (!choice.action) break;
 
 			// Your move is still chosen against the worst reply they have -- that
