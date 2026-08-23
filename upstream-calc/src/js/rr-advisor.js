@@ -32,6 +32,21 @@
 			.replace(/"/g, "&quot;");
 	}
 
+	/**
+	 * Doubles is not supported, and that has to be said rather than guessed at.
+	 *
+	 * 27 of the 167 battles are doubles, Sabrina and the last Giovanni among
+	 * them. Nothing in the engine models a second active Pokemon: no spread
+	 * damage, no redirection, no partner. Handed one of those fights it would
+	 * have answered the 1v1 question instead and looked equally confident doing
+	 * it, which in a Nuzlocke is how you lose something.
+	 */
+	function isDoubles() {
+		var battle = window.RRTrainers.getBattle();
+		return !!(battle && window.RRTrainers.isDoubles &&
+			window.RRTrainers.isDoubles(battle));
+	}
+
 	function ready() {
 		return typeof RRBattle !== "undefined" && typeof RRPlan !== "undefined" &&
 			typeof window.RRTrainers !== "undefined";
@@ -386,6 +401,18 @@
 			? (battle.title ? battle.title + " " : "") + battle.trainer +
 				(battle.variant ? " (" + battle.variant + ")" : "")
 			: "pick a battle above");
+
+		var doubles = isDoubles();
+		$("#rr-advisor").toggleClass("rr-adv-blocked", doubles);
+		$("#rr-adv-run, #rr-adv-check").prop("disabled", doubles);
+		if (doubles) {
+			$("#rr-adv-out").html('<div class="rr-adv-note rr-adv-warn">' +
+				"<b>This is a double battle, and the advisor only understands singles.</b>" +
+				"<br>Nothing here models a second Pokemon on each side: no spread " +
+				"damage, no redirection, no partner. Rather than answer the 1v1 " +
+				"question and look confident about it, it stops. Use the calculator's " +
+				"own Doubles view for this fight.</div>");
+		}
 		syncHP();
 		if (!mine.length) {
 			$("#rr-adv-out").html('<div class="rr-adv-note">Save a Pokemon to ' +
@@ -438,6 +465,7 @@
 	}
 
 	function run(renderer, busyText) {
+		if (isDoubles()) { refreshPickers(); return; }
 		var state = buildState();
 		if (!state) {
 			$("#rr-adv-out").html('<div class="rr-adv-note">Need both a saved team ' +
@@ -494,6 +522,7 @@
 			run(renderAdvice, "Working out this turn...");
 		});
 		$("#rr-adv-check").click(function () {
+			if (isDoubles()) { refreshPickers(); return; }
 			var state = buildState();
 			if (!state) {
 				$("#rr-adv-out").html('<div class="rr-adv-note">Need both a saved ' +
@@ -532,6 +561,7 @@
 	window.RRAdvisor = {
 		refresh: refreshPickers,
 		party: partyIndices,
+		isDoubles: isDoubles,
 		setParty: function (indices) { saveParty(indices); refreshPickers(); },
 		buildState: buildState,
 		advice: function () { return renderAdvice(buildState()); },

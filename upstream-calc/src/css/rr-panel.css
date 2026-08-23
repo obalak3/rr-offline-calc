@@ -624,3 +624,5 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 	border: 1px solid rgba(128,128,128,0.3); border-radius: 3px; }
 .rr-adv-pick { display: flex; align-items: center; gap: 3px; opacity: 0.55; }
 .rr-adv-pick.rr-adv-picked { opacity: 1; }
+.rr-adv-warn { border-left: 3px solid rgba(210, 150, 70, 0.85); padding-left: 7px; }
+.rr-adv-blocked .rr-adv-side, .rr-adv-blocked .rr-adv-party { opacity: 0.45; }

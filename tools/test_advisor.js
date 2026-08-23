@@ -249,6 +249,32 @@ server.listen(0, '127.0.0.1', () => {
 		window.localStorage.removeItem('rrAdvParty');
 		window.RRAdvisor.refresh();
 
+		// 27 of the 167 battles are doubles. Answering the 1v1 question for one of
+		// them, confidently, is the worst thing this panel could do.
+		$('#rr-adv-mine').empty();
+		let sabrina = null;
+		const segs2 = doc.querySelectorAll('#rr-segments .rr-seg');
+		for (let i = 0; i < segs2.length && !sabrina; i++) {
+			$(segs2[i]).trigger('click');
+			for (const b of doc.querySelectorAll('#rr-battles .rr-battle')) {
+				if (b.getAttribute('data-id') === 'kanto-leaders-sabrina') {
+					$(b).trigger('click'); sabrina = b; break;
+				}
+			}
+		}
+		check('a doubles battle can be selected', !!sabrina);
+		window.RRAdvisor.refresh();
+		check('  it is recognised as doubles', window.RRAdvisor.isDoubles() === true);
+		check('  both buttons are disabled',
+			$('#rr-adv-run').prop('disabled') === true &&
+			$('#rr-adv-check').prop('disabled') === true);
+		check('  and it says why rather than answering anyway',
+			/only understands singles/.test($('#rr-adv-out').text()),
+			$('#rr-adv-out').text().slice(0, 90));
+		$('#rr-adv-run').trigger('click');
+		check('  clicking anyway does not produce a ranking',
+			doc.querySelectorAll('#rr-adv-out .rr-adv-table').length === 0);
+
 		check('the page threw no errors', errors.length === 0, errors.slice(0, 2).join('; '));
 
 		console.log('\n%d failure(s)', failures);
