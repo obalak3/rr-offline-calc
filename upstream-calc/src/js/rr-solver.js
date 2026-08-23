@@ -421,6 +421,12 @@ var RRSolver = (function () {
 		foeDown: 900,      // removing one of theirs for good
 		progress: 500,     // chipping their team
 		health: 300,       // your side, counted concavely
+		// How much the ACTIVE Pokemon's chance of dying costs. This one is
+		// dangerous: it can be reset simply by switching, so if it outweighs the
+		// free hit a switch concedes, the planner will pass the problem down the
+		// party one Pokemon at a time. Against Misty it switched three turns
+		// running into the same Ice Punch and made no progress at all.
+		deathRisk: 1000,
 		turnCost: 8
 	};
 	function weights(opts) {
@@ -429,6 +435,7 @@ var RRSolver = (function () {
 			foeDown: w.foeDown === undefined ? WEIGHTS.foeDown : w.foeDown,
 			progress: w.progress === undefined ? WEIGHTS.progress : w.progress,
 			health: w.health === undefined ? WEIGHTS.health : w.health,
+			deathRisk: w.deathRisk === undefined ? WEIGHTS.deathRisk : w.deathRisk,
 			turnCost: w.turnCost === undefined ? WEIGHTS.turnCost : w.turnCost
 		};
 	}
