@@ -426,7 +426,14 @@ var RRSolver = (function () {
 		// free hit a switch concedes, the planner will pass the problem down the
 		// party one Pokemon at a time. Against Misty it switched three turns
 		// running into the same Ice Punch and made no progress at all.
-		deathRisk: 1000,
+		// Measured, not chosen. Swept against 135 early-game fights: 1000 gives
+		// 56%, then 700 -> 58%, 500 -> 59%, 300 -> 59%, and 0 also gives 59%.
+		// So the term is worth little and actively harms at 1000, which is the
+		// hot-potato effect -- it can be reset by switching, so a high value
+		// pays the planner to pass the problem down the party rather than solve
+		// it. Kept low rather than removed: it still encodes something real,
+		// and at 300 it costs nothing.
+		deathRisk: 300,
 		// What one of YOUR Pokemon dying costs. In a Nuzlocke it is meant to
 		// dominate, and it does: at 1000 against positional terms capped near
 		// 900, no other weight can flip a decision. That is why sweeping the
