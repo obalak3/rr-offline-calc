@@ -596,6 +596,64 @@ var RRBattle = (function () {
 		}
 	}
 
+	/**
+	 * Send in a replacement for something that just fainted.
+	 *
+	 * This is NOT a turn. A Pokemon faints, its replacement arrives at the end
+	 * of that turn, and both sides act normally on the next one. Modelling the
+	 * replacement as that side's action gave the player a free turn on every
+	 * knockout -- five of them against a five-Pokemon gym -- and inflated every
+	 * plan built on it.
+	 *
+	 * Who comes in is a real decision and it is picked here rather than
+	 * searched: whatever survives the most and hits back hardest. That is a
+	 * simplification on the player's side and it is worth knowing about.
+	 */
+	function chooseReplacement(state, key) {
+		var side = state[key];
+		var best = -1, bestScore = -Infinity;
+		for (var i = 0; i < side.team.length; i++) {
+			if (side.team[i].fainted) continue;
+			var view = clone(state);
+			view[key].active = i;
+			var mon = active(view[key]);
+			var worst = 0, hit = 0;
+			legalActions(view, other(key)).forEach(function (a) {
+				if (a.type !== "move") return;
+				var r = damageRolls(view, other(key), a.move);
+				if (r && !r.immune) {
+					var top = r.noCrit[r.noCrit.length - 1];
+					if (top > worst) worst = top;
+				}
+			});
+			legalActions(view, key).forEach(function (a) {
+				if (a.type !== "move") return;
+				var r = damageRolls(view, key, a.move);
+				if (r && !r.immune && r.noCrit[0] > hit) hit = r.noCrit[0];
+			});
+			// Room to survive matters more than damage: this is a Nuzlocke.
+			var score = (mon.curHP - worst) * 2 + hit;
+			if (score > bestScore) { bestScore = score; best = i; }
+		}
+		return best;
+	}
+
+	function sendReplacements(state) {
+		["me", "foe"].forEach(function (key) {
+			var side = state[key];
+			if (!active(side) || !active(side).fainted) return;
+			if (!side.team.some(function (m) { return !m.fainted; })) return;
+			var index = chooseReplacement(state, key);
+			if (index >= 0) {
+				side.active = index;
+				side.team[index].turnsOut = 0;
+				side.switchCooldown = 1;
+				applyHazards(state, key);
+				applyEntryAbility(state, key);
+			}
+		});
+	}
+
 	function switchIn(state, key, index) {
 		var side = state[key];
 		var outgoing = active(side);
@@ -1211,7 +1269,11 @@ var RRBattle = (function () {
 		order.forEach(function (key) {
 			if (actions[key].type === "move") executeMove(next, key, actions[key], ctx);
 		});
-		if (!isOver(next)) endOfTurn(next, ctx);
+		if (!isOver(next)) {
+			endOfTurn(next, ctx);
+			// The replacement arrives now, not on the next turn's action.
+			if (!isOver(next)) sendReplacements(next);
+		}
 		return next;
 	}
 
@@ -1309,7 +1371,13 @@ var RRBattle = (function () {
 					mon.volatiles.confused || 0);
 			});
 			parts.push(side.hazards.stealthrock, side.hazards.spikes,
-				side.hazards.toxicspikes, side.hazards.stickyweb);
+				side.hazards.toxicspikes, side.hazards.stickyweb,
+				// Whether a side may switch changes its legal actions, so two
+				// positions differing only in this are NOT the same problem.
+				// Leaving it out let the transposition table hand a cached
+				// result from a switchable position to an unswitchable one, and
+				// the proof tree came back with replies it had never covered.
+				side.switchCooldown || 0);
 			var names = Object.keys(side.screens).sort();
 			parts.push(names.map(function (n) { return n + side.screens[n]; }).join(","));
 		});
@@ -1332,6 +1400,8 @@ var RRBattle = (function () {
 		switchIn: switchIn,
 		applyHazards: applyHazards,
 		applyEntryAbility: applyEntryAbility,
+		sendReplacements: sendReplacements,
+		chooseReplacement: chooseReplacement,
 		applyExitAbility: applyExitAbility,
 		active: active,
 		other: other,

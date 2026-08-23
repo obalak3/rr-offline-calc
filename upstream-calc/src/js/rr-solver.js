@@ -619,10 +619,14 @@ var RRSolver = (function () {
 
 		var odds = state.planProb === undefined ? 1 : state.planProb;
 		if (!foeAlive && meAlive) {
-			// Won, weighted by how likely the line that got here actually is.
-			// Without the weighting a twenty turn plan holding 22% outscored a
-			// six turn plan holding 80%, since both reached the same place.
-			return WON * odds - myLosses * LOST_POKEMON - depthUsed;
+			// A win beats every unfinished position, full stop, and the odds
+			// only separate one win from another.
+			//
+			// Multiplying the whole win by the odds was wrong: after twenty
+			// turns of compounding, a certain win scored BELOW simply staying
+			// healthy, and the planner sat on a Manectric with 10 HP switching
+			// back and forth while holding three moves that would have killed it.
+			return WON - myLosses * LOST_POKEMON + odds * 10000 - depthUsed;
 		}
 		if (!meAlive) return -WON;
 

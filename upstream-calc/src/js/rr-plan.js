@@ -108,6 +108,18 @@ var RRPlan = (function () {
 		var after = results[0].state;
 		var mine = RRBattle.active(after.me);
 		var theirs = RRBattle.active(after.foe);
+
+		// A replacement arrives the moment something faints, so the fainted
+		// Pokemon is no longer the active one. Losing something has to be
+		// counted, not read off whoever happens to be standing there.
+		function lost(before, later) {
+			var was = 0, now = 0;
+			before.team.forEach(function (m) { if (m.fainted) was++; });
+			later.team.forEach(function (m) { if (m.fainted) now++; });
+			return now > was;
+		}
+		var iLostOne = lost(state.me, after.me);
+		var theyLostOne = lost(state.foe, after.foe);
 		return {
 			state: after,
 			foeAction: foeAction,
@@ -115,8 +127,8 @@ var RRPlan = (function () {
 			foeHP: fraction(theirs),
 			myTeamHP: teamFraction(after.me),
 			foeTeamHP: teamFraction(after.foe),
-			iFainted: mine.fainted,
-			foeFainted: theirs.fainted,
+			iFainted: iLostOne,
+			foeFainted: theyLostOne,
 			over: RRBattle.isOver(after)
 		};
 	}
