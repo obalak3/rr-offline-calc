@@ -414,6 +414,25 @@ var RRSolver = (function () {
 	var LOST_POKEMON = 1000;   // dwarfs every HP term below
 	var WON = 100000;
 
+	// Exposed so they can be measured across many battles rather than tuned by
+	// hand against one. Sweeping them is the only way to tell a weighting that
+	// helps everywhere from one that happens to suit the Surge fight.
+	var WEIGHTS = {
+		foeDown: 900,      // removing one of theirs for good
+		progress: 500,     // chipping their team
+		health: 300,       // your side, counted concavely
+		turnCost: 8
+	};
+	function weights(opts) {
+		var w = (opts && opts.weights) || {};
+		return {
+			foeDown: w.foeDown === undefined ? WEIGHTS.foeDown : w.foeDown,
+			progress: w.progress === undefined ? WEIGHTS.progress : w.progress,
+			health: w.health === undefined ? WEIGHTS.health : w.health,
+			turnCost: w.turnCost === undefined ? WEIGHTS.turnCost : w.turnCost
+		};
+	}
+
 	function countFainted(side) {
 		var n = 0;
 		side.team.forEach(function (mon) { if (mon.fainted) n++; });
@@ -600,7 +619,8 @@ var RRSolver = (function () {
 		return p;
 	}
 
-	function positionValue(state, depthUsed) {
+	function positionValue(state, depthUsed, w) {
+		w = w || WEIGHTS;
 		var myLosses = countFainted(state.me);
 		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
 		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
@@ -634,13 +654,16 @@ var RRSolver = (function () {
 	}
 
 	function searchRoute(state, depth, ctx, alpha, beta, depthUsed) {
-		if (ctx.nodes >= ctx.budget) { ctx.exhausted = true; return {value: positionValue(state, depthUsed)}; }
+		if (ctx.nodes >= ctx.budget) {
+			ctx.exhausted = true;
+			return {value: positionValue(state, depthUsed, ctx.weights)};
+		}
 		ctx.nodes++;
 
 		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
 		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
 		if (!meAlive || !foeAlive || depth <= 0) {
-			return {value: positionValue(state, depthUsed)};
+			return {value: positionValue(state, depthUsed, ctx.weights)};
 		}
 
 		var key = RRBattle.positionKey(state) + "@" + depth;
@@ -883,7 +906,7 @@ var RRSolver = (function () {
 			var ctx = {
 				nodes: 0, budget: opts.budget || 40000, table: {},
 				exhausted: false, options: opts, risks: opts.risks || {},
-				predict: opts.opponent !== "adversarial"
+				predict: opts.opponent !== "adversarial", weights: weights(opts)
 			};
 			var choice;
 			if (forcing) {

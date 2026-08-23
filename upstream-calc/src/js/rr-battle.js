@@ -954,6 +954,11 @@ var RRBattle = (function () {
 		case "disable":
 			foe.volatiles.disabled = 4;
 			return true;
+		case "identify":
+			// Odor Sleuth / Foresight: resets the target's evasion. The
+			// type override that lets Normal hit Ghost is not modelled.
+			foe.boosts.eva = 0;
+			return true;
 		case "psychUp":
 			for (var stat in foe.boosts) {
 				if (Object.prototype.hasOwnProperty.call(foe.boosts, stat)) {
