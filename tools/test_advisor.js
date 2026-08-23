@@ -163,6 +163,29 @@ server.listen(0, '127.0.0.1', () => {
 			!/not simulated/i.test($('#rr-adv-out').text()),
 			$('#rr-adv-out .rr-adv-caveat').text());
 
+		// The ladder walks a rung at a time so the page can paint between them;
+		// a whole ladder in one call froze it for half a minute on a real fight.
+		const rows = window.RRAdvisor.ladder(400);
+		check('the ladder returns its first rung synchronously (' + rows.length + ')',
+			rows.length >= 1);
+		if (rows.length) {
+			check('  with an honest verdict (' + rows[0].verdict + ')',
+				['safe', 'budget', 'none'].includes(rows[0].verdict));
+			check('  and its cost reported', typeof rows[0].nodes === 'number' &&
+				typeof rows[0].elapsedMs === 'number');
+			check('  starting from the easiest rung (' + rows[0].name + ')',
+				rows[0].index === 0);
+			const shown = $('#rr-adv-out').text();
+			check('  rendered to the panel', /clean rolls/.test(shown), shown.slice(0, 80));
+			// An undecided rung must offer to keep going rather than imply a loss.
+			if (rows[0].verdict === 'budget') {
+				check('  an undecided rung offers to search harder',
+					$('#rr-adv-harder').length === 1);
+				check('  and does not read as a death',
+					!/dies|died/i.test(shown), shown.slice(0, 120));
+			}
+		}
+
 		check('the page threw no errors', errors.length === 0, errors.slice(0, 2).join('; '));
 
 		console.log('\n%d failure(s)', failures);

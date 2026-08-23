@@ -439,6 +439,37 @@ var RRSolver = (function () {
 			blurb: "plus two misses and a turn lost to full paralysis"}
 	];
 
+	/**
+	 * One rung of the ladder, so a caller can walk it a step at a time and stay
+	 * responsive. solveNuzlocke below runs the whole thing in one go, which is
+	 * fine off the main thread and not fine on it.
+	 */
+	function nuzlockeRung(state, index, options) {
+		var opts = options || {};
+		var rung = RISK_LADDER[index];
+		if (!rung) return null;
+		RRBattle.clearCache();
+		var found = solveProof(state, {
+			maxDepth: opts.maxDepth || 12,
+			budget: opts.budget || 200000,
+			timeLimitMs: opts.timeLimitMs,
+			stepMode: "maxroll",
+			risks: rung.risks,
+			foeMovesOnly: opts.foeMovesOnly,
+			margin: opts.margin,
+			flagSets: opts.flagSets
+		});
+		var verdict = found.result === WIN ? "safe"
+			: (found.exhausted ? "budget" : "none");
+		return {
+			index: index, name: rung.name, blurb: rung.blurb, risks: rung.risks,
+			verdict: verdict, safe: verdict === "safe", exhausted: !!found.exhausted,
+			depth: found.depth, line: found.line, nodes: found.nodes,
+			elapsedMs: found.elapsedMs,
+			last: index === RISK_LADDER.length - 1
+		};
+	}
+
 	function solveNuzlocke(state, options) {
 		var opts = options || {};
 		var started = Date.now();
@@ -525,6 +556,7 @@ var RRSolver = (function () {
 		solve: solve,
 		solveOdds: solveOdds,
 		solveNuzlocke: solveNuzlocke,
+		nuzlockeRung: nuzlockeRung,
 		RISK_LADDER: RISK_LADDER,
 		solveProof: solveProof,
 		describe: describe,

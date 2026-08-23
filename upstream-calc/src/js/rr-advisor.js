@@ -169,25 +169,75 @@
 				: "") + "</div>";
 	}
 
-	function renderCheck(state) {
-		var result = RRSolver.solveNuzlocke(state, {
-			maxDepth: 10, budget: 120000, timeLimitMs: 15000
+	function rungRow(rung) {
+		var label = rung.verdict === "safe" ? "safe"
+			: (rung.verdict === "budget" ? "undecided" : "no route found");
+		return '<tr class="rr-adv-' + rung.verdict + '"><td>' + esc(label) +
+			"</td><td><b>" + esc(rung.name) + "</b></td><td>" + esc(rung.blurb) +
+			'</td><td class="rr-adv-cost">' + rung.nodes + " nodes, " +
+			(rung.elapsedMs / 1000).toFixed(1) + "s</td></tr>";
+	}
+
+	/**
+	 * Walk the ladder a rung at a time, painting between them.
+	 *
+	 * The whole ladder in one call froze the page for half a minute on an
+	 * in-level fight and then reported "undecided", which is the worst of both.
+	 * Each rung gets a short budget and its own tick, so you see the answer
+	 * build up and can stop reading as soon as you have what you need. A rung
+	 * that runs out of budget offers to keep going rather than pretending.
+	 */
+	function runLadder(state, index, rows, budgetMs) {
+		var rung = RRSolver.nuzlockeRung(state, index, {
+			maxDepth: 10, budget: 400000, timeLimitMs: budgetMs
 		});
-		var rungs = result.rungs.map(function (rung) {
-			var label = rung.verdict === "safe" ? "safe"
-				: (rung.verdict === "budget" ? "undecided" : "no route found");
-			return '<tr class="rr-adv-' + rung.verdict + '"><td>' + esc(label) +
-				"</td><td><b>" + esc(rung.name) + "</b></td><td>" +
-				esc(rung.blurb) + "</td></tr>";
-		}).join("");
-		return '<table class="rr-adv-table"><tbody>' + rungs + "</tbody></table>" +
-			'<div class="rr-adv-note">' + esc(result.meaning) + "</div>" +
+		if (!rung) return;
+		rows.push(rung);
+		paintLadder(state, rows, rung, budgetMs);
+		if (rung.safe && !rung.last) {
+			window.setTimeout(function () {
+				runLadder(state, index + 1, rows, budgetMs);
+			}, 30);
+		}
+	}
+
+	function paintLadder(state, rows, latest, budgetMs) {
+		var deepest = null;
+		rows.forEach(function (rung) { if (rung.safe) deepest = rung; });
+		var summary = deepest
+			? "A clean sweep exists that holds <b>" + esc(deepest.name) + "</b>."
+			: "No clean sweep found yet.";
+		if (latest.verdict === "budget") {
+			summary += " The <b>" + esc(latest.name) + "</b> rung ran out of search " +
+				"budget, so it is undecided rather than lost.";
+		} else if (latest.verdict === "none") {
+			summary += " No route survives <b>" + esc(latest.name) + "</b> within 10 turns.";
+		} else if (latest.safe && !latest.last) {
+			summary += " Still checking...";
+		}
+
+		$("#rr-adv-out").html(
+			'<table class="rr-adv-table"><tbody>' +
+			rows.map(rungRow).join("") + "</tbody></table>" +
+			'<div class="rr-adv-note">' + summary + "</div>" +
+			(latest.verdict === "budget"
+				? '<div class="rr-adv-note"><button type="button" id="rr-adv-harder" ' +
+					'class="btn">Search that rung harder</button></div>'
+				: "") +
 			'<div class="rr-adv-note rr-adv-caveat">A route that is not found may ' +
 			"still exist further ahead: this never claims your Pokemon dies, only " +
 			"that it could not find a way through." +
-			(result.unmodelled.length
-				? "<br><b>Not simulated:</b> " + esc(result.unmodelled.join("; "))
-				: "") + "</div>";
+			(state.unmodelled.length
+				? "<br><b>Not simulated:</b> " + esc(state.unmodelled.join("; "))
+				: "") + "</div>");
+
+		$("#rr-adv-harder").off("click").on("click", function () {
+			$(this).prop("disabled", true).text("Searching...");
+			window.setTimeout(function () {
+				rows.pop();
+				runLadder(state, latest.index, rows, budgetMs * 6);
+			}, 30);
+		});
 	}
 
 	/**
@@ -325,7 +375,15 @@
 			run(renderAdvice, "Working out this turn...");
 		});
 		$("#rr-adv-check").click(function () {
-			run(renderCheck, "Searching for a route where nothing dies...");
+			var state = buildState();
+			if (!state) {
+				$("#rr-adv-out").html('<div class="rr-adv-note">Need both a saved ' +
+					"team and a selected battle.</div>");
+				return;
+			}
+			$("#rr-adv-out").html('<div class="rr-adv-note">Searching for a route ' +
+				"where nothing dies...</div>");
+			window.setTimeout(function () { runLadder(state, 0, [], 2500); }, 20);
 		});
 		// The trainer panel owns both the battle and the team and publishes
 		// changes, so subscribe rather than watching for clicks on its markup.
@@ -356,6 +414,11 @@
 		refresh: refreshPickers,
 		buildState: buildState,
 		advice: function () { return renderAdvice(buildState()); },
-		check: function () { return renderCheck(buildState()); }
+		ladder: function (budgetMs) {
+			var state = buildState();
+			var rows = [];
+			runLadder(state, 0, rows, budgetMs || 1500);
+			return rows;
+		}
 	};
 })();
