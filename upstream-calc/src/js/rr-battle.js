@@ -151,6 +151,12 @@ var RRBattle = (function () {
 			// terrain removal does not work. Both are rule modifiers, not
 			// difficulty, and both change what counterplay exists.
 			rules: opts.rules || "restricted",
+			nuzlocke: !!opts.nuzlocke,
+			// How many unlucky events have been spent so far. Bad luck is
+			// budgeted rather than assumed: "you miss every turn forever" is
+			// not unlucky, it is unreachable, and a ladder rung nothing can
+			// clear tells you nothing.
+			luckSpent: {miss: 0, paralysis: 0},
 			turn: 1,
 			// Product of every per-turn re-roll assumed to go the player's way.
 			// 1 means nothing was assumed; see assume().
@@ -365,6 +371,12 @@ var RRBattle = (function () {
 	}
 
 	function isOver(state) {
+		// Under Nuzlocke rules a faint is permanent, so losing ONE Pokemon is
+		// losing, even in a battle you go on to win. The whole objective
+		// changes: the search is looking for a clean sweep, not a victory.
+		if (state.nuzlocke && state.me.team.some(function (m) { return m.fainted; })) {
+			return "loss";
+		}
 		var meAlive = state.me.team.some(function (m) { return !m.fainted; });
 		var foeAlive = state.foe.team.some(function (m) { return !m.fainted; });
 		if (!foeAlive && meAlive) return "win";
@@ -563,6 +575,17 @@ var RRBattle = (function () {
 		if (ctx.mode === "worst") {
 			return key === "me" ? rolls.noCrit[0] : rolls.crit[rolls.crit.length - 1];
 		}
+		if (ctx.mode === "maxroll") {
+			// Deterministic, so the tree has no chance nodes at all. Each side
+			// is still read against you -- they roll high, you roll low -- but
+			// crits are OFF unless the caller asks for them. Assuming a crit
+			// every turn on top of a max roll is what made everything look
+			// unwinnable; here it is a risk you switch on, not a baseline.
+			if (key === "me") return rolls.noCrit[0];
+			return ctx.risks.crit
+				? rolls.crit[rolls.crit.length - 1]
+				: rolls.noCrit[rolls.noCrit.length - 1];
+		}
 		return rolls.noCrit[Math.floor(rolls.noCrit.length / 2)];
 	}
 
@@ -710,7 +733,18 @@ var RRBattle = (function () {
 			}
 		}
 		if (attacker.status === "par") {
-			if (ctx.mode === "odds") {
+			if (ctx.mode === "maxroll") {
+				// Speed is already halved through the calculator. A full
+				// paralysis skip is budgeted: it costs you a fixed number of
+				// turns across the fight, not every turn, because paralysed
+				// forever is a state nothing escapes.
+				if (ctx.risks.paralysis && key === "me" &&
+					state.luckSpent.paralysis < (ctx.risks.paralysis === true
+						? 1 : ctx.risks.paralysis)) {
+					state.luckSpent.paralysis++;
+					return;
+				}
+			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: 0.75, value: true}, {p: 0.25, value: false}],
 					key === "me" ? 1 : 0)) return;
 			} else if (against(ctx, key)) {
@@ -742,7 +776,15 @@ var RRBattle = (function () {
 		// away. A 70% move used four times is not a 70% line.
 		var accuracy = accuracyOf(state, key, moveName);
 		if (accuracy < 1) {
-			if (ctx.mode === "odds") {
+			if (ctx.mode === "maxroll") {
+				// Their moves always land; yours miss only as many times as the
+				// luck budget allows.
+				if (ctx.risks.miss && key === "me" &&
+					state.luckSpent.miss < (ctx.risks.miss === true ? 1 : ctx.risks.miss)) {
+					state.luckSpent.miss++;
+					return;
+				}
+			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: accuracy, value: true},
 					{p: 1 - accuracy, value: false}], key === "me" ? 1 : 0)) return;
 			} else if (against(ctx, key)) {
@@ -809,6 +851,8 @@ var RRBattle = (function () {
 					{p: 1 - chance / 100, value: false}], key === "me" ? 1 : 0);
 			} else if (ctx.mode === "odds") {
 				fires = chance >= 100;
+			} else if (ctx.mode === "maxroll") {
+				fires = chance >= 100 || (ctx.risks.secondary && key === "foe");
 			} else {
 				fires = forr(ctx, key) || (ctx.mode !== "worst" && chance >= 100);
 			}
@@ -943,7 +987,10 @@ var RRBattle = (function () {
 		var mode = opts.mode || "worst";
 
 		if (mode !== "odds") {
-			var ctx = {mode: mode, cursor: 0, path: [], forks: 0, forkBudget: 0};
+			var ctx = {
+				mode: mode, cursor: 0, path: [], forks: 0, forkBudget: 0,
+				risks: opts.risks || {}
+			};
 			return [{state: runTurn(state, myAction, foeAction, ctx), probability: 1}];
 		}
 

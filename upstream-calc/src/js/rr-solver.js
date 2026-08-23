@@ -247,7 +247,8 @@ var RRSolver = (function () {
 			var holds = true;
 
 			for (var j = 0; j < foeActions.length; j++) {
-				var successors = RRBattle.step(state, myAction, foeActions[j], {mode: "worst"});
+				var successors = RRBattle.step(state, myAction, foeActions[j],
+					{mode: ctx.stepMode || "worst", risks: ctx.risks});
 				// "worst" yields a single successor; if that ever changes, every
 				// one of them has to hold, not just the first.
 				var childResult = null;
@@ -346,7 +347,8 @@ var RRSolver = (function () {
 		for (var depth = 1; depth <= maxDepth; depth++) {
 			var ctx = {
 				nodes: 0, hits: 0, budget: opts.budget || 200000,
-				table: {}, exhausted: false, options: opts
+				table: {}, exhausted: false, options: opts,
+				stepMode: opts.stepMode || "worst", risks: opts.risks || {}
 			};
 			var found = search(state, depth, ctx);
 			totalNodes += ctx.nodes;
@@ -400,6 +402,103 @@ var RRSolver = (function () {
 		};
 	}
 
+	// ------------------------------------------------------------- Nuzlocke
+
+	/**
+	 * How much bad luck a clean sweep survives.
+	 *
+	 * Under Nuzlocke rules losing one Pokemon is losing, so the question is not
+	 * "can I win" but "can I win without anything dying". That is a different
+	 * search: rr-battle treats any faint on your side as a loss.
+	 *
+	 * Rather than one answer it walks a ladder of assumptions, from clean rolls
+	 * up to everything going wrong, and reports the highest rung that still
+	 * holds. "Safe unless they crit" and "safe even if they crit" are different
+	 * decisions in a run where a mistake is permanent, and a single probability
+	 * hides which one you are looking at.
+	 *
+	 * Damage is deterministic at every rung: they roll high, you roll low. That
+	 * is what keeps the tree free of chance nodes. Crits and secondaries are
+	 * then switched on, and misses and paralysis are BUDGETED rather than
+	 * assumed: "you miss every turn forever" is not unlucky, it is unreachable,
+	 * and a rung nothing can clear tells you nothing. Budgeted bad luck spends
+	 * at the first opportunity rather than at the worst one, so a cleared rung
+	 * is a strong signal and not quite a proof.
+	 */
+	var RISK_LADDER = [
+		{name: "clean rolls", risks: {},
+			blurb: "they roll high, you roll low, nothing else goes wrong"},
+		{name: "they crit", risks: {crit: true},
+			blurb: "every hit you take is a critical"},
+		{name: "their secondaries land", risks: {crit: true, secondary: true},
+			blurb: "every burn, freeze, paralysis and flinch chance goes off"},
+		{name: "one of your moves misses", risks: {crit: true, secondary: true, miss: 1},
+			blurb: "plus a single miss at the worst moment"},
+		{name: "two misses and a paralysis",
+			risks: {crit: true, secondary: true, miss: 2, paralysis: 1},
+			blurb: "plus two misses and a turn lost to full paralysis"}
+	];
+
+	function solveNuzlocke(state, options) {
+		var opts = options || {};
+		var started = Date.now();
+		var rungs = [];
+		var deepest = -1;
+
+		for (var i = 0; i < RISK_LADDER.length; i++) {
+			RRBattle.clearCache();
+			var rung = RISK_LADDER[i];
+			var found = solveProof(state, {
+				maxDepth: opts.maxDepth || 12,
+				budget: opts.budget || 200000,
+				timeLimitMs: opts.timeLimitMs,
+				stepMode: "maxroll",
+				risks: rung.risks,
+				foeMovesOnly: opts.foeMovesOnly
+			});
+			// A proof search can only ever find a route or fail to. It CANNOT
+			// establish that something dies, so no rung is ever labelled that
+			// way. The three honest answers are: a route exists, the search ran
+			// out of budget, or no route exists within the turn limit -- and the
+			// last of those may still mean a longer route exists.
+			var verdict = found.result === WIN ? "safe"
+				: (found.exhausted ? "budget" : "none");
+			rungs.push({
+				name: rung.name, blurb: rung.blurb, risks: rung.risks,
+				verdict: verdict, safe: verdict === "safe",
+				exhausted: !!found.exhausted,
+				depth: found.depth, line: found.line, nodes: found.nodes
+			});
+			if (found.result === WIN) deepest = i;
+			else break;   // the ladder only gets harder, so stop at the first failure
+		}
+
+		var best = deepest >= 0 ? rungs[deepest] : null;
+		return {
+			mode: "nuzlocke",
+			safeThrough: best ? best.name : null,
+			survivesCrits: deepest >= 1,
+			rungs: rungs,
+			line: best ? best.line : null,
+			depth: best ? best.depth : 0,
+			brokeAt: deepest + 1 < rungs.length ? rungs[deepest + 1].name : null,
+			elapsedMs: Date.now() - started,
+			unmodelled: state.unmodelled.slice(),
+			meaning: best
+				? "a clean sweep exists that holds " + best.name +
+					(rungs[deepest + 1]
+						? ", but none was found once " + rungs[deepest + 1].name +
+							(rungs[deepest + 1].exhausted
+								? " (search budget, so undecided)"
+								: " (within " + (opts.maxDepth || 12) + " turns)")
+						: ", the whole ladder")
+				: "no clean sweep found even on clean rolls" +
+					(rungs[0] && rungs[0].exhausted
+						? " (search budget, so undecided)"
+						: " within " + (opts.maxDepth || 12) + " turns")
+		};
+	}
+
 	/** Flatten the winning line into readable turns. */
 	function describe(line, state, indent) {
 		var out = [];
@@ -425,6 +524,8 @@ var RRSolver = (function () {
 	return {
 		solve: solve,
 		solveOdds: solveOdds,
+		solveNuzlocke: solveNuzlocke,
+		RISK_LADDER: RISK_LADDER,
 		solveProof: solveProof,
 		describe: describe,
 		stateKey: stateKey
