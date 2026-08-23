@@ -496,6 +496,40 @@ var RRSolver = (function () {
 	 * makes the value what James asked for -- the plan most likely to work --
 	 * rather than any plan that works on paper.
 	 */
+	/**
+	 * What a status actually costs THIS Pokemon, from 0 (nothing) to 1 (ruinous).
+	 *
+	 * Charging every status as a flat plan-ender was hiding real differences. A
+	 * burn on Victreebel, whose whole moveset is special, costs it nothing but
+	 * chip damage -- yet it was the single largest risk in the Surge plan and
+	 * dragged the whole number down. Worse, it made two very different switch-ins
+	 * score identically, so the search had no reason to prefer the safer one.
+	 */
+	function statusCost(mon, status) {
+		if (status === "slp") return 1;        // it does not act at all
+		if (status === "par") return 0.7;      // a quarter of turns lost, and slower
+		if (status === "frz") return 1;
+
+		// Burn halves Attack, frostbite halves Sp. Atk. Either is only as bad as
+		// the share of your damage that runs through the stat it cuts.
+		if (status === "brn" || status === "frb") {
+			var wanted = status === "brn" ? "Physical" : "Special";
+			var hit = 0, total = 0;
+			(mon.set.moves || []).forEach(function (name) {
+				var data = RRBattle.moveData(name);
+				if (!data || data.split === "Status") return;
+				total++;
+				if (data.split === wanted) hit++;
+			});
+			if (!total) return 0.1;
+			// Never quite zero: both still chip HP every turn.
+			return 0.15 + 0.85 * (hit / total);
+		}
+		if (status === "psn") return 0.2;
+		if (status === "tox") return 0.5;
+		return 0.3;
+	}
+
 	function stepProbability(before, myAction, foeAction, after) {
 		var p = 1;
 		var myMon = RRBattle.active(before.me);
@@ -543,7 +577,11 @@ var RRSolver = (function () {
 						theirData.type)) {
 					lands = false;   // already statused, immune type, terrain
 				}
-				if (lands) p *= (1 - theirData.secondaryChance / 100);
+				if (lands) {
+					var cost = sec0.flinch ? 0.5
+						: statusCost(target, sec0.status);
+					p *= (1 - (theirData.secondaryChance / 100) * cost);
+				}
 			}
 		}
 
@@ -878,11 +916,17 @@ var RRSolver = (function () {
 						view, theirData.type);
 				}
 				if (label && possible) {
+					var impact = sec.flinch ? 0.5 : statusCost(facing, sec.status);
+					// Report it against what it would actually cost, and say so
+					// when the answer is "not much".
 					risks.push({
-						turn: step.turn, chance: 1 - theirData.secondaryChance / 100,
+						turn: step.turn,
+						chance: 1 - (theirData.secondaryChance / 100) * impact,
 						what: step.theirAction.move + " can cause " + label +
 							" on " + facing.species,
-						detail: theirData.secondaryChance + "% chance"
+						detail: theirData.secondaryChance + "% chance" +
+							(impact <= 0.35 ? ", but it barely hurts this one" :
+								(impact >= 0.8 ? ", which would be serious" : ""))
 					});
 				}
 			}
