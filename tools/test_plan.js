@@ -104,7 +104,11 @@ const ONIX = {species: 'Onix', level: 14, nature: 'Bashful', ability: 'Sturdy',
 	const plan = P.advise(state, {});
 	let reproduced = 0, drifted = 0;
 	for (const entry of plan.entries) {
-		const replay = B.step(state, entry.action, entry.worstReply, {mode: 'worst'})[0].state;
+		// Must replay in the SAME reading the advisor used, which is max roll
+		// with no crits; replaying in worst mode compares against a different
+		// exchange and every row looks like it drifted.
+		const replay = B.step(state, entry.action, entry.worstReply,
+			{mode: 'maxroll', risks: {}})[0].state;
 		const mine = B.active(replay.me), theirs = B.active(replay.foe);
 		const sameMe = Math.abs(mine.curHP / mine.maxHP - entry.worst.myHP) < 1e-9;
 		const sameFoe = Math.abs(theirs.curHP / theirs.maxHP - entry.worst.foeHP) < 1e-9;
@@ -123,7 +127,8 @@ const ONIX = {species: 'Onix', level: 14, nature: 'Bashful', ability: 'Sturdy',
 	let violations = 0;
 	for (const entry of plan.entries) {
 		for (const reply of replies) {
-			const after = B.step(state, entry.action, reply, {mode: 'worst'})[0].state;
+			const after = B.step(state, entry.action, reply,
+				{mode: 'maxroll', risks: {}})[0].state;
 			const mine = B.active(after.me);
 			if (mine.fainted && !entry.worst.iFainted) violations++;
 			if (mine.curHP / mine.maxHP < entry.worst.myHP - 1e-9) violations++;
