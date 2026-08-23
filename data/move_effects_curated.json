@@ -1732,5 +1732,87 @@
  },
  "Mirror Coat": {
   "kind": "noop"
+ },
+ "Leaf Storm": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spa": -2
+  }
+ },
+ "Draco Meteor": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spa": -2
+  }
+ },
+ "Psycho Boost": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spa": -2
+  }
+ },
+ "Fleur Cannon": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spa": -2
+  }
+ },
+ "Close Combat": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "def": -1,
+   "spd": -1
+  }
+ },
+ "Armor Cannon": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "def": -1,
+   "spd": -1
+  }
+ },
+ "Superpower": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "atk": -1,
+   "def": -1
+  }
+ },
+ "Hammer Arm": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spe": -1
+  }
+ },
+ "Spin Out": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spe": -2
+  }
+ },
+ "Dragon Ascent": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "def": -1,
+   "spd": -1
+  }
+ },
+ "V-create": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "def": -1,
+   "spd": -1,
+   "spe": -1
+  }
+ },
+ "Force Palm": {
+  "kind": "secondary",
+  "secondary": {
+   "status": "par"
+  }
+ },
+ "Odor Sleuth": {
+  "kind": "identify",
+  "note": "Resets the target's evasion and lets Normal/Fighting hit Ghost. Evasion reset is applied; the type override is not."
  }
 }

@@ -24,7 +24,7 @@
  *
  * No DOM: this is what the worker runs.
  */
-/* global RRBattle, RRPlan */
+/* global RRBattle, RRPlan, RRAI */
 var RRSolver = (function () {
 	"use strict";
 
@@ -471,7 +471,15 @@ var RRSolver = (function () {
 		if (cached !== undefined) return cached;
 
 		var myActions = orderedMyActions(state);
-		var foeActions = RRPlan.plausibleFoeActions(state, ctx.options);
+		// Pick your move against the SAME opponent the rollout then plays.
+		// Choosing against the worst reply while simulating the predicted one is
+		// incoherent: the search sees attacking punished, switches to escape,
+		// and the AI simply attacks the Pokemon that ran. That is how a party of
+		// six ended up pivoting into a Psyshock until all of them died.
+		var foeActions = ctx.predict
+			? [predictedReply(state, ctx.options) ||
+				RRPlan.plausibleFoeActions(state, ctx.options)[0]]
+			: RRPlan.plausibleFoeActions(state, ctx.options);
 		var best = {value: -Infinity, action: null, branches: null};
 
 		for (var i = 0; i < myActions.length; i++) {
@@ -510,6 +518,25 @@ var RRSolver = (function () {
 	 * line -- which is the right trade when the alternative is handing back
 	 * "undecided" to someone who has to pick a move now.
 	 */
+	/**
+	 * What the AI is most likely to pick: the highest-scoring action, which is
+	 * what CFRU takes (uniformly among ties). Falls back to null when the model
+	 * is not loaded, and the caller then uses the adversarial reply instead.
+	 */
+	function predictedReply(state, opts) {
+		if (typeof RRAI === "undefined") return null;
+		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
+			{checkBadMove: true, checkGoodMove: true};
+		var scored = RRAI.scoreAll(state, "foe", flags, {});
+		var gate = RRAI.switchGate(state, "foe", flags);
+		var best = null;
+		scored.forEach(function (entry) {
+			if (entry.action.type === "switch" && !gate.maySwitch) return;
+			if (!best || entry.score > best.score) best = entry;
+		});
+		return best ? best.action : null;
+	}
+
 	function planRoute(state, options) {
 		var opts = options || {};
 		var lookahead = opts.lookahead || 3;
@@ -527,15 +554,21 @@ var RRSolver = (function () {
 			RRBattle.clearCache();
 			var ctx = {
 				nodes: 0, budget: opts.budget || 40000, table: {},
-				exhausted: false, options: opts, risks: opts.risks || {}
+				exhausted: false, options: opts, risks: opts.risks || {},
+				predict: opts.opponent !== "adversarial"
 			};
 			var choice = searchRoute(current, lookahead, ctx, -Infinity, Infinity, 0);
 			nodes += ctx.nodes;
 			if (!choice.action) break;
 
-			var reply = (choice.branches && choice.branches[0])
-				? choice.branches[0].foeAction
-				: RRPlan.plausibleFoeActions(current, opts)[0];
+			// Your move is still chosen against the worst reply they have -- that
+			// is the safe way to pick it. But the route SHOWN plays out what the
+			// AI would actually do, because a route full of pivots the opponent
+			// never makes is not the fight you are going to have. James has
+			// played this one repeatedly and Loudred does not switch.
+			var reply = predictedReply(current, opts) ||
+				((choice.branches && choice.branches[0]) ? choice.branches[0].foeAction
+					: RRPlan.plausibleFoeActions(current, opts)[0]);
 			if (!reply) break;
 
 			var before = current;

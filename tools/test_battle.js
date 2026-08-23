@@ -235,5 +235,63 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		state.unmodelled.length === 0, state.unmodelled.join('; '));
 }
 
+// ------------------------------------------- moves that cost the user something
+
+// Leaf Storm's Sp. Atk drop is not a "secondary effect" in the ROM, so nothing
+// flagged it as missing and the search used it three turns running at full
+// power. Same shape for Close Combat and Superpower.
+{
+	const state = B.createState([set('Victreebel', {moves: ['Leaf Storm']})],
+		[set('Blissey', {moves: ['Tackle']})], {});
+	const before = B.damageRolls(state, 'me', 'Leaf Storm').noCrit[15];
+	const after = B.step(state, {type: 'move', index: 0, move: 'Leaf Storm'},
+		{type: 'move', index: 0, move: 'Tackle'}, {mode: 'maxroll', risks: {}})[0].state;
+	eq('Leaf Storm drops the user two stages of Sp. Atk',
+		B.active(after.me).boosts.spa, -2);
+	const second = B.damageRolls(after, 'me', 'Leaf Storm').noCrit[15];
+	check('  so the second one hits for less (' + before + ' -> ' + second + ')',
+		second < before);
+}
+{
+	const state = B.createState([set('Machamp', {moves: ['Close Combat']})],
+		[set('Blissey', {moves: ['Tackle']})], {});
+	const after = B.step(state, {type: 'move', index: 0, move: 'Close Combat'},
+		{type: 'move', index: 0, move: 'Tackle'}, {mode: 'maxroll', risks: {}})[0].state;
+	check('Close Combat drops both defences',
+		B.active(after.me).boosts.def === -1 && B.active(after.me).boosts.spd === -1);
+}
+
+// ------------------------------------------------------------- pivot moves
+
+// U-turn is a damaging move, and only status moves were being dispatched to the
+// effect table, so it hit and then stayed in.
+{
+	const state = B.createState(
+		[set('Mienshao', {moves: ['U-turn']}), set('Gyarados', {moves: ['Waterfall']})],
+		[set('Blissey', {moves: ['Tackle']})], {});
+	const pivots = B.legalActions(state, 'me')
+		.filter(a => a.type === 'move' && a.move === 'U-turn');
+	check('U-turn offers a choice of who comes in (' + pivots.length + ')',
+		pivots.length === 1 && pivots[0].switchTo === 1);
+	const after = B.step(state, pivots[0],
+		{type: 'move', index: 0, move: 'Tackle'}, {mode: 'maxroll', risks: {}})[0].state;
+	check('  and it actually switches (' + B.active(after.me).species + ')',
+		B.active(after.me).species === 'Gyarados');
+	check('  after dealing its damage',
+		B.active(after.foe).curHP < B.active(after.foe).maxHP);
+}
+
+// With nobody to switch to it still attacks, and says the pivot did nothing.
+{
+	const state = B.createState([set('Mienshao', {moves: ['U-turn']})],
+		[set('Blissey', {moves: ['Tackle']})], {});
+	const after = B.step(state, {type: 'move', index: 0, move: 'U-turn'},
+		{type: 'move', index: 0, move: 'Tackle'}, {mode: 'maxroll', risks: {}})[0].state;
+	check('a lone Pokemon still lands U-turn',
+		B.active(after.foe).curHP < B.active(after.foe).maxHP);
+	check('  and the failed pivot is reported',
+		after.unmodelled.some(u => /pivots/.test(u)), after.unmodelled.join('; '));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

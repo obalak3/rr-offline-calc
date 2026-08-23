@@ -357,6 +357,23 @@ var RRBattle = (function () {
 					var data = moveData(mon.set.moves[i]);
 					if (data && data.split === "Status") continue;
 				}
+				var info = moveData(mon.set.moves[i]);
+				var pivots = info && info.effect && info.effect.kind === "selfSwitch" &&
+					info.split !== "Status";
+				if (pivots) {
+					// U-turn, Volt Switch and Flip Turn hit and then switch, and
+					// WHO comes in is your choice, so it is part of the action
+					// rather than something to assume. Without this they were
+					// simulated as ordinary attacks and the Pokemon never moved.
+					var targets = 0;
+					for (var t = 0; t < side.team.length; t++) {
+						if (t === side.active || side.team[t].fainted) continue;
+						actions.push({type: "move", index: i, move: mon.set.moves[i],
+							switchTo: t});
+						targets++;
+					}
+					if (targets) continue;
+				}
 				actions.push({type: "move", index: i, move: mon.set.moves[i]});
 			}
 			if (!actions.length) {
@@ -907,6 +924,21 @@ var RRBattle = (function () {
 		}
 
 		checkBerries(defender);
+
+		// Self-inflicted drops on a damaging move: Leaf Storm, Close Combat,
+		// Superpower. These are not "secondary effects" in the ROM, so nothing
+		// flagged them as missing, and the search happily used Leaf Storm three
+		// turns running at full Sp. Atk.
+		if (data.effect && data.effect.kind === "selfDebuff" && !attacker.fainted) {
+			applyBoosts(attacker, data.effect.boosts);
+		}
+		if (data.effect && data.effect.kind === "selfSwitch" && !attacker.fainted) {
+			if (action.switchTo !== undefined && !state[key].team[action.switchTo].fainted) {
+				switchIn(state, key, action.switchTo);
+			} else {
+				note(state, moveName + " pivots, but there was nobody to switch to");
+			}
+		}
 	}
 
 	/** Pinch berries fire the moment HP crosses their threshold. */

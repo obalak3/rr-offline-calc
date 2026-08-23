@@ -93,7 +93,8 @@ const KINDS = [
 	'breakScreens', 'trap', 'throatChop', 'glaiveRush', 'fickleBeam',
 	'physicalDefence', 'multiHit', 'lockedIn',
 	// player-side additions
-	'focusEnergy', 'defog', 'healBell', 'rapidSpin', 'torment', 'disable', 'psychUp'
+	'focusEnergy', 'defog', 'healBell', 'rapidSpin', 'torment', 'disable', 'psychUp',
+	'identify'
 ];
 
 const badKind = [], badStat = [], badStatus = [], badBoost = [], badPriority = [];
