@@ -892,3 +892,41 @@ unchanged.
 **This one touches the early benchmark.** Brock is one of the nine battles, so
 unlike every other fix today the 71% headline can genuinely move. Re-measured
 below.
+
+## Where the coverage audit ended (2026-08-24)
+
+Verified by measurement, so the shortlist can be closed rather than left looming:
+
+    Eviolite     Chansey takes 249 bare and 169 holding one   handled
+    Shuca Berry  Magnezone takes 148 bare and 74 holding one  handled
+    Chople Berry 110 bare, 55 holding one                     handled
+    Mega stones  the SPECIES is already the mega form         not needed
+    Power Herb   no charge turns exist; everyone has one      not needed
+
+So the 112 items the triage list still shows are overwhelmingly probe artifacts:
+one attacker against one defender cannot see an item that needs a particular
+target. What genuinely remains is narrow and mostly safe-direction -- White Herb
+restoring lowered stats, Black Sludge, Light Clay and Damp Rock extending
+durations, Scope Lens changing crit rate rather than a damage roll.
+
+**Final tally of the audit**, which began as a question about whether the engine
+would work in fights nobody had benchmarked:
+
+    moves        421 distinct, 0 gaps
+    abilities    Rock Head, Magic Guard, Serene Grace, Speed Boost, Magic
+                 Bounce, Skill Link, Iron Barbs, Rough Skin, Poison Heal,
+                 Protosynthesis, Quark Drive                        11 fixed
+    items        Lum Berry, Life Orb, Rocky Helmet, Weakness Policy,
+                 Flame Orb, Toxic Orb                                6 fixed
+    verified fine  Guts, burn halving, Eviolite, resist berries, type-boost
+                   items, Choice items, Assault Vest, mega forms
+
+Seventeen mechanics, none of which any benchmark in this repo would ever have
+caught, because the nine early battles exercise exactly one of them (a Flittle
+with Speed Boost) and Brock's Great Tusk.
+
+The pattern worth carrying forward: **grep found imaginary gaps and missed real
+ones in both directions.** It said Mystic Water and Guts were unhandled when
+both work perfectly, and it could not see that Protosynthesis does nothing.
+Every conclusion here that turned out to be right came from measuring the
+mechanic, not from reading the source.
