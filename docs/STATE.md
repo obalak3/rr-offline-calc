@@ -1,4 +1,4 @@
-# Where this stands — 2026-08-24 (updated)
+# Where this stands — 2026-08-24 (end of day)
 
 Written as a handoff. `TUNING.md` holds the measurements and the traps;
 `RR-AI.md` holds what is known about the game's AI. This file holds the current
@@ -129,21 +129,28 @@ worker questions, because `http://` permits plain workers and would give the
 wrong answer. `tools/test_search.js` fakes Worker, Blob and URL to test the
 split search's bookkeeping, for the same reason `tools/test_worker.js` exists.
 
-## Numbers, and one caveat
+## Numbers
 
-    clean wins, 135 early-game fights
+    clean wins, 135 early-game fights   (tools/bench_early.js 15, engine exact)
       dumb "hit hardest" baseline      20%
       weighted search                  61%
-      exact line-finder                68%
+      exact search, before 2026-08-24  71%
+      exact search, now                73%      <- current
 
-**These predate the 2026-08-24 changes and should not be quoted.** They were
-measured before `deathRisk` went to 0, before `switchCost`, the flinch fix and
-free-action ordering, and before the pairing table, the portfolio and the
-parallel split. `TUNING.md` carries the current per-fight numbers for the hard
-fights; the 135-fight clean-win rate has not been re-run since.
+The two points that gap covers are worth separating, because they are the two
+kinds of work this project does. Everything from 61% to 71% was search work:
+ordering, the pairing table, the portfolio. **The 71% to 73% was correctness
+work** -- roughly twenty fixes to the engine, the AI model and the team
+generator, none of which made the search cleverer and several of which made the
+opponent stronger.
 
-On the fights that actually fail, measured the same way before and after
-(`tools/bench_hunt.js 3`, 400,000 nodes and 60 s, single threaded):
+Every number above 71% is also the first this project has measured with the
+player's team actually having its abilities. See the correctness section: the
+generator returned `undefined` for every ability from the commit that created
+the benchmark until 2026-08-24.
+
+On the fights that actually fail (`tools/bench_hunt.js 3`, 400,000 nodes and
+60 s, single threaded):
 
     witnesses found      2/9  ->  3/9
     Lt. Surge witness    86,776 nodes  ->  27,585
@@ -171,6 +178,67 @@ Speed on Lt. Surge, generated team: **1,183,765 ms → 34,265 ms**, a 34x
 improvement, from switch-matchup ordering (11x), deleting a clone-per-candidate
 in `chooseReplacement` (1.8x), and caching `moveData` and `finalSpeed` (1.8x).
 Every step verified by identical node counts, so behaviour never changed.
+
+## Mirror matches, and what they exposed (2026-08-24)
+
+`tools/bench_mirror.js` gives us **exactly the opponent's team** -- same species,
+levels, moves, items, abilities -- plus one level. James's idea, and it is the
+sharpest instrument here, because every other benchmark confounds two things:
+how good the planner is, and how good the team it was handed is. When a fight
+comes back undecided those are indistinguishable. A mirror removes the team from
+the question entirely, so what remains is whether our side chooses better than a
+one-ply scorer with no lookahead.
+
+**The one level matters and not for the reason you would guess.** This engine
+hands every speed tie to the opponent, so at true parity we move second forever
+-- a mirror is the HARDER side to play. All three 2v2 Rival fights came back "no
+clean line exists" at parity and are won in 19 to 32 nodes with one level.
+
+It also forced a distinction that had been quietly conflated:
+
+    "clean win"        a line where NOBODY faints. The Nuzlocke objective, and
+                       some fights fail it on merit however well they are played.
+    "wins at all"      the fight is won, losses allowed. Against a one-ply AI
+                       with our own team, there is no excuse for failing this.
+
+The tool now reports both, and the early game is **8 of 9 clean** -- with the
+fights that fail against random teams falling cheaply: Lt. Surge in 206 nodes,
+Koga's 6v6 in 85, Mt. Moon in 75.
+
+### The finding that inverts a settled belief: Brock
+
+    exact search      undecided at 200,000 nodes, at maxTurns 24, 32 AND 40
+                      (the horizon is never even reached)
+    weighted search   WINS, LOSING NOBODY, in 16 turns
+
+Replayed independently against the AI's real replies: 16 turns, zero losses, all
+four down. **A clean line exists and the exact search cannot find it.** So this
+is not a hard fight, it is a search failure -- and it contradicts what this file
+records below as settled, that searching exactly beats scoring positions.
+
+Brock's team says why. Two Sturdy users, Berry Juice, Protect and a Custap Berry
+Self-Destruct mean **nothing dies to one hit, so no move ever registers as a
+kill** -- and `ordered()` sorts kills first, damage second, switches last. With
+no kills available the ordering collapses to raw damage, while the line that
+wins is patient and switch-heavy: four Gyro Balls, a pivot, four Bulldozes,
+another pivot. The winning move is almost never the hardest-hitting one.
+
+### An open question this raises, deliberately NOT yet decided
+
+If the weighted search produces a line that loses nobody, that line **is** a
+witness -- verified by replay -- and there is no reason to make the exact search
+rediscover it. `planRoute` currently asks the exact search first and only falls
+back to the weighted one when it gives up, and it never checks whether that
+fallback line happens to be clean. On Brock it computes a perfectly good clean
+line, labels it "the search ran out of time, here is a guess", and throws the
+important property away.
+
+A `cheapWitness` probe that runs the weighted search first and keeps its line
+when it is clean is **written and working but uncommitted** -- Brock's mirror
+goes from undecided-at-200,000-nodes to a clean line in 269 ms. It is left
+undecided on purpose, because it changes what `planRoute` means: the answer
+would sometimes come from the engine this file has spent a lot of effort
+demoting, and the honest labelling of that needs thought rather than a commit.
 
 ## The switch-churn problem: partly fixed
 
@@ -257,37 +325,54 @@ have none of these abilities, so the obvious test was inert.
 
 ## Open questions
 
-0. **The whole game is unmeasured, and that is now the headline.** Every number
+1. **Which mirrors do we lose?** `tools/bench_mirror.js --all` covers all 139
+   non-doubles fights and is the run that matters most: with the team removed as
+   a variable, anything not won is the planner rather than the team. Early
+   results have Blaine and Clair at "wins, losing 2" -- the fight is won and the
+   Nuzlocke objective is not, which is the expected shape. Full results pending;
+   record them here.
+
+   **Watch for the Brock pattern, which has already recurred.** The Lt. Surge
+   REMATCH mirror comes back undecided at 250,000 nodes while the weighted
+   search wins losing NOBODY. That is a second fight where a clean line exists
+   and the exact search cannot find it, so it is not a Brock-specific oddity.
+2. **The whole game is unmeasured, and that is now the headline.** Every number
    in `TUNING.md` comes from nine battles out of the thirty-six fixed-level
    singles fights in the dataset, all of them from the first tenth of the run.
    `tools/bench_game.js` measures the rest, and the first run says the Elite
    Four is 0/9 with four of those UNDECIDED rather than lost. Whether that is
    budget or something structural is the open question that matters most: it is
    the difference between "needs more compute" and "does not work up there".
-1. **Misty.** The one fight nothing has touched. Beam widths 2 through unlimited
+3. **Misty.** The one fight nothing has touched. Beam widths 2 through unlimited
    at horizons 10, 16 and 24, plus every ordering built, produce neither a line
    nor a verdict. A narrow beam exhausts its whole slice in 242 nodes finding
    nothing, which says the winning lines — if any exist — are nowhere near the
    moves that look best. Not yet known to be hard rather than unwinnable.
-2. **Is Lt. Surge cleanly winnable with the real team?** Still open after
+4. **Is Lt. Surge cleanly winnable with the real team?** Still open after
    **56 million nodes across seven processes** (26 minutes, 2026-08-24). Five of
    the seven shares finished their openings and found nothing; two ran out. The
    answer is not near the surface, so another doubling of cores is not obviously
    what finds it -- this is the trigger the plan set for proof-number search.
    `tools/hunt_parallel.js` checkpoints which openings are settled, so a resumed
    run only searches what is left.
-3. **What is the real ceiling?** `ceiling.js` now calls the shipped engine
+5. **What is the real ceiling?** `ceiling.js` now calls the shipped engine
    instead of its own stale copy, so its recorded 67/0/33 split is void and it
    needs re-running. Expect more fights to come back decided.
-4. **Does the free-action ordering help?** Still unmeasured. The generated
+6. **Does the free-action ordering help?** Still unmeasured. The generated
    benchmark teams have none of the abilities it ranks, so the obvious test is
    inert.
 
 ## The tools, and which question each answers
 
     tools/bench_early.js     9 early battles x N teams. THE headline number,
-                             71% clean. Unchanged since before this work, which
-                             is how every other measurement keeps its meaning.
+                             now 73% clean.
+    tools/bench_mirror.js    our team IS their team, plus one level. The only
+                             instrument here that measures the PLANNER rather
+                             than the planner and the team together, and the one
+                             that found Brock. Reports clean wins and plain wins
+                             separately, because only the second should ever be
+                             near perfect. --all covers all 139 non-doubles
+                             fights, scaling ones included.
     tools/bench_game.js      all 36 fixed-level singles battles, by segment.
                              Says where the planner starts struggling, which
                              bench_early structurally cannot.
@@ -301,6 +386,17 @@ have none of these abilities, so the obvious test was inert.
                              For the questions worth hours.
     tools/audit_coverage.js  what the engine does not understand, across the
                              whole game rather than the benchmarked corner.
+    tools/counter_team.js    builds a team chosen AGAINST one boss and asks
+                             whether the search finds the win. Its level sweep
+                             works on the early gyms and NOT on endgame bosses:
+                             Lance two-shots anything however overlevelled, so
+                             more levels never make his fight trivial and the
+                             sweep separates nothing.
+    tools/test_invariants.js properties that must hold of every position --
+                             found lines replay clean, beams never conclude,
+                             caches do not leak between fights, the search is
+                             deterministic, more budget never loses a line, and
+                             step() never mutates its input.
 
 `tools/lib/harness.js` holds the engine loader, the team generator and the
 battle selection, shared by all of them. It exists because bench_early and
@@ -314,6 +410,47 @@ trained spreads, Sitrus, and TM and tutor moves. Getting this wrong produced a
 level 87 Pikachu against Zacian-Crowned and made the Elite Four look impossible;
 `TUNING.md` records that it was the SECOND time this benchmark measured teams
 nobody would field. Early-game output is verified byte-identical by fingerprint.
+
+## The correctness bugs found on 2026-08-24, so nobody re-finds them
+
+A three-way code review found these, all verified by running the code. Listed
+because several are the kind that would have been believed rather than noticed.
+
+**The search could conclude without looking.** A caller-supplied pass omitting
+`beam` gave `Math.min(n, undefined)` = NaN, so zero actions were tried -- and
+`undefined < Infinity` is false, so the pass was judged full width and allowed
+to conclude. A fight Blastoise wins in one move came back "no clean line
+exists" after three nodes. Separately, any branch the engine could not evaluate
+returned false silently, letting a pass conclude on a subtree it never entered.
+
+**Worst-case mode gave the OPPONENT good luck.** `against(ctx, key)` is true
+only for our side, so the else branch -- every foe action in worst mode --
+returned outright. An inaccurate enemy move was skipped entirely (Dynamic Punch:
+0 damage in worst mode, 330 in maxroll) and a paralysed enemy never moved again,
+so a plan opening with Thunder Wave read as though the fight were over. This is
+the mode `RRSolver.solveProof` uses by default.
+
+**Engine mechanics, all measured:** substitutes swallowed recoil, drain, Life
+Orb, self-KO and pivoting (Explosion left the user alive); Focus Sash survived
+five-hit moves; Magic Guard took hazard, weather and status damage; hazards
+tested for the Flying TYPE instead of `isGrounded()`, so Levitate walked into
+Spikes; toxic counters survived a switch; Leech Seed healed HP that never
+existed; `positionKey` omitted yawn, charged, encore and turnsOut, so distinct
+positions were folded together.
+
+**The opponent model narrowed itself twice**, which is the one direction it must
+not: every pivot destination collapsed to one entry, and the speed comparison
+used whichever move sat in OUR slot zero, so rotating our own moveset changed
+what the AI was predicted to do.
+
+**The benchmark generator was wrong in four ways**, three of them invisible for
+the project's whole life: no abilities at all (three layers -- `names` not
+`name`, an empty slot 0 that 392 of 1343 species carry first, and a nameIndex
+that picks between same-effect names); EVs on the wrong attacking stat for 188
+species, because the dex array is `[hp, atk, def, spe, spa, spd]` and Speed sits
+at index 3; alternate forms in the pool, because the filter read `name` where
+forms keep the base name and put the suffix in `key`; and an RNG that was
+deterministic but never uniform, giving three of six natures 0.1% each.
 
 ## Known gaps, in rough priority order
 
@@ -355,6 +492,34 @@ nobody would field. Early-game output is verified byte-identical by fingerprint.
 - **Read the team from the save, never ask for it.** `tools/read_save.js`. Two
   traps: load the Pokédex first, and create the `ArrayBuffer` inside the vm
   context.
+- **Grep does not tell you whether a mechanic is modelled.** It reported
+  imaginary gaps (Mystic Water, Guts and Chople Berry all work perfectly,
+  because the vendored calculator works from item DATA rather than named
+  branches) and missed real ones (Protosynthesis and Quark Drive were applied by
+  nobody at all). An entire priority list was built on a grep and came out
+  backwards. **Measure the mechanic**: compute damage, or step a turn, with and
+  without it.
+- **A number that does not move after a fix you believe in is a claim to check,
+  not a result to accept.** Two full 135-fight runs reported an unchanged 71%
+  after the ability fix, which looked like evidence abilities did not matter. It
+  was evidence the fix had not arrived: `bench_early.js` carried a private copy
+  of the generator. Three tools were found holding private duplicates of shared
+  logic in one day, and each silently refused a fix already made and verified.
+- **A tool that prints its inputs finds bugs nothing else will.** The ability bug
+  survived a benchmark, a ceiling check, a whole-game run and a
+  seventeen-mechanic coverage audit, and died the moment something printed the
+  ability column.
+
+### One entry here is now contradicted, and is left standing so the argument is visible
+
+- **"Searching exactly beats scoring positions"** is recorded in `TUNING.md` as
+  the largest single improvement in the project, and it was true on the fights
+  it was measured on. **Brock's mirror is a counterexample**: the weighted
+  search wins losing nobody in 16 turns where the exact search finds nothing in
+  200,000 nodes. The right reading is not that the exact search is worse -- it
+  is 61% against 73% across 135 fights -- but that the two fail on DIFFERENT
+  fights, and nothing in the architecture currently lets either rescue the
+  other.
 
 ## The real team, as of this save
 

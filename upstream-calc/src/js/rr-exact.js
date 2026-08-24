@@ -723,9 +723,59 @@ var RRExact = (function () {
 	 * different trust: "proved" means the fight is won at median rolls, while
 	 * "heuristic" means this is the best guess available.
 	 */
+	/**
+	 * Ask the cheap search for a line, and keep it if it already loses nobody.
+	 *
+	 * The weighted search plays ONE greedy line and reports what happened. That
+	 * is not a proof and it is not a ranking -- but when the line it happens to
+	 * play loses nobody, it IS a witness, and there is no reason to make the
+	 * exact search rediscover something already in hand.
+	 *
+	 * This is not hypothetical. On a mirror of GYM LEADER BROCK the exact search
+	 * burns 200,000 nodes and finds nothing, at every horizon from 24 to 40,
+	 * while the weighted search wins in 16 turns losing nobody -- verified by
+	 * replaying it against the AI's real replies. Before this, that line was
+	 * computed, labelled "the search ran out of time, here is a guess", and its
+	 * most important property thrown away.
+	 *
+	 * It costs a fraction of the exact search, so it runs FIRST. What it cannot
+	 * do is say a fight is unwinnable, which is why a miss falls straight
+	 * through to the real search.
+	 */
+	function cheapWitness(state, opts) {
+		if (typeof RRSolver === "undefined") return null;
+		try {
+			RRBattle.clearCache();
+			var route = RRSolver.planRoute(state, {
+				lookahead: opts.lookahead || 2,
+				budget: opts.probeBudget || 20000,
+				maxTurns: opts.maxTurns || 24,
+				risks: RISKS
+			});
+			if (route && route.won && route.losses === 0 &&
+				route.steps && route.steps.length) {
+				return route;
+			}
+		} catch (e) { /* the real search is next either way */ }
+		return null;
+	}
+
 	function planRoute(state, options) {
 		var opts = options || {};
 		var started = Date.now();
+
+		if (opts.probe !== false) {
+			var cheap = cheapWitness(state, opts);
+			if (cheap) {
+				// Same wording as any other line found at median rolls: real,
+				// playable, and not proof against bad luck.
+				cheap.exactness = "line-found";
+				cheap.viaProbe = true;
+				cheap.elapsedMs = Date.now() - started;
+				return cheap;
+			}
+		}
+
 		RRBattle.clearCache();
 		var proof = cleanWin(state, opts);
 
