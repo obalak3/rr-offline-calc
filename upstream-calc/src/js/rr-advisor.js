@@ -298,9 +298,72 @@
 		}
 	}
 
+	/**
+	 * A proved line and a heuristic guess must never look the same on screen.
+	 *
+	 * "Proved" means: play these moves and, at median rolls against this AI,
+	 * nothing of yours faints. "The search ran out of time" is a different claim
+	 * from "this fight cannot be won cleanly", and saying the second when only
+	 * the first is true would be the worst thing this panel could do.
+	 */
+	function proofNote(route) {
+		if (route.exactness === "proved") {
+			return '<div class="rr-adv-note"><b>This line is proved.</b> ' +
+				"Every move was checked against every reply the AI can give: at " +
+				"median damage rolls nothing of yours faints.</div>";
+		}
+		if (route.exactness === "no-clean-line-exists") {
+			return '<div class="rr-adv-note"><b>No clean line exists.</b> ' +
+				"The search finished having tried every option: there is no way " +
+				"through this fight without losing something. Below is the best " +
+				"available anyway.</div>";
+		}
+		if (route.exactness === "undecided") {
+			return '<div class="rr-adv-note">The proof search ran out of time on ' +
+				"this one, so this route is the weighted search's best guess " +
+				"rather than a guarantee. That is not the same as saying the " +
+				"fight cannot be won cleanly.</div>";
+		}
+		return "";
+	}
+
 	function paintRoute(state, found, latest, done) {
 		var survived = found.risk.filter(function (r) { return r.holds; });
 		var broke = found.risk.filter(function (r) { return !r.holds; })[0];
+		// Where a proved line leans on the dice, worst step first. This is the
+		// question actually asked of it: I use Drain Punch, and if it does not
+		// kill (5% of the time) then the plan does not work.
+		if (found.stepRisks) {
+			var priced = found.stepRisks;
+			var worst = priced.risks.slice(0, 4);
+			var provedLine = "<b>Goes exactly as written " +
+				Math.round(priced.overall * 100) + "% of the time.</b>";
+			if (worst.length) {
+				provedLine += " It leans on:<ul style=\'margin:4px 0 0 18px\'>" +
+					worst.map(function (r) {
+						return "<li>Turn " + r.turn + ": " + esc(r.what) +
+							" &mdash; " + esc(r.detail) + "</li>";
+					}).join("") + "</ul>";
+			} else {
+				provedLine += " No step in it depends on a roll going your way.";
+			}
+			$("#rr-adv-out").html(
+				proofNote(found.route) +
+				'<div class="rr-adv-note">' + routeHeadline(found.route) + "</div>" +
+				routeTable(found.route) +
+				'<div class="rr-adv-note">' + provedLine + "</div>" +
+				'<div class="rr-adv-note rr-adv-caveat">' +
+				"The line is checked at median damage rolls against every reply " +
+				"the AI can give. The percentage is how often the dice " +
+				"cooperate; a step going wrong does not always lose the fight, " +
+				"but it does mean this exact line stops applying. Found in " +
+				(found.route.elapsedMs / 1000).toFixed(1) + "s." +
+				(state.unmodelled.length
+					? "<br><b>Not simulated:</b> " + esc(state.unmodelled.join("; "))
+					: "") + "</div>");
+			return;
+		}
+
 		var riskLine = found.risk.length
 			? ("<b>Survives:</b> " +
 				(survived.length
@@ -314,30 +377,8 @@
 					: (done ? ". It survives the whole ladder." : ", still checking..."))) 
 			: "Checking how much bad luck it survives...";
 
-		// A proved line and a heuristic guess must never look the same on
-		// screen. "Proved" here means: play these moves and, at median rolls
-		// against this AI, nothing dies -- so the risk ladder below is what
-		// tells you what happens when the dice misbehave.
-		var proof = "";
-		if (found.route.exactness === "proved") {
-			proof = '<div class="rr-adv-note"><b>This line is proved.</b> ' +
-				"Every move was checked against every reply the AI can give: at " +
-				"median damage rolls nothing of yours faints. The risk check " +
-				"below is what happens when the rolls go against you.</div>";
-		} else if (found.route.exactness === "no-clean-line-exists") {
-			proof = '<div class="rr-adv-note"><b>No clean line exists.</b> ' +
-				"The search finished having tried every option: there is no way " +
-				"through this fight without losing something. Below is the best " +
-				"available anyway.</div>";
-		} else if (found.route.exactness === "undecided") {
-			proof = '<div class="rr-adv-note">The proof search ran out of time ' +
-				"on this one, so this route is the weighted search's best guess " +
-				"rather than a guarantee. That is not the same as saying the " +
-				"fight cannot be won cleanly.</div>";
-		}
-
 		$("#rr-adv-out").html(
-			proof +
+			proofNote(found.route) +
 			'<div class="rr-adv-note">' + routeHeadline(found.route) + "</div>" +
 			routeTable(found.route) +
 			'<div class="rr-adv-note">' + riskLine + "</div>" +
@@ -371,6 +412,22 @@
 			exactBudget: 3000000, timeLimitMs: 5000, maxTurns: 24
 		});
 		var found = {route: route, risk: []};
+
+		// A proved line gets its risk priced directly rather than by re-running
+		// the whole search under harsher assumptions. The proof already says
+		// nothing dies at median rolls, so the useful question is no longer
+		// whether it holds but which steps it is leaning on: the Drain Punch
+		// that needs to KO, the move that can miss. One replay answers that,
+		// where the ladder would run the exact search several more times.
+		if (route.exactness === "proved") {
+			try {
+				found.stepRisks = RRSolver.routeRisks(state, route,
+					{risks: {roll: "median"}});
+			} catch (e) { found.stepRisks = null; }
+			paintRoute(state, found, null, true);
+			return;
+		}
+
 		paintRoute(state, found, null, false);
 		// Only worth pricing the risk of a line that actually wins.
 		if (route.won) {
