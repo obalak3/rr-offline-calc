@@ -407,5 +407,23 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		'graced ' + graced.toFixed(3) + ' vs normal ' + normal.toFixed(3));
 }
 
+{
+	// Speed Boost is a turn-order fact, not a damage one: the check is that the
+	// stage actually climbs each turn the Pokemon stays in.
+	const state = B.createState(
+		[set('Snorlax', {moves: ['Tackle']})],
+		[set('Sharpedo', {moves: ['Tackle'], ability: 'Speed Boost'})], {});
+	let cur = state;
+	for (let i = 0; i < 3; i++) {
+		cur = B.step(cur, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Tackle'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+	}
+	const boosted = B.active(cur.foe).boosts.spe;
+	check('Speed Boost climbs every turn it stays in', boosted >= 2,
+		'spe stage ' + boosted + ' after 3 turns');
+	check('  and our side, without it, does not', B.active(cur.me).boosts.spe === 0);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

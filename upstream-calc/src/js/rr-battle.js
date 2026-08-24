@@ -1334,6 +1334,25 @@ var RRBattle = (function () {
 			if (!mon.itemGone && mon.set.item === "Leftovers") heal(mon, mon.maxHP / 16);
 			checkBerries(mon);
 
+			// Speed Boost, and it belongs here rather than in the damage
+			// calculation because what it changes is TURN ORDER. A Sharpedo that
+			// is slower than you on turn one is faster from turn two, and every
+			// plan built on moving first stops working at the moment the search
+			// never noticed. Long fights are exactly where this compounds, and
+			// long fights are the ones that are hard.
+			//
+			// It fires at the end of every turn the Pokemon is still standing.
+			// The real rule skips the turn a Pokemon SWITCHED IN, which this does
+			// not model, so a switching Sharpedo is credited one stage early. That
+			// is deliberate: the error makes the opponent faster than they are,
+			// and a planner whose whole job is to not lose a Pokemon should be
+			// wrong in the direction that assumes the worst. Guarding on
+			// `turnsOut > 0` was tried and is wrong in the commoner case -- it
+			// costs a LEAD its first boost, and leads do get one.
+			if (mon.set.ability === "Speed Boost" && mon.boosts.spe < 6) {
+				mon.boosts.spe++;
+			}
+
 			if (mon.volatiles.yawn) {
 				mon.volatiles.yawn--;
 				if (mon.volatiles.yawn === 0) setStatus(mon, "slp", state);
