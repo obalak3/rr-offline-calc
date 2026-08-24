@@ -1,4 +1,4 @@
-# Where this stands — 2026-08-24
+# Where this stands — 2026-08-24 (updated)
 
 Written as a handoff. `TUNING.md` holds the measurements and the traps;
 `RR-AI.md` holds what is known about the game's AI. This file holds the current
@@ -23,6 +23,26 @@ search, tagging the result: `certified`, `line-found`, `no-clean-line-exists`,
 `undecided`. The panel says which, in those words. **Anything the weighted
 search produced is a guess and the UI must keep saying so.**
 
+**The weighted search is frozen.** It stays as the fallback and as the risk
+pricer, and it is not to be tuned again. Three separate fixes to it each landed
+on exactly 81/135, depth 2/3/4 measure the same, and every weight sweep tried
+has come back flat or worse. The ceiling was the evaluation itself, so the work
+went into making the exact search finish more often instead. That decision
+retires several long-standing entries from the gap list below rather than
+completing them.
+
+**How the line-finder looks for a line: a portfolio, not one search.** Ordering
+turned out to be worth more than anything else measured, and no single ordering
+wins. `rr-matchup.js` solves every 1v1 up front -- can mine beat theirs without
+fainting, and with what left -- and ordering switches by that is worth 35x on
+Mt. Moon Archer and is a LOSS on Lt. Surge, whose line is won by setting up
+Growth twice on a Pokemon the table rates a poor pairing. A narrow beam has the
+opposite profile: 7,423 nodes on Surge, nothing on Mt. Moon. So `cleanWin` runs
+each in turn under its own slice of the budget, and **only the full-width,
+full-horizon pass may ever conclude that no clean line exists.** Reordering
+cannot change which lines exist, which is the whole reason a portfolio is
+allowed here.
+
 There is also `rr-mcts.js`, which lost on singles (56% against 60%) and is kept
 only because doubles has roughly 576 action-pairs per turn where exhaustive
 search is hopeless and sampling is the plausible tool.
@@ -39,11 +59,26 @@ is baked into a string by `tools/build_worker.js` — 24 calc files plus seven o
 ours, about 1.2 MB. `tools/test_worker.js` runs that bundle in a fake worker
 scope, because it is the one piece no other test can reach.
 
+**The search runs on every core.** Whatever line exists opens with one of the
+legal moves and those branches are independent, so `rr-search.js` deals the
+openings round robin across one worker per core (minus one, so the page stays
+usable) and each searches its own share. The endings are asymmetric on purpose:
+the first share to find a line has answered the question and the rest are
+stopped, while "no clean line exists" needs EVERY share to have finished and
+come back empty. A share that ran out of budget or crashed leaves the fight
+undecided.
+
+This matters more than it sounds. The engine manages a few thousand positions a
+second, so the app's 60-million-node budget is not really a budget -- at that
+rate it describes five and a half hours. The real limit is how long somebody
+will watch a progress bar, which makes throughput worth as much as cleverness.
+
 **The browser cannot be driven by tooling here.** The Chrome automation refuses
 `file://` URLs, so every measurement in this repo is Node or jsdom. Serving
 `dist` over `http://localhost` would allow real-Chrome UI testing, but NOT
 worker questions, because `http://` permits plain workers and would give the
-wrong answer.
+wrong answer. `tools/test_search.js` fakes Worker, Blob and URL to test the
+split search's bookkeeping, for the same reason `tools/test_worker.js` exists.
 
 ## Numbers, and one caveat
 
@@ -52,8 +87,19 @@ wrong answer.
       weighted search                  61%
       exact line-finder                68%
 
-**These predate the 2026-08-24 changes** (`deathRisk` to 0, `switchCost`, the
-flinch fix, free-action ordering). Re-measure before quoting them.
+**These predate the 2026-08-24 changes and should not be quoted.** They were
+measured before `deathRisk` went to 0, before `switchCost`, the flinch fix and
+free-action ordering, and before the pairing table, the portfolio and the
+parallel split. `TUNING.md` carries the current per-fight numbers for the hard
+fights; the 135-fight clean-win rate has not been re-run since.
+
+On the fights that actually fail, measured the same way before and after
+(`tools/bench_hunt.js 3`, 400,000 nodes and 60 s, single threaded):
+
+    witnesses found      2/9  ->  3/9
+    Lt. Surge witness    86,776 nodes  ->  27,585
+    Mt. Moon             1 team in 3   ->  2 teams in 3
+    Misty                nothing       ->  nothing
 
 Measured against fights *proven winnable* rather than against an imagined 100%,
 the planner was at 11/12. `tools/ceiling.js` computes that ceiling; it needs
@@ -80,20 +126,23 @@ Three drivers. Two fixed, one not:
    nothing (a Fighting move into a Psychic type) attacking and switching scored
    the same and the tie broke arbitrarily. `switchCost: 60` is a tie-breaker,
    deliberately smaller than any real gain.
-3. **NOT FIXED. `orderedMyActions` in `rr-solver.js` gives every switch
-   `weight = -1`**, so among switches the order is just bench order. This is the
-   direct cause of the chain above. `rr-exact.js` already ranks switches by the
-   matchup they create; the same treatment has not been applied to the weighted
-   search.
+3. **NOT FIXED, AND NOT GOING TO BE. `orderedMyActions` in `rr-solver.js` gives
+   every switch `weight = -1`**, so among switches the order is just bench
+   order. This is the direct cause of the chain above, and it is a defect of the
+   weighted search, which is frozen. `rr-exact.js` ranks switches by the matchup
+   they create and now also by the 1v1 table, which is where the effort went.
 
 Combined effect of 1 and 2, over ~650 turns: back-to-back switches 78 → 32,
 switch-backs 40 → 24. Better, not solved.
 
-**A fourth driver, newly observed and not yet investigated:** Regenerator
-stall-healing. Mienshao ↔ Lilligant ping-pong where each switch-out heals a
-third of max HP. The evaluator likes the HP and nothing forces progress until
-`forcing` trips after four turns without the opponent losing HP — and `forcing`
-then bans switching entirely, which is its own blunt instrument.
+**A fourth driver: Regenerator stall-healing.** Mienshao ↔ Lilligant ping-pong
+where each switch-out heals a third of max HP. The evaluator likes the HP and
+nothing forces progress until `forcing` trips after four turns without the
+opponent losing HP — and `forcing` then bans switching entirely, which is its
+own blunt instrument. **This is a weighted-search problem only.** The exact
+search cannot loop like this: it memoises on the position together with the
+turns remaining, so returning to a position it has already tried with at least
+as much budget is cut immediately. Nothing to do here.
 
 ## The central open problem: accumulating advantage
 
@@ -122,10 +171,15 @@ fidelity fixes each improved the decision they targeted and each left the score
 at exactly 81/135. Depth does not help either — lookahead 2, 3 and 4 all score
 the same.
 
-The leading candidate is **quiescence extensions**: do not stop at nominal depth
-while the position is tactically unstable. Extend on a guaranteed flinch, a
-switch, an absorb or Regenerator trigger, a status landing, a setup move, or a
-Pokémon entering KO range. Not implemented.
+**This problem has been closed by retirement rather than by solution, and that
+was deliberate.** Quiescence extensions were the leading candidate and are NOT
+going to be built. Everything in this section is a description of the weighted
+evaluator, the exact search does not share any of it — it plays to the end, so
+it finds Fake Out, the double Growth setup and the pivot cycles by itself with
+no notion of what they are worth. Since the weighted search is now only a
+fallback and a risk pricer, effort goes into making the exact search finish more
+often instead. The horizon problem is real, well diagnosed, and no longer worth
+fixing.
 
 The exact search does **not** have this problem — it plays to the end, so it
 finds this play by itself. Its proved Surge line sets up Growth twice down to
@@ -141,15 +195,20 @@ have none of these abilities, so the obvious test was inert.
 
 ## Open questions
 
-1. **Is Lt. Surge cleanly winnable with the real team?** Unknown. 3,000,002
-   nodes and 160 s: not found, not decided. A *generated* team's Surge fight was
-   solved in 87k nodes, so the fight is winnable by some teams. Settling this
-   needs a much longer run, or a better witness search.
-2. **Does the free-action ordering help?** Unmeasured, per above. Needs a
-   benchmark whose teams actually have these abilities.
-3. **Do the 2026-08-24 changes hold up?** The headline numbers are stale.
-4. **What is the real ceiling?** `ceiling.js` needs re-running after its
-   memoisation fix.
+1. **Misty.** The one fight nothing has touched. Beam widths 2 through unlimited
+   at horizons 10, 16 and 24, plus every ordering built, produce neither a line
+   nor a verdict. A narrow beam exhausts its whole slice in 242 nodes finding
+   nothing, which says the winning lines — if any exist — are nowhere near the
+   moves that look best. Not yet known to be hard rather than unwinnable.
+2. **Is Lt. Surge cleanly winnable with the real team?** Still open, but much
+   closer: the witness for a *generated* team now costs 27,585 nodes against
+   86,776 before, and the app searches on every core.
+3. **What is the real ceiling?** `ceiling.js` now calls the shipped engine
+   instead of its own stale copy, so its recorded 67/0/33 split is void and it
+   needs re-running. Expect more fights to come back decided.
+4. **Does the free-action ordering help?** Still unmeasured. The generated
+   benchmark teams have none of the abilities it ranks, so the obvious test is
+   inert.
 
 ## Known gaps, in rough priority order
 
@@ -158,11 +217,13 @@ have none of these abilities, so the obvious test was inert.
    line that costs you one Pokémon, and it should be this one". The most
    user-visible defect. Deliberately parked: the current focus is not losing
    anything at all.
-2. **Quiescence** for the weighted search (above).
-3. **Switch ordering** in `orderedMyActions` (driver 3 above).
-4. **Regenerator stall-healing** (driver 4 above).
-5. **Misty and Surge** are the only fights that fail across the board.
-6. **Doubles.** Untouched. 27 of 167 battles, and NOT late-game: Mt. Moon /
+2. **Misty** fails across the board; see the open questions.
+3. **Raw speed.** A few thousand positions a second is the ceiling on everything
+   else. Parallel workers multiply it; the per-position cost has barely been
+   attacked. A profile of a hard search puts 13% in string building for position
+   keys and 6% in megamorphic map lookups, against 5% in the damage calculation
+   the search actually exists to do.
+4. **Doubles.** Untouched. 27 of 167 battles, and NOT late-game: Mt. Moon /
    Super Nerd / Miguel and three Nugget Bridge fights are level-scaling, so they
    appear before Misty. Move targeting data is in (`target` on every move:
    selected / self / allFoes / allAdjacent / special / random / foeSide / ally).

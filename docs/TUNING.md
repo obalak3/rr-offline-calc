@@ -332,3 +332,30 @@ the portfolio was real, reproducible, and meaningless, and it took comparing the
 whole against its own parts to see it. When a combination underperforms, check
 that it is running what you think it is running before concluding anything about
 the ideas in it.
+
+## Where the hard fights stand after the portfolio (2026-08-24)
+
+`tools/bench_hunt.js 3`, 400,000 nodes and 60 s per fight, single threaded, the
+same conditions as the baseline it is compared against:
+
+                        witnesses found    median nodes-to-witness
+      before                 2/9                    --
+      after                  3/9                 4,279 (Mt. Moon)
+                                                27,585 (Surge)
+
+    per fight        before            after
+      MISTY          0/3 undecided     0/3 undecided
+      LT. SURGE      1/3               1/3, at 27,585 nodes against 86,776
+      MT. MOON       1/3               2/3
+
+Nothing was proved impossible in either run, so every failure is still a fight
+that might be winnable. The Surge witness costs a third of what it did, and Mt.
+Moon went from one team in three to two.
+
+This is the single-threaded number. The app now deals the opening moves across
+one worker per core, which multiplies the positions reachable in the same wall
+clock rather than steering the search -- so the fights sitting just past a
+60-second budget here are the ones most likely to fall in the app.
+
+**Misty is the honest failure.** No beam width, no horizon, no ordering and no
+budget tried so far has produced either a line or a verdict.
