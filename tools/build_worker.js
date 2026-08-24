@@ -4,7 +4,16 @@
  *
  * WHY THIS IS NEEDED AT ALL. Chrome refuses `new Worker('./thing.js')` from a
  * `file://` page, and `file://` is the entire point of this project -- it exists
- * so the calculator opens on a plane with no server. The way round that is to
+ * so the calculator opens on a plane with no server. Verified in Chrome rather
+ * than assumed, because the whole bundle exists to work around it:
+ *
+ *     PLAIN WORKER: threw -- Failed to construct 'Worker': Script at
+ *     'file:///...' cannot be accessed from origin 'null'.
+ *     BLOB WORKER:  WORKS
+ *
+ * Worth re-checking if this ever seems like dead weight: if a future Chrome
+ * allows the plain form, this entire file and its 1.3 MB of output can go, and
+ * rr-search.js becomes `new Worker('./js/rr-search-worker.js')`. The way round that is to
  * build the worker from a Blob URL, but a blob worker cannot importScripts a
  * file:// path either, so every line of code it needs has to be inside the blob.
  * The page also cannot read its own script files (no fetch from file://), so the
