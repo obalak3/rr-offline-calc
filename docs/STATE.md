@@ -264,3 +264,25 @@ Every move and ability is modelled; the engine reports nothing unmodelled for
 this team. Note for Surge specifically: his permanent Electric Terrain blocks
 sleep on grounded targets, so both Sleep Powders only work on Vikavolt, which
 has Levitate.
+
+## A limit worth knowing about: `decided` is unreachable for long fights
+
+`cleanWin` sets `truncated` the moment any branch runs out of turns, and a
+truncated search can never report `decided`. That is correct — lines longer than
+the horizon genuinely were not examined — but it has a consequence that is easy
+to miss when reading results:
+
+**For any fight where some plausible line runs past `maxTurns`, "no clean line
+exists" is unreachable by construction.** The only two answers available are a
+witness or "undecided". So an undecided verdict on a long fight carries less
+information than it appears to: it may mean the tree is too big, or merely that
+the fight is longer than 24 turns.
+
+This is why nothing in this repo has ever been proved impossible, and why that
+fact is not the reassurance it sounds like.
+
+The horizon itself deserves suspicion rather than trust. The proved Surge line
+for a generated team is **23 turns against a cap of 24**, which is close enough
+to the ceiling that the cap, not the budget, may be what binds on Surge and
+Misty. `tools/` has no permanent probe for this yet; it is the next thing to
+measure.
