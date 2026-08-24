@@ -1278,9 +1278,26 @@ var RRBattle = (function () {
 			// Only moves aimed at the opponent bounce. Swords Dance and Recover
 			// target the user and are untouched, which is what `effect.target`
 			// distinguishes.
+			// Only moves aimed at the OPPONENT bounce, and working that out from
+			// `effect.target` alone was wrong in both directions: most
+			// self-targeting effects (Rest, Substitute, Protect, Defog, Haze)
+			// carry no `target` field at all and so defaulted to "foe", while
+			// hazards carry "foeSide" and were skipped -- and hazards are the
+			// thing Magic Bounce most famously reflects. Measured against an
+			// Espeon: our Rest healed THEM to full, our Substitute appeared on
+			// THEIR side, and our Stealth Rock landed normally.
+			//
+			// The move's own target field is the reliable signal, so this reads
+			// that instead of the effect's.
+			var aimedAtThem = data.target === undefined ||
+				data.target === 0 || data.target === "selected" ||
+				data.target === "foeSide" || data.target === "allFoes";
+			var selfEffect = effect && (effect.target === "self" ||
+				effect.kind === "heal" || effect.kind === "protect" ||
+				effect.kind === "substitute" || effect.kind === "rest");
 			var actingKey = key;
 			if (effect && defender.set.ability === "Magic Bounce" &&
-				(effect.target || "foe") === "foe" && !defender.fainted) {
+				aimedAtThem && !selfEffect && !defender.fainted) {
 				actingKey = other(key);
 				note(state, moveName + " was bounced back by Magic Bounce");
 			}
@@ -1365,9 +1382,12 @@ var RRBattle = (function () {
 		// cost -- they came out tougher than they are, which loses winnable
 		// fights rather than losing runs, but is wrong either way. Magic Guard
 		// blocks it, as with every other indirect source.
+		// Magic Guard blocks Life Orb; Rock Head does NOT -- it only stops a
+		// move's own recoil. Reusing NO_RECOIL here gave Rock Head an immunity
+		// it does not have.
 		if (rolls && dealt > 0 && !attacker.fainted &&
 			!attacker.itemGone && attacker.set.item === "Life Orb" &&
-			!NO_RECOIL[attacker.set.ability]) {
+			attacker.set.ability !== "Magic Guard") {
 			damage(attacker, attacker.maxHP / 10);
 		}
 		// Iron Barbs and Rough Skin bite back at anything that touches them, for
@@ -1386,8 +1406,9 @@ var RRBattle = (function () {
 			defender.itemGone = true;
 			applyBoosts(defender, {atk: 2, spa: 2});
 		}
+		// Same again: Magic Guard ignores contact punishment, Rock Head does not.
 		if (rolls && rolls.contact && !attacker.fainted &&
-			!NO_RECOIL[attacker.set.ability] &&
+			attacker.set.ability !== "Magic Guard" &&
 			(SPIKY_SKIN[defender.set.ability] ||
 				(!defender.itemGone && defender.set.item === "Rocky Helmet"))) {
 			damage(attacker, attacker.maxHP / 8);
@@ -1729,7 +1750,23 @@ var RRBattle = (function () {
 					mon.volatiles.substitute || 0,
 					mon.volatiles.leechSeed ? 1 : 0,
 					mon.volatiles.taunt || 0,
-					mon.volatiles.confused || 0);
+					mon.volatiles.confused || 0,
+					// Everything below changes what happens next and was
+					// missing, which is worse than it sounds: two states with
+					// the same key are treated as the SAME POSITION, so
+					// mergeSuccessors folds them together and discards one, and
+					// the transposition table hands one's result to the other.
+					// A branch where you have just been Yawned, or where the foe
+					// is Charged and about to double its Electric move, silently
+					// became a branch where neither happened.
+					mon.volatiles.yawn || 0,
+					mon.volatiles.charged ? 1 : 0,
+					mon.volatiles.encore || 0,
+					mon.volatiles.paradox || "-",
+					// Fake Out and First Impression only work on the turn a
+					// Pokemon comes in, so a position at turnsOut 0 is not the
+					// same problem as the same position later.
+					mon.turnsOut > 0 ? 1 : 0);
 			});
 			parts.push(side.hazards.stealthrock, side.hazards.spikes,
 				side.hazards.toxicspikes, side.hazards.stickyweb,
