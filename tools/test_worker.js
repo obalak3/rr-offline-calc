@@ -95,7 +95,11 @@ const reply = replies[0] || {};
 check('  the reply says it worked', reply.ok === true, reply.error);
 check('  with a route that wins', !!reply.route && reply.route.won === true);
 check('  losing nothing', reply.route && reply.route.losses === 0);
-check('  proved rather than guessed', reply.route && reply.route.exactness === 'proved',
+// "line-found", not "proved": the worker's default search runs at median rolls
+// against the AI's top move, which cannot speak for every roll or for the 7% of
+// positions where the AI has tied moves. Certification is a separate request.
+check('  a line was found rather than guessed at',
+	reply.route && reply.route.exactness === 'line-found',
 	reply.route && reply.route.exactness);
 check('  and priced for risk', !!reply.priced && typeof reply.priced.overall === 'number',
 	JSON.stringify(reply.priced && Object.keys(reply.priced)));

@@ -89,7 +89,10 @@ self.onmessage = function (event) {
 		};
 		var route = RRExact.planRoute(state, search);
 		var priced = null;
-		if (route.exactness === "proved") {
+		// Price the risks for any line we actually found, whether or not it
+		// certified. A line-found route is exactly the one that NEEDS its risks
+		// spelled out, since it is not proof against bad luck.
+		if (route.exactness === "certified" || route.exactness === "line-found") {
 			try {
 				priced = RRSolver.routeRisks(state, route, {risks: {roll: "median"}});
 			} catch (e) { priced = null; }
