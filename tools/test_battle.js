@@ -293,5 +293,37 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		after.unmodelled.some(u => /pivots/.test(u)), after.unmodelled.join('; '));
 }
 
+// ------------------------------------------------------------ self-KO moves
+
+// Self-Destruct has real power and a real type, so it simulated as an ordinary
+// attack and the user walked away. That is not a cosmetic gap: the exact search
+// used it to "prove" a clean run through Lt. Surge in which Weezing exploded on
+// turn 17 and switched out on turn 18. A proof resting on an unimplemented
+// mechanic is worse than no proof, so this is pinned.
+{
+	const state = B.createState(
+		[set('Weezing', ['Self-Destruct', 'Sludge']), set('Persian', ['Scratch'])],
+		[set('Snorlax', ['Tackle'])], {});
+	const after = B.step(state, {type: 'move', index: 0, move: 'Self-Destruct'},
+		{type: 'move', index: 0, move: 'Tackle'},
+		{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+	const user = after.me.team[0];
+	check('Self-Destruct knocks the user out', user.fainted === true &&
+		user.curHP === 0, 'left at ' + user.curHP + '/' + user.maxHP);
+	check('  and still damages the target',
+		after.foe.team[0].curHP < after.foe.team[0].maxHP);
+}
+
+// Explosion is the same family and must not have been missed.
+{
+	const state = B.createState(
+		[set('Electrode', ['Explosion', 'Spark']), set('Persian', ['Scratch'])],
+		[set('Snorlax', ['Tackle'])], {});
+	const after = B.step(state, {type: 'move', index: 0, move: 'Explosion'},
+		{type: 'move', index: 0, move: 'Tackle'},
+		{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+	check('Explosion knocks the user out too', after.me.team[0].fainted === true);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

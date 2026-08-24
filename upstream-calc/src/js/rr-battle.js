@@ -1130,6 +1130,13 @@ var RRBattle = (function () {
 			damage(attacker, dealt * (mech.recoil[0] / mech.recoil[1]));
 		}
 		if (mech.drain) heal(attacker, dealt * (mech.drain[0] / mech.drain[1]));
+		// Self-Destruct and friends take the user with them. Missing this let the
+		// exact search "prove" a clean run through Surge in which Weezing used
+		// Self-Destruct on turn 17 and switched out on turn 18.
+		if (mech.selfKO) {
+			attacker.curHP = 0;
+			attacker.fainted = true;
+		}
 
 		// Secondary effect.
 		var secondary = data.effect && data.effect.secondary;

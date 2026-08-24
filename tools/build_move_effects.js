@@ -56,6 +56,50 @@ const GEN = calc.Generations.get(9);
  * the curated file keeps a whole class of transcription error out of the data,
  * and lets priority be cross-checked between two independent sources.
  */
+/**
+ * Moves that knock the USER out.
+ *
+ * Not derivable from the calculator, which only carries damage mechanics, and
+ * not from the effect table either: Self-Destruct has real power and a real
+ * type, so it looked like an ordinary attack and was simulated as one. The
+ * exact search then produced a "proved" clean line through Lt. Surge whose
+ * seventeenth turn was Weezing using Self-Destruct and surviving it. A proof
+ * resting on a mechanic the engine does not implement is worse than no proof.
+ *
+ * This is the same shape of gap as the self-debuffing moves found earlier --
+ * both are damaging moves whose cost falls on the attacker, so a coverage check
+ * looking for missing SEMANTICS passes them straight through. `selfKOAudit`
+ * below is the guard against a third one.
+ */
+const SELF_KO = new Set([
+	'Self-Destruct', 'Explosion', 'Misty Explosion', 'Final Gambit',
+	'Memento', 'Healing Wish', 'Lunar Dance'
+]);
+
+/**
+ * Anything whose ROM text talks about the user fainting had better be listed.
+ * Descriptions are not ground truth here -- Growth's is already known wrong --
+ * so this warns rather than fails, in the same spirit as the other cross-reads.
+ */
+// Their descriptions mention fainting but they do not CAUSE it: both trigger
+// when the user is knocked out by someone else. Listed so the audit above stays
+// signal rather than a warning everyone learns to skip.
+const FAINT_MENTIONED_BUT_NOT_SELF_KO = new Set(['Destiny Bond', 'Grudge']);
+
+function selfKOAudit(table) {
+	const suspicious = [];
+	for (const name of Object.keys(table)) {
+		const text = (table[name].description || '').toLowerCase();
+		if (!text) continue;
+		const hints = /making itself faint|user faints|faints\.|user fainting/.test(text);
+		const listed = SELF_KO.has(name);
+		if (hints && !listed && !FAINT_MENTIONED_BUT_NOT_SELF_KO.has(name)) {
+			suspicious.push(name);
+		}
+	}
+	return suspicious;
+}
+
 function mechanicsFromCalc(lookup) {
 	let move;
 	try {
@@ -171,6 +215,10 @@ function buildTable(names) {
 				delete mech.calcPriority;
 				if (Object.keys(mech).length) entry.mechanics = mech;
 			}
+			if (SELF_KO.has(name)) {
+				entry.mechanics = entry.mechanics || {};
+				entry.mechanics.selfKO = true;
+			}
 			table[name] = entry;
 			report.dex++;
 			continue;
@@ -178,6 +226,10 @@ function buildTable(names) {
 		const calcRecord = CALC_MOVES[lookup];
 		if (calcRecord) {
 			table[name] = fromCalc(lookup, calcRecord, typeOverride);
+			if (SELF_KO.has(name)) {
+				table[name].mechanics = table[name].mechanics || {};
+				table[name].mechanics.selfKO = true;
+			}
 			report.calc++;
 			continue;
 		}
@@ -260,6 +312,14 @@ if (report.priorityDisagreements.length) {
 } else {
 	console.log('\nPriority agrees between the ROM dex and the calc for all %d moves.',
 		report.dex);
+}
+
+const selfKOSuspects = selfKOAudit(table);
+if (selfKOSuspects.length) {
+	console.log('\nWARNING: descriptions mention the user fainting but these are not');
+	console.log('listed in SELF_KO: ' + selfKOSuspects.join(', '));
+} else {
+	console.log('\nSelf-KO list agrees with every description that mentions it.');
 }
 
 console.log('\nCurated semantics present: %d', curatedCount);

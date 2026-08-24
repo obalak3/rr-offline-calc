@@ -115,7 +115,11 @@ var RRExact = (function () {
 		var opts = options || {};
 		var limits = {
 			nodes: 0,
-			budget: opts.budget || 400000,
+			// exactBudget is separate from `budget` because the fallback search
+			// reads `budget` too, and the two want very different numbers: this
+			// one wants millions of cheap reachability nodes, that one wants
+			// tens of thousands of expensive evaluated ones.
+			budget: opts.exactBudget || opts.budget || 400000,
 			maxTurns: opts.maxTurns || 24,
 			exhausted: false,
 			truncated: false
@@ -308,7 +312,7 @@ var RRExact = (function () {
 		var opts = options || {};
 		var limits = {
 			nodes: 0,
-			budget: opts.budget || 200000,
+			budget: opts.exactBudget || opts.budget || 200000,
 			maxTurns: opts.maxTurns || 20,
 			forkBudget: opts.forkBudget === undefined ? 2 : opts.forkBudget,
 			exhausted: false
