@@ -841,6 +841,11 @@ var RRBattle = (function () {
 		// Boosts and most volatiles do not survive a switch.
 		outgoing.boosts = emptyBoosts();
 		outgoing.volatiles = {};
+		// Neither does the badly-poisoned counter: Toxic resets to 1/16 when a
+		// Pokemon comes back in. Leaving it climbing meant a mon that switched
+		// out at 6/16 resumed at 7/16, overstating poison damage on both sides
+		// -- and on the opponent's side that flatters the plan.
+		outgoing.toxicCounter = outgoing.status === "tox" ? 1 : 0;
 		side.active = index;
 		side.team[index].turnsOut = 0;
 		// CFRU's ShouldSwitch bails immediately on switchingCooldown, so a
@@ -1595,7 +1600,12 @@ var RRBattle = (function () {
 			if (mon.fainted) return;
 
 			if (mon.volatiles.leechSeed) {
-				var drained = Math.floor(mon.maxHP / 8);
+				// Heal what was actually taken, not what was aimed for. A seeded
+				// Pokemon with less than an eighth of its health left was
+				// handing the other side the full amount, healing them for HP
+				// that never existed.
+				var wanted = Math.floor(mon.maxHP / 8);
+				var drained = Math.min(wanted, mon.curHP);
 				damage(mon, drained);
 				var thief = active(state[other(key)]);
 				if (!thief.fainted) heal(thief, drained);

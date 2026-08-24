@@ -801,5 +801,43 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 	check('  and its turn counter still advances', burnLoss('Magic Guard').turnsOut === 1);
 }
 
+{
+	// Toxic resets to 1/16 when a Pokemon comes back in. Leaving the counter
+	// climbing overstated poison damage on both sides, and on the opponent's
+	// side that flatters the plan.
+	const state = B.createState(
+		[set('Snorlax'), set('Pikachu')], [set('Gengar')], {});
+	const mon = B.active(state.me);
+	mon.status = 'tox';
+	mon.toxicCounter = 6;
+	B.switchIn(state, 'me', 1);
+	check('the toxic counter resets on switching out',
+		state.me.team[0].toxicCounter === 1, String(state.me.team[0].toxicCounter));
+
+	const healthy = B.createState(
+		[set('Snorlax'), set('Pikachu')], [set('Gengar')], {});
+	B.switchIn(healthy, 'me', 1);
+	check('  and a healthy Pokemon keeps it at zero',
+		healthy.me.team[0].toxicCounter === 0);
+}
+
+{
+	// Leech Seed heals what was actually drained. A seeded Pokemon with less
+	// than an eighth of its health left was handing the other side the full
+	// amount -- HP that never existed.
+	const state = B.createState([set('Snorlax')], [set('Gengar')], {});
+	const me = B.active(state.me), foe = B.active(state.foe);
+	me.volatiles.leechSeed = true;
+	me.curHP = 3;
+	foe.curHP = foe.maxHP - 50;
+	const before = foe.curHP;
+	const next = B.step(state, {type: 'move', index: 0, move: 'Harden'},
+		{type: 'move', index: 0, move: 'Harden'},
+		{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+	check('Leech Seed heals only what it could take',
+		B.active(next.foe).curHP - before === 3,
+		String(B.active(next.foe).curHP - before));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);
