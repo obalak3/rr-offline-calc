@@ -439,6 +439,21 @@ line in 24 turns" is a fact and 32 is the next question. It is off unless a
 caller names a ceiling, and it is inert on both hard fights, which is correct:
 they are budget-bound, not horizon-bound.
 
+## The five ability fixes cost the early game nothing (2026-08-24)
+
+`tools/bench_early.js 15 '{"engine":"exact"}'`, after Rock Head, Magic Guard,
+Serene Grace, Speed Boost, Magic Bounce, Skill Link and Iron Barbs all changed
+how damage and turns are computed:
+
+    won losing NOTHING   96/135  (71%)   identical to before
+    won at all          105/135  (78%)
+    2.17s per fight                      against 2.15 before
+
+Expected, and worth having anyway: none of those abilities appears on a trainer
+before the Surge cap, and the generated teams rarely roll one. The point of the
+check was that the fixes touch the damage path, and a change to the damage path
+that quietly moved the headline would have been very hard to find later.
+
 ## What the engine will get wrong LATER (2026-08-24)
 
 Every measurement above is taken on the nine early battles up to the Surge cap.
