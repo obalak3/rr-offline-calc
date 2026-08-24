@@ -928,7 +928,8 @@ var RRSolver = (function () {
 		var current = state;
 		var steps = [];
 		var nodes = 0;
-		var lastTheirHP = null, stuckTurns = 0, stalled = false, forcing = false;
+		var bestTheirHP = null, stuckTurns = 0;
+		var stalled = false, forcing = false;
 
 		while (steps.length < maxTurns) {
 			var meAlive = current.me.team.some(function (m) { return !m.fainted; });
@@ -1023,14 +1024,27 @@ var RRSolver = (function () {
 				if (forcing) break;   // genuinely nothing left to do
 				forcing = true;
 			}
+			// Progress is measured against the BEST the foe has ever been reduced
+			// to, not against last turn. Comparing to last turn counts a turn as
+			// stuck whenever the opponent heals, and Surge's team heals
+			// constantly -- Roost, Parabolic Charge, Drain Punch, four Volt
+			// Switch users -- so forcing latched on almost immediately there.
+			//
+			// And forcing is now RELEASED when progress resumes. It used to be a
+			// one-way door: once set it banned switching for the rest of the
+			// battle, which is why so many Pokemon attacked at 8-20% HP and died
+			// with a safe switch available. The planner had not decided to
+			// attack, it had been forbidden from doing anything else.
 			var theirHP = 0;
 			next.foe.team.forEach(function (m) { theirHP += m.curHP; });
-			if (lastTheirHP !== null && theirHP >= lastTheirHP) {
-				if (++stuckTurns >= 4) { stalled = true; forcing = true; }
-			} else {
+			if (bestTheirHP === null || theirHP < bestTheirHP) {
+				bestTheirHP = theirHP;
 				stuckTurns = 0;
+				forcing = false;
+			} else if (++stuckTurns >= 4) {
+				stalled = true;
+				forcing = true;
 			}
-			lastTheirHP = theirHP;
 			current = next;
 		}
 
