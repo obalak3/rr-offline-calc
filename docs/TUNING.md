@@ -111,6 +111,48 @@ below the default. `progress: 250` is clearly worse at 54%.
 across all leaves at the same depth, so it cannot separate two actions. It only
 bites between terminal and non-terminal leaves.
 
+## Searching exactly beats scoring positions (2026-08-24)
+
+The largest single improvement in the project, and it came from changing the
+question rather than tuning the answer. rr-exact.js looks for a line that
+provably loses nobody and falls back to the weighted search only when it cannot
+settle the question. Same 135 fights, same teams:
+
+                          won at all   clean   per fight
+    exact search             72%        71%      2.9s
+    weighted search          70%        61%      0.27s
+
+Ten points. And the shape matters as much as the number: the exact engine won 97
+fights and 96 of them were clean. It essentially never wins dirty, because it is
+optimising the actual objective rather than a proxy for it.
+
+    fights not cleanly won   weighted -> exact
+    BROCK                       3/15  ->  0/15
+    PEWTER / FALKNER            7/15  ->  2/15
+    MT. MOON ARCHER            13/15  ->  7/15
+    MISTY, SURGE               15/15  -> 15/15   (need more than an 8s cap)
+
+For contrast, three separate fixes to the weighted search -- AI fidelity, loss
+weighting, the forcing bug -- each improved the decision they targeted and each
+left the number at exactly 81/135. The ceiling was the evaluation itself.
+
+Wired into the advisor's "Plan this fight" with a five second cap, since it runs
+on the main thread and the fallback always returns something playable.
+
+**Two bugs this direction exposed that a heuristic would have hidden forever.**
+Both were found by reading a printed line move by move, which is possible only
+because an exact search has to justify itself:
+
+- Self-Destruct did not knock the user out. The engine simulated it as an
+  ordinary attack, and the search proudly returned a "proved" clean run through
+  Surge whose turn 17 was Weezing exploding and whose turn 18 was Weezing
+  switching out.
+- The time limit did not stop the search. It fired on one node in 1024 and set a
+  flag that nothing else read, so the other 1023 carried on: a 12 second cap ran
+  over three minutes and stopped only when the node budget ran out. Cost an
+  entire overnight benchmark run. The node budget check has the same shape and
+  survives by accident, because every later node also exceeds the budget.
+
 ## The headline number was measured against the wrong denominator
 
 `tools/ceiling.js` answers a question that should have been asked first: how
