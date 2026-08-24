@@ -425,5 +425,25 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 	check('  and our side, without it, does not', B.active(cur.me).boosts.spe === 0);
 }
 
+{
+	// Magic Bounce is the gap that could make a plan actively harmful: the
+	// search lines up Sleep Powder and the Pokemon that falls asleep is yours.
+	function sleepAt(ability) {
+		const state = B.createState(
+			[set('Victreebel', {moves: ['Sleep Powder']})],
+			[set('Espeon', {moves: ['Tackle'], ability: ability})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: 'Sleep Powder'},
+			{type: 'move', index: 0, move: 'Tackle'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return {mine: B.active(next.me).status, theirs: B.active(next.foe).status};
+	}
+	const bounced = sleepAt('Magic Bounce');
+	const plain = sleepAt('Synchronize');
+	check('a status move lands normally without Magic Bounce',
+		plain.theirs === 'slp' && plain.mine === null, JSON.stringify(plain));
+	check('Magic Bounce puts YOUR Pokemon to sleep instead',
+		bounced.mine === 'slp' && bounced.theirs === null, JSON.stringify(bounced));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

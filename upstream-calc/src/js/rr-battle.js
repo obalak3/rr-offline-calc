@@ -1171,7 +1171,23 @@ var RRBattle = (function () {
 
 		if (data.split === "Status") {
 			var effect = data.effect;
-			if (!effect || !applyEffect(state, key, moveName, effect, ctx)) {
+			// Magic Bounce sends a status move straight back at whoever used it.
+			// This is the gap that could make a plan actively harmful rather
+			// than merely wrong: the search lines up Sleep Powder on an Alakazam
+			// and the Pokemon that falls asleep is yours. Applying the effect
+			// with the sides swapped is exactly that, because every effect is
+			// already written in terms of "the side acting" and "the other one".
+			//
+			// Only moves aimed at the opponent bounce. Swords Dance and Recover
+			// target the user and are untouched, which is what `effect.target`
+			// distinguishes.
+			var actingKey = key;
+			if (effect && defender.set.ability === "Magic Bounce" &&
+				(effect.target || "foe") === "foe" && !defender.fainted) {
+				actingKey = other(key);
+				note(state, moveName + " was bounced back by Magic Bounce");
+			}
+			if (!effect || !applyEffect(state, actingKey, moveName, effect, ctx)) {
 				note(state, moveName + " has an effect the simulator does not apply" +
 					(effect ? " (" + effect.kind + ")" : ""));
 			}
