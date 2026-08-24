@@ -765,10 +765,31 @@ The probe is one attacker against one defender, so anything needing a particular
 target still shows: Eviolite wants something unevolved, resist berries want a
 matching weakness. Confirm before fixing.
 
-Still open, ranked by whether the error flatters the opponent or us:
+    Weakness Policy   10 uses   FIXED: +2 both attacks on a super hit
 
-    Weakness Policy   10 uses   +2 attack when hit super-effectively   DANGEROUS
-    Power Herb        10 uses   two-turn moves fire immediately        DANGEROUS
-    Flame/Toxic Orb   12 uses   self-status, usually paired with Guts  mixed
-    Booster Energy    14 uses   Protosynthesis and Quark Drive         mixed
-    Venusaurite etc.   5 uses   Mega evolution mid-battle              unknown
+**Power Herb turned out to be a non-issue, for an interesting reason.** It skips
+the charge turn of a two-turn move -- and two-turn moves are not modelled at
+all. Solar Beam, Fly and Meteor Beam carry no charge mechanic, so the engine
+already fires every one of them immediately, which is to say **it already treats
+everybody as holding a Power Herb.** Adding the item would change nothing.
+
+The real gap underneath is that charge turns do not exist, and its direction is
+the safe one: the engine gives the opponent their damage a turn early, so it
+thinks fights are harder than they are. That costs winnable fights rather than
+losing runs, and fixing it means adding turn structure rather than an item, so
+it is parked deliberately rather than forgotten.
+
+Still open, ranked by whether the error flatters us or them:
+
+    charge turns      ~10 uses  two-turn moves fire instantly     safe direction
+    Flame/Toxic Orb    12 uses  self-status, usually with Guts    both, cancelling
+    Booster Energy     14 uses  Protosynthesis and Quark Drive    mixed
+    Venusaurite etc.    5 uses  Mega evolution mid-battle         unknown
+
+Flame Orb and Toxic Orb are listed as cancelling because the two halves of the
+error point opposite ways: not modelling the self-burn leaves the holder
+healthier than it should be (which flatters them), and also leaves it hitting at
+full physical power rather than halved (which flatters them again) -- except
+that the ability they are nearly always paired with, Guts, is itself unmodelled
+and would have raised that attack anyway. Worth doing together with Guts or not
+at all.
