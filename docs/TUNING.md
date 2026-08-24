@@ -359,3 +359,25 @@ clock rather than steering the search -- so the fights sitting just past a
 
 **Misty is the honest failure.** No beam width, no horizon, no ordering and no
 budget tried so far has produced either a line or a verdict.
+
+## The real team against Lt. Surge: still undecided, and now bounded (2026-08-24)
+
+    party  Mienshao, Diggersby, Lanturn, Lilligant, Breloom, Victreebel, all L34
+    foe    Pincurchin L32, Vikavolt L33, Bellibolt L33, Pawmot L33,
+           Manectric-Mega L34
+
+    6,000,001 nodes, 323 s, single threaded    UNDECIDED
+
+Not found, not disproved, which is the same answer as the 3,000,002-node attempt
+on 2026-08-22 -- but twice the budget and with the portfolio and pairing table in
+place. Doubling the budget did not move it.
+
+One number here is worth more than the verdict: this fight runs at **18,565
+nodes per second**, against 2,500 to 3,800 on the generated benchmark teams. Per
+node it is five times cheaper than the fights being used to tune the search, so
+budget rather than time is what binds here, and a much larger run is affordable
+-- 60 million nodes is under an hour single threaded, and the app now splits
+across cores.
+
+What this does NOT license is a claim that the fight is unwinnable. Nothing has
+been proved impossible in any run recorded in this file.
