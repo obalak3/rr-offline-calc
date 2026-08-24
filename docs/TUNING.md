@@ -727,3 +727,48 @@ plus bucketing:
 Mt. Moon is now solved on every team tried, at a cost that was 150,000-plus and
 undecided before any of this work. Surge's witness has come down from 86,776 to
 21,175. Misty remains the one fight nothing has moved.
+
+## Held items had gaps too, and one of them was dangerous (2026-08-24)
+
+The ability audit found four real bugs, so there was no reason to assume items
+were cleaner. They were not. `tools/audit_coverage.js` now covers them.
+
+**Lum Berry, on seventeen trainer Pokemon, ate nothing.** It cures the status the
+instant it lands, so the target loses no turn at all -- and the search was free
+to build plans around a Sleep Powder the opponent shrugs off before it costs
+them anything. This party runs **two** Sleep Powders. Fixed in `setStatus`,
+which is the single door every status comes through: moves, secondaries,
+abilities and hazards alike.
+
+**Life Orb, on sixty-seven, had the upside and none of the cost.** The
+calculator already applies its damage bonus, so leaving out the tenth-of-max-HP
+recoil made those Pokemon simply tougher than they are. That direction loses
+winnable fights rather than losing runs, but it is wrong either way.
+
+**Rocky Helmet** is Iron Barbs in an item slot and shares its code.
+
+### Detecting this properly took three attempts, and that is the lesson
+
+    grep the sources           118 "gaps", nearly all imaginary
+    probe with one Normal move 140 "gaps", worse -- a type item cannot show
+    probe across 18 types      116, with the false positives that remain
+                               explainable
+
+Grep said Mystic Water, Sharp Beak and Chople Berry were unhandled. All three
+are handled perfectly -- the calculator works from item DATA rather than named
+branches, and Chople really does halve a super-effective hit from 110 to 55. An
+audit that reports a hundred imaginary gaps is an audit nobody reads, and the
+real ones drown in it.
+
+What remains is a **triage list, not a bug list**, and it says so in the output.
+The probe is one attacker against one defender, so anything needing a particular
+target still shows: Eviolite wants something unevolved, resist berries want a
+matching weakness. Confirm before fixing.
+
+Still open, ranked by whether the error flatters the opponent or us:
+
+    Weakness Policy   10 uses   +2 attack when hit super-effectively   DANGEROUS
+    Power Herb        10 uses   two-turn moves fire immediately        DANGEROUS
+    Flame/Toxic Orb   12 uses   self-status, usually paired with Guts  mixed
+    Booster Energy    14 uses   Protosynthesis and Quark Drive         mixed
+    Venusaurite etc.   5 uses   Mega evolution mid-battle              unknown

@@ -486,5 +486,61 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		'ranged ' + ranged + ' vs ' + rangedSafe);
 }
 
+{
+	// A Lum Berry eats the status the instant it lands. Seventeen trainer
+	// Pokemon carry one, and this party runs two Sleep Powders, so a plan built
+	// on sleep that the target simply shrugs off is a real way to lose a run.
+	function sleepStatus(item) {
+		const state = B.createState(
+			[set('Victreebel', {moves: ['Sleep Powder']})],
+			[set('Snorlax', {moves: ['Tackle'], item: item})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: 'Sleep Powder'},
+			{type: 'move', index: 0, move: 'Tackle'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return {status: B.active(next.foe).status, used: B.active(next.foe).itemGone};
+	}
+	const lum = sleepStatus('Lum Berry');
+	const none = sleepStatus('');
+	check('sleep lands on something without a Lum Berry', none.status === 'slp',
+		JSON.stringify(none));
+	check('a Lum Berry eats the status outright', lum.status === null,
+		JSON.stringify(lum));
+	check('  and is consumed doing it', lum.used === true);
+}
+
+{
+	// Rocky Helmet is Iron Barbs in an item slot.
+	function afterContact(item) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Body Slam']})],
+			[set('Ferrothorn', {moves: ['Tackle'], item: item, ability: 'Sturdy'})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: 'Body Slam'},
+			{type: 'move', index: 0, move: 'Tackle'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.me).curHP;
+	}
+	check('Rocky Helmet hurts a contact attacker',
+		afterContact('Rocky Helmet') < afterContact(''),
+		afterContact('Rocky Helmet') + ' vs ' + afterContact(''));
+}
+
+{
+	// Life Orb: the calculator already gives the damage bonus, so leaving the
+	// recoil out handed sixty-seven trainer Pokemon the upside and none of the
+	// cost.
+	function afterAttack(item) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Tackle']})],
+			[set('Machamp', {moves: ['Karate Chop'], item: item, ability: 'Sturdy'})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Karate Chop'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.foe).curHP;
+	}
+	check('Life Orb costs its holder HP for attacking',
+		afterAttack('Life Orb') < afterAttack(''),
+		afterAttack('Life Orb') + ' vs ' + afterAttack(''));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

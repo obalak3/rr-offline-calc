@@ -24,6 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 const H = require('./lib/harness.js');
+const calcLib = require(path.join(H.root, 'upstream-calc/calc/dist/index.js'));
 
 const loaded = H.loadEngine();
 const B = loaded.B;
@@ -117,6 +118,83 @@ for (const [name, row] of abilityWhere) {
 	missingAbilities.push([name, row]);
 }
 
+/**
+ * Held items, checked the same way and for the same reason.
+ *
+ * Added after the ability pass, because the ability pass found four real bugs
+ * and there was no reason to think items were any cleaner. They were not: Lum
+ * Berry, on seventeen trainer Pokemon, ate every status the search planned
+ * around and nothing in the stack knew about it.
+ *
+ * Same split of responsibility as abilities. The calculator owns items that
+ * change a damage number (Life Orb's boost, Choice Specs, Eviolite); our engine
+ * owns items that change the flow of a turn (berries firing, recoil, contact
+ * punishment). An item mentioned in neither is a silent gap.
+ */
+const itemWhere = new Map();
+segments.forEach(function (segment, segIndex) {
+	const segName = segment.name || ('segment ' + segIndex);
+	for (const battle of (segment.battles || [])) {
+		for (const mon of (battle.team || [])) record(itemWhere, mon.item, segIndex, segName);
+	}
+});
+/**
+ * Detected by MEASUREMENT rather than by grep, and the difference matters.
+ *
+ * Grepping the sources for an item's name said Mystic Water, Sharp Beak and
+ * Chople Berry were all unhandled. They are handled perfectly: the calculator
+ * works from its item data rather than from named branches, so Chople really
+ * does halve a super-effective hit from 110 to 55. A grep-based audit reports
+ * over a hundred gaps, nearly all imaginary, and the real ones drown.
+ *
+ * So each item is given to the damage calculator twice, once held and once not,
+ * and anything that moves a number is handled. What remains either needs engine
+ * support or does nothing in a battle -- a much shorter list, and one worth
+ * reading.
+ */
+const gen9 = calcLib.Generations.get(9);
+// One move per type that matters, because a single probe cannot see a
+// type-specific item: testing Mystic Water with a Normal move says it does
+// nothing, which is true and useless. The first version of this did exactly
+// that and reported Mystic Water, Sharp Beak and Chople Berry as gaps.
+const PROBES = ['Body Slam', 'Surf', 'Flamethrower', 'Thunderbolt', 'Ice Beam',
+	'Karate Chop', 'Aerial Ace', 'Psychic', 'Earthquake', 'Rock Slide',
+	'Sludge Bomb', 'Shadow Ball', 'Bug Bite', 'Dragon Claw', 'Dark Pulse',
+	'Flash Cannon', 'Dazzling Gleam', 'Energy Ball'];
+
+function changesDamage(itemName) {
+	for (const moveName of PROBES) {
+		try {
+			const move = new calcLib.Move(gen9, moveName);
+			const bare = new calcLib.Pokemon(gen9, 'Snorlax', {level: 50});
+			const target = new calcLib.Pokemon(gen9, 'Blissey', {level: 50});
+			const baseline = String(calcLib.calculate(gen9, bare, target, move).damage);
+
+			const holder = new calcLib.Pokemon(gen9, 'Snorlax',
+				{level: 50, item: itemName});
+			if (String(calcLib.calculate(gen9, holder, target, move).damage) !== baseline) {
+				return true;
+			}
+			// And on the DEFENDER, which is where resist berries and Assault
+			// Vest and Eviolite live.
+			const heldTarget = new calcLib.Pokemon(gen9, 'Blissey',
+				{level: 50, item: itemName});
+			if (String(calcLib.calculate(gen9, bare, heldTarget, move).damage) !== baseline) {
+				return true;
+			}
+		} catch (e) { /* try the next probe */ }
+	}
+	return false;
+}
+
+const missingItems = [];
+for (const [name, row] of itemWhere) {
+	if (!name) continue;
+	if (ourSource.indexOf(name) >= 0) continue;
+	if (changesDamage(name)) continue;
+	missingItems.push([name, row]);
+}
+
 function report(title, rows, note) {
 	rows.sort((a, b) => b[1].count - a[1].count);
 	const uses = rows.reduce((n, r) => n + r[1].count, 0);
@@ -134,7 +212,8 @@ function report(title, rows, note) {
 
 console.log('Coverage across the WHOLE game, not just the benchmark.');
 console.log(totalBattles + ' battles, ' + totalMons + ' trainer Pokemon, ' +
-	moveWhere.size + ' distinct moves, ' + abilityWhere.size + ' distinct abilities');
+	moveWhere.size + ' moves, ' + abilityWhere.size + ' abilities, ' +
+	itemWhere.size + ' held items');
 
 report('MOVES THE ENGINE DOES NOT KNOW', buckets.unknown,
 	'Reported at runtime as unmodelled, so at least they are visible.');
@@ -145,6 +224,12 @@ report('DAMAGING MOVES WHOSE SECONDARY IS NOT APPLIED', buckets['secondary-inert
 report('ABILITIES WITH NO MENTION IN THE ENGINE', missingAbilities,
 	'Neither the calculator nor the engine mentions these. Many are genuinely ' +
 	'inert in battle;\n  the ones that are not are silently wrong.');
+
+report('HELD ITEMS WITH NO MENTION ANYWHERE', missingItems,
+	'Measured, not grepped. TRIAGE ONLY: the probe is one attacker and one\n' +
+	'  defender, so items needing a particular target (Eviolite wants something\n' +
+	'  unevolved, resist berries want a matching weakness) still show up here.\n' +
+	'  Read it as a shortlist to check, never as a list of bugs.');
 
 // The headline: how much of the game is affected, and how late.
 const risky = buckets['status-inert'].concat(buckets['secondary-inert']);

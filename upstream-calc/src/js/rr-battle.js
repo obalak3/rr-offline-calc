@@ -543,6 +543,20 @@ var RRBattle = (function () {
 
 	function setStatus(mon, status, state, moveType) {
 		if (!canTakeStatus(mon, status, state, moveType)) return false;
+		// A Lum Berry eats the status the instant it lands, so the target is
+		// inconvenienced for no turns at all. Seventeen trainer Pokemon carry
+		// one and nothing in the stack knew about it, so the search was free to
+		// build a plan around a Sleep Powder that in the real game wears off
+		// before the target has missed a turn -- and this party carries two of
+		// them. Optimism about the opponent is the direction that ends runs.
+		//
+		// Applied here rather than at end of turn because that is when it
+		// really fires, and because setStatus is the one door every status
+		// comes through: moves, secondaries, abilities and hazards alike.
+		if (!mon.itemGone && mon.set.item === "Lum Berry") {
+			mon.itemGone = true;
+			return false;
+		}
 		mon.status = status;
 		if (status === "slp") mon.sleepTurns = 2;
 		if (status === "tox") mon.toxicCounter = 1;
@@ -1258,13 +1272,26 @@ var RRBattle = (function () {
 			damage(attacker, dealt * (mech.recoil[0] / mech.recoil[1]));
 		}
 		if (mech.drain) heal(attacker, dealt * (mech.drain[0] / mech.drain[1]));
+		// Life Orb costs a tenth of maximum HP on every attack that connects.
+		// The calculator already applies its damage bonus, so without this the
+		// engine gave sixty-seven trainer Pokemon the upside and none of the
+		// cost -- they came out tougher than they are, which loses winnable
+		// fights rather than losing runs, but is wrong either way. Magic Guard
+		// blocks it, as with every other indirect source.
+		if (rolls && dealt > 0 && !attacker.fainted &&
+			!attacker.itemGone && attacker.set.item === "Life Orb" &&
+			!NO_RECOIL[attacker.set.ability]) {
+			damage(attacker, attacker.maxHP / 10);
+		}
 		// Iron Barbs and Rough Skin bite back at anything that touches them, for
 		// an eighth of its maximum HP. Unmodelled, this is chip damage on YOUR
 		// side that the search never accounts for -- so a Pokemon it believes
 		// finishes a fight at a sliver of health actually finishes it dead.
 		// Magic Guard blocks it, being indirect damage like recoil.
 		if (rolls && rolls.contact && !attacker.fainted &&
-			SPIKY_SKIN[defender.set.ability] && !NO_RECOIL[attacker.set.ability]) {
+			!NO_RECOIL[attacker.set.ability] &&
+			(SPIKY_SKIN[defender.set.ability] ||
+				(!defender.itemGone && defender.set.item === "Rocky Helmet"))) {
 			damage(attacker, attacker.maxHP / 8);
 		}
 		// Self-Destruct and friends take the user with them. Missing this let the
