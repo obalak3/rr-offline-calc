@@ -951,3 +951,31 @@ Read together with the audit: the engine became materially more accurate without
 the planner becoming worse at what it already did. That is the outcome to want
 from a correctness pass, and it is not the automatic one -- a fix that made the
 opponent stronger could easily have cost clean wins.
+
+## Electromorphosis, found by looking at the fight actually being played
+
+Eighteenth mechanic, and it turned up by asking a different question from the
+audit's: not "what does the whole game use" but "what is in the fight this save
+is about to face".
+
+**There are two Lt. Surge battles**, and they are different teams:
+
+    Kanto Leaders   Pincurchin, Vikavolt, Bellibolt, Pawmot, Manectric-Mega
+    Kanto Rematch   Iron Treads, Bellibolt, Rotom-Wash, Pawmot, Manectric-Mega,
+                    Iron Hands
+
+The Quark Drive bodies are in the REMATCH, not the gym fight, so the 56-million
+node "undecided" verdict on the real team stands -- it was computed against a
+correctly modelled opponent. Worth knowing before reading any result that says
+"SURGE", since `bench_hunt` and `bench_early` both take the gym one and
+`bench_game` takes both.
+
+Bellibolt is in both, and it has **Electromorphosis**, which charges it every
+time it is hit and doubles its next Electric move. Nothing in the stack knew it:
+Discharge stayed at 48 damage where the real one hits for 96 on the second turn.
+Half power on an opponent's attack is the direction that ends runs.
+
+Applied to the damage rather than the move's power, because the calculator has
+no concept of being charged. Doubling damage is a shade more than doubling
+power, the formula carrying constant terms, so it errs very slightly toward a
+stronger opponent -- the right way to be wrong.

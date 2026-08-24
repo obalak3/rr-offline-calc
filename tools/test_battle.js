@@ -650,5 +650,33 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		handsDamage('Sand Veil', terrain) === handsDamage('Sand Veil', {}));
 }
 
+{
+	// Electromorphosis charges its holder every time it is hit, doubling its
+	// next Electric move. Bellibolt has it and stands in the Lt. Surge fight
+	// this save is about to play, so unmodelled it was throwing Electric moves
+	// at half the power it really has.
+	function twoTurnsOfDischarge(ability) {
+		let state = B.createState(
+			[set('Snorlax', {moves: ['Tackle']})],
+			[set('Bellibolt', {moves: ['Discharge'], ability: ability})], {});
+		const before = B.active(state.me).curHP;
+		state = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Discharge'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		const mid = B.active(state.me).curHP;
+		state = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Discharge'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return {first: before - mid, second: mid - B.active(state.me).curHP};
+	}
+	const charged = twoTurnsOfDischarge('Electromorphosis');
+	const plain = twoTurnsOfDischarge('Static');
+	check('Electromorphosis doubles the Electric move after it is hit',
+		charged.second > charged.first * 1.5,
+		charged.first + ' then ' + charged.second);
+	check('  and an ordinary ability hits the same twice',
+		plain.second === plain.first, plain.first + ' then ' + plain.second);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

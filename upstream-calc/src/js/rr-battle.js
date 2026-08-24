@@ -1310,6 +1310,22 @@ var RRBattle = (function () {
 			dealt = pickRolls(rolls, ctx, key);
 		}
 
+		// Charge, which Electromorphosis hands out for free every time its
+		// holder is hit. It doubles the next Electric move, and neither the
+		// engine nor the calculator knew about it -- so Bellibolt, which stands
+		// in the Lt. Surge fight this save is about to play, was throwing
+		// Electric moves at half the power it really has. Underestimating what
+		// the opponent does to you is the direction that ends runs.
+		//
+		// Applied to the damage rather than the move's power because the
+		// calculator has no concept of being charged. Doubling damage is a
+		// shade more than doubling power, the formula having constant terms, so
+		// this errs very slightly toward a stronger opponent.
+		if (attacker.volatiles.charged && data.type === "Electric") {
+			dealt = dealt * 2;
+			attacker.volatiles.charged = false;
+		}
+
 		if (defender.volatiles.substitute) {
 			var sub = defender.volatiles.substitute;
 			if (dealt >= sub) { delete defender.volatiles.substitute; }
@@ -1329,6 +1345,13 @@ var RRBattle = (function () {
 			}
 		}
 		damage(defender, dealt);
+
+		// Electromorphosis charges its holder whenever it is hit by a damaging
+		// move, whether or not the hit did much.
+		if (dealt > 0 && !defender.fainted &&
+			defender.set.ability === "Electromorphosis") {
+			defender.volatiles.charged = true;
+		}
 
 		// Recoil and drain come from the calculator, not from hand-written data.
 		var mech = data.mechanics || {};
