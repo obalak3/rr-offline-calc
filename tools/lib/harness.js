@@ -128,9 +128,15 @@ function makeGenerator(loaded, dexParts, startSeed) {
 	 * fully evolved Pokemon chosen on purpose.
 	 */
 	function poolFor(level) {
+		// Alternate forms carry the BASE name; the suffix lives in `key`. So
+		// filtering on `name` let every mega, Alolan and Silvally form into the
+		// pool -- 18 mega records were reachable at level 20, and a drawn
+		// `Sandslash-Alola` was built with Ice Scales and Icicle Crash while
+		// reporting itself as plain Sandslash. It also skewed the draw: the 16
+		// cosmetic Pikachu records made Pikachu 7.8% of every early pick.
 		const all = Object.values(dex.species).filter(function (sp) {
 			return sp.dexID && (sp.levelupMoves || []).length >= 4 &&
-				!(sp.name || '').includes('-');
+				!(sp.key || sp.name || '').includes('-');
 		});
 		if (level <= 40) {
 			return all.filter(function (sp) { return sp.dexID <= 143; });
@@ -149,11 +155,37 @@ function makeGenerator(loaded, dexParts, startSeed) {
 
 	const POOL = poolFor(0);
 
-	// Deterministic pseudo-random, so a benchmark run is reproducible.
+	/**
+	 * Deterministic pseudo-random, so a benchmark run is reproducible.
+	 *
+	 * `seed * 1103515245` reaches about 2^61, far past the 2^53 where a double
+	 * still holds every integer, so the low bits were rounded away BEFORE the
+	 * mask. It stayed deterministic, which is why the reproducibility checks
+	 * always passed, and it stopped being uniform -- which nothing checked.
+	 *
+	 * Measured on the broken version: natures came out Adamant 33%, Jolly 34%,
+	 * Impish 33%, and the three special or defensive ones **0.1% each**, so
+	 * essentially every special attacker was handed a physical nature and a
+	 * third of them got Adamant, which lowers Sp. Atk. Only 90 of the 204 early
+	 * species were reachable at all, and the generator cycled after 10,466
+	 * states instead of two billion.
+	 *
+	 * `Math.imul` does the multiply in 32-bit integer space, which is what the
+	 * algorithm always assumed.
+	 */
 	let seed = startSeed === undefined ? 12345 : startSeed;
 	function rand(n) {
-		seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-		return seed % n;
+		// mulberry32. The linear congruential generator that used to be here
+		// failed twice over: `seed * 1103515245` overflowed a double's exact
+		// integer range so the low bits were rounded away, and even once that
+		// was fixed with Math.imul, `seed % n` reads exactly the low bits an LCG
+		// is worst at. Both versions were perfectly deterministic and neither
+		// was uniform -- the first gave three natures 0.1% each, the second gave
+		// the OTHER three 0%.
+		seed = (seed + 0x6D2B79F5) | 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
 	}
 
 	/**
@@ -219,11 +251,20 @@ function makeGenerator(loaded, dexParts, startSeed) {
 
 	const EVS = {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0};
 
-	/** A trained spread: bulk, plus the better attacking stat, plus speed. */
+	/**
+	 * A trained spread: bulk, plus the better attacking stat, plus speed.
+	 *
+	 * The dex stat array is **[hp, atk, def, spe, spa, spd]** -- Speed is at
+	 * index 3, not 5. Comparing `stats[1]` against `stats[3]` compares Attack
+	 * against SPEED, which put the 252 EVs on the wrong attacking stat for 188
+	 * species of 685: Fearow, a pure physical attacker, was generated with zero
+	 * Attack EVs. Verified against Gengar, whose array is [60,65,60,110,130,75]
+	 * with Speed 110 at index 3 and Sp. Atk 130 at index 4.
+	 */
 	function evsFor(level, species) {
 		if (level <= 40) return EVS;
 		const stats = species.stats || [];
-		const physical = (stats[1] || 0) >= (stats[3] || 0);
+		const physical = (stats[1] || 0) >= (stats[4] || 0);
 		return {
 			hp: 252,
 			atk: physical ? 252 : 0,
