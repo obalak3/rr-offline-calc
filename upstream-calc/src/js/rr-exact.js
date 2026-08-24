@@ -359,7 +359,11 @@ var RRExact = (function () {
 			maxTurns: opts.maxTurns || 24,
 			exhausted: false,
 			truncated: false,
-			passOver: false
+			passOver: false,
+			// Set when a branch was abandoned for a reason other than losing --
+			// an AI reply that could not be scored, or a step that threw. Either
+			// means the search did not see everything, so it may not conclude.
+			gaveUp: false
 		};
 		var onProgress = opts.onProgress || null;
 		var started = Date.now();
@@ -462,7 +466,11 @@ var RRExact = (function () {
 			seen.set(visitKey, turnsLeft);
 
 			var theirs = reply(current, opts, key);
-			if (!theirs) return false;
+			// Not "this branch does not win" -- "this branch was not examined".
+			// Returning false here without saying so let a full-width pass go on
+			// to report the whole fight decided on the strength of a subtree it
+			// never entered.
+			if (!theirs) { limits.gaveUp = true; return false; }
 
 			var before = countFainted(current.me);
 			var actions = ordered(current, key);
@@ -484,7 +492,12 @@ var RRExact = (function () {
 				try {
 					next = RRBattle.step(current, actions[i], theirs,
 						{mode: "maxroll", risks: RISKS})[0].state;
-				} catch (e) { continue; }
+				} catch (e) {
+					// Same again: an action the engine could not simulate is
+					// unexamined, not refuted.
+					limits.gaveUp = true;
+					continue;
+				}
 				// The cut that makes this tractable.
 				if (countFainted(next.me) > before) continue;
 
@@ -564,6 +577,15 @@ var RRExact = (function () {
 			// pass that runs out of things to try has searched the same tree as
 			// a plainly-ordered one. Only the beam can hide a line, and a beam
 			// of Infinity hides nothing.
+			// Normalise first. A caller-supplied pass that omits `beam` used to
+			// give `Math.min(n, undefined)` = NaN, so the action loop ran zero
+			// times -- and `undefined < Infinity` is false, so the pass was then
+			// judged full width and allowed to CONCLUDE. Three nodes, no action
+			// tried, and a fight Blastoise wins in one move came back
+			// "no-clean-line-exists". That is the one lie this module exists not
+			// to tell, and it was reachable through a documented option.
+			if (typeof pass.beam !== "number") pass.beam = Infinity;
+			if (typeof pass.turns !== "number") pass.turns = limits.maxTurns;
 			var exhaustive = !(pass.beam < Infinity) && pass.turns >= limits.maxTurns;
 			// Being ENTITLED TO CONCLUDE and being given the whole budget are two
 			// different things, and running them off one flag was a real bug: the
@@ -603,7 +625,9 @@ var RRExact = (function () {
 			// line exists" is true, and it is why climbing the ladder cannot
 			// make this claim early: a rung that finished but hit its horizon
 			// leaves `truncated` set, and says nothing about longer lines.
-			if (!(pass.beam < Infinity) && !limits.exhausted && !limits.passOver) {
+			// `exhaustive` was computed above and then never read, while this
+			// site recomputed only half of it. They must be the same test.
+			if (exhaustive && !limits.exhausted && !limits.passOver && !limits.gaveUp) {
 				if (limits.truncated) blockedByHorizon = true;
 				else { decidedHere = true; break; }
 			}
@@ -907,6 +931,9 @@ var RRExact = (function () {
 			// found, because the point there is the ranking rather than the
 			// best value. Deeper down the early exit stands: nothing beats 1.
 			for (var a = 0; a < actions.length && (isRoot || best < 1); a++) {
+				// `remaining` starts whole for each action, so the cut-off below
+				// must not fire on the first opponent reply once some earlier
+				// action has already reached certainty.
 				// `remaining` is the probability mass this action has not
 				// resolved yet, so total + remaining is the most it could still
 				// reach. Once that cannot beat the best action already priced,
@@ -915,7 +942,8 @@ var RRExact = (function () {
 				// affordable: the boolean search could stop at the first line
 				// that worked, and this one has no such luxury without it.
 				var total = 0, remaining = 1;
-				for (var t = 0; t < theirs.length && total + remaining > best; t++) {
+				for (var t = 0; t < theirs.length &&
+					(isRoot || total + remaining > best); t++) {
 					var successors;
 					try {
 						successors = RRBattle.step(current, actions[a], theirs[t].action,
@@ -948,6 +976,14 @@ var RRExact = (function () {
 
 		replyCache = new Map();
 		matchupTable = tableFor(state, opts);
+		// RRMatchup.build solves its 36 pairings through cleanWin with
+		// `matchup: null`, which leaves this false on return. cleanWin re-sets
+		// it per pass and rootActionKeys re-sets it; winChance did neither, so
+		// it paid for a full table build -- up to 36 sub-searches -- and then
+		// never consulted it once. Measured: RRMatchup.versus called 4 times
+		// during cleanWin and 0 times during winChance.
+		passUsesMatchup = opts.matchup !== null;
+		limits.nodes += (matchupTable && matchupTable.nodes) || 0;
 		// Cleared because this search now uses it too. positionKey does NOT
 		// encode species, so an entry left over from a different fight can
 		// legitimately collide with a key here, and the order it returned would
