@@ -702,5 +702,65 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		incoming('worst', false) === incoming('maxroll', false));
 }
 
+{
+	// A substitute absorbs the DAMAGE, not what the move does to its user.
+	// Returning early skipped recoil, drain, Life Orb, self-KO and pivoting --
+	// bringing back the exact bug the selfKO code exists to prevent.
+	function explodesInto(sub) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Tackle']})],
+			[set('Weezing', {moves: ['Explosion']})], {});
+		if (sub) B.active(state.me).volatiles.substitute = 40;
+		const next = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Explosion'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.foe).fainted;
+	}
+	check('Explosion still faints its user through a substitute', explodesInto(true));
+	check('  as it does without one', explodesInto(false));
+
+	// Contact punishment, though, correctly does NOT fire: nothing touched the
+	// Pokemon itself.
+	function helmetDamage(sub) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Body Slam']})],
+			[set('Ferrothorn', {moves: ['Harden'], item: 'Rocky Helmet',
+				ability: 'Sturdy'})], {});
+		if (sub) B.active(state.foe).volatiles.substitute = 200;
+		const before = B.active(state.me).curHP;
+		const next = B.step(state, {type: 'move', index: 0, move: 'Body Slam'},
+			{type: 'move', index: 0, move: 'Harden'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return before - B.active(next.me).curHP;
+	}
+	check('  but Rocky Helmet does not bite through a substitute',
+		helmetDamage(true) === 0 && helmetDamage(false) > 0,
+		'sub ' + helmetDamage(true) + ', bare ' + helmetDamage(false));
+}
+
+{
+	// A multi-hit move arrives as one summed lump, so the Focus Sash clamp used
+	// to fire once for the whole sequence and leave the target alive at 1 HP.
+	// The sash really breaks on hit one and the rest kill.
+	function outcome(move, ability, item) {
+		const state = B.createState(
+			[set('Ninjask', {moves: ['Harden'], item: item})],
+			[set('Cloyster', {moves: [move], ability: ability, level: 90})], {});
+		state.foe.team[0].set.level = 90;
+		const next = B.step(state, {type: 'move', index: 0, move: 'Harden'},
+			{type: 'move', index: 0, move: move},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.me).fainted ? 'fainted' : B.active(next.me).curHP;
+	}
+	check('a Focus Sash survives one lethal hit',
+		outcome('Surf', 'Sturdy', 'Focus Sash') === 1,
+		String(outcome('Surf', 'Sturdy', 'Focus Sash')));
+	check('  and does not without the item',
+		outcome('Surf', 'Sturdy', '') === 'fainted');
+	check('  and does not survive a five-hit move',
+		outcome('Icicle Spear', 'Skill Link', 'Focus Sash') === 'fainted',
+		String(outcome('Icicle Spear', 'Skill Link', 'Focus Sash')));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

@@ -1360,12 +1360,23 @@ var RRBattle = (function () {
 			attacker.volatiles.charged = false;
 		}
 
+		// A substitute absorbs the DAMAGE. It does not absorb what the move did
+		// to its user: recoil, drain, Life Orb, self-KO, self-debuff and pivoting
+		// all still happen through one. Returning here skipped every one of
+		// them, which brought back the exact bug the selfKO code was written to
+		// fix -- Weezing's Explosion into a substitute left Weezing alive at 113
+		// HP, and a U-turn into one did not switch.
+		//
+		// Contact punishment IS correctly skipped, since nothing touched the
+		// Pokemon itself, so that stays inside the guard below.
+		var hitSubstitute = false;
 		if (defender.volatiles.substitute) {
 			var sub = defender.volatiles.substitute;
 			if (dealt >= sub) { delete defender.volatiles.substitute; }
 			else { defender.volatiles.substitute = sub - dealt; }
-			return;
+			hitSubstitute = true;
 		}
+		if (!hitSubstitute) {
 
 		var wouldFaint = dealt >= defender.curHP;
 		var atFull = defender.curHP === defender.maxHP;
@@ -1374,15 +1385,34 @@ var RRBattle = (function () {
 		if (wouldFaint && atFull) {
 			if (defender.set.ability === "Sturdy" ||
 				(!defender.itemGone && defender.set.item === "Focus Sash")) {
-				dealt = defender.curHP - 1;
+				// A multi-hit move arrives here as one summed lump, so this
+				// clamp used to fire once for the whole sequence and leave the
+				// target alive at 1 HP -- a Skill Link Icicle Spear "survived"
+				// by a full-HP Focus Sash Ninjask. In the real game the sash
+				// breaks on the first hit and the remaining hits kill.
+				//
+				// Rather than re-simulate each hit, the survival is granted only
+				// against the FIRST hit's share and the rest is applied after.
+				// Wrong in the safe direction if anything, since it never lets a
+				// sash save a Pokemon it would not really save.
+				var hits = (rolls && rolls.hits) || 1;
+				if (hits > 1) {
+					var perHit = dealt / hits;
+					var survived = defender.curHP - 1;
+					dealt = Math.min(dealt, Math.max(survived,
+						survived + (dealt - perHit)));
+				} else {
+					dealt = defender.curHP - 1;
+				}
 				if (defender.set.item === "Focus Sash") defender.itemGone = true;
 			}
 		}
 		damage(defender, dealt);
+		}
 
 		// Electromorphosis charges its holder whenever it is hit by a damaging
 		// move, whether or not the hit did much.
-		if (dealt > 0 && !defender.fainted &&
+		if (dealt > 0 && !hitSubstitute && !defender.fainted &&
 			defender.set.ability === "Electromorphosis") {
 			defender.volatiles.charged = true;
 		}
@@ -1424,7 +1454,7 @@ var RRBattle = (function () {
 			applyBoosts(defender, {atk: 2, spa: 2});
 		}
 		// Same again: Magic Guard ignores contact punishment, Rock Head does not.
-		if (rolls && rolls.contact && !attacker.fainted &&
+		if (rolls && rolls.contact && !hitSubstitute && !attacker.fainted &&
 			attacker.set.ability !== "Magic Guard" &&
 			(SPIKY_SKIN[defender.set.ability] ||
 				(!defender.itemGone && defender.set.item === "Rocky Helmet"))) {
