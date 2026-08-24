@@ -356,5 +356,56 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		copy.me.team[0].set === state.me.team[0].set);
 }
 
+/**
+ * Two abilities the whole-game audit found, which no early battle carries.
+ *
+ * Both were invisible to every benchmark here because nothing before the Surge
+ * cap has them, and both change who WINS rather than by how much -- which is
+ * the kind of gap that makes a search confidently wrong rather than slow.
+ */
+{
+	// Head Smash recoils for half of what it deals; Rock Head cancels that
+	// entirely. Without this the engine had Mega Aggron beating itself to death,
+	// and a search is free to "win" by waiting for an opponent that never dies.
+	function afterHeadSmash(ability) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Body Slam']})],
+			[set('Aggron', {moves: ['Head Smash'], ability: ability})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: 'Body Slam'},
+			{type: 'move', index: 0, move: 'Head Smash'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.foe).curHP;
+	}
+	const rocky = afterHeadSmash('Rock Head');
+	const plain = afterHeadSmash('Sturdy');
+	check('Rock Head takes no recoil', rocky > plain,
+		'Rock Head left ' + rocky + ', plain left ' + plain);
+}
+
+{
+	// Serene Grace doubles a secondary's chance, which turns Air Slash's 30%
+	// flinch into 60% and a Togekiss from an annoyance into a run-ender.
+	function flinchChance(ability) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Tackle']})],
+			[set('Togekiss', {moves: ['Air Slash'], ability: ability})], {});
+		const outs = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Air Slash'},
+			{mode: 'odds', forkBudget: 4});
+		// The branch where our Snorlax did NOT act is the flinch branch.
+		let flinched = 0;
+		for (const o of outs) {
+			if (B.active(o.state.foe).curHP === B.active(state.foe).maxHP) {
+				flinched += o.probability;
+			}
+		}
+		return flinched;
+	}
+	const graced = flinchChance('Serene Grace');
+	const normal = flinchChance('Hustle');
+	check('Serene Grace doubles a secondary chance', graced > normal,
+		'graced ' + graced.toFixed(3) + ' vs normal ' + normal.toFixed(3));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

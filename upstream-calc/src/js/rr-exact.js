@@ -383,6 +383,7 @@ var RRExact = (function () {
 		var seen = new Map();
 		var beam = Infinity;
 		var passCap = limits.budget;
+		var pruneCoverage = false;
 
 		/**
 		 * Which opening moves this search is responsible for.
@@ -450,6 +451,21 @@ var RRExact = (function () {
 			var triedWith = seen.get(key);
 			if (triedWith !== undefined && triedWith >= turnsLeft) return false;
 			seen.set(key, turnsLeft);
+
+			// HUNT ONLY. If some surviving foe cannot be beaten one on one by
+			// anyone still standing -- and "cannot" here means a finished 1v1
+			// search or an outright immunity, never a timeout -- this branch is
+			// very unlikely to lead anywhere and is dropped.
+			//
+			// It is NOT sound in general, which is why it never runs in a pass
+			// that may conclude: a foe nobody beats alone can still be worn down
+			// by several taking turns and healing between visits, and a Pokemon
+			// that cannot scratch something directly can still beat it with
+			// Toxic and patience. Both are real lines this throws away.
+			if (pruneCoverage && typeof RRMatchup !== "undefined" &&
+				RRMatchup.anyCoverageGap(matchupTable, current)) {
+				return false;
+			}
 
 			var theirs = reply(current, opts, key);
 			if (!theirs) return false;
@@ -568,6 +584,11 @@ var RRExact = (function () {
 			seen = new Map();
 			beam = pass.beam;
 			passUsesMatchup = pass.matchup !== false;
+			// Only a pass that is already forbidden from concluding may use an
+			// unsound cut. `exhaustive` is computed just below from the same
+			// facts; this must agree with it.
+			pruneCoverage = opts.pruneCoverage !== false &&
+				(pass.beam < Infinity) && !!matchupTable;
 			// Ordering differs per pass, so a cached order from the last one is
 			// the wrong order for this one.
 			orderCache = new Map();

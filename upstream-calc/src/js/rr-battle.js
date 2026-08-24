@@ -1051,6 +1051,23 @@ var RRBattle = (function () {
 
 	// -------------------------------------------------------- move execution
 
+	/**
+	 * Abilities that cancel recoil.
+	 *
+	 * Found by auditing what the trainers in the WHOLE game carry rather than
+	 * the nine benchmark battles, which is how it stayed hidden: nothing before
+	 * the Surge cap has one. Sixteen trainer Pokemon do, starting in the Kanto
+	 * rematches, and three of them are Mega Aggron.
+	 *
+	 * The consequence was not a rounding error. Head Smash recoils for half the
+	 * damage dealt, so the engine had Mega Aggron beating itself to death over a
+	 * few turns, and the search would happily return a "clean line" whose real
+	 * content was waiting for an opponent that never actually dies. Magic Guard
+	 * is here for the same reason -- it blocks every source of indirect damage,
+	 * of which recoil is one.
+	 */
+	var NO_RECOIL = {"Rock Head": true, "Magic Guard": true};
+
 	function note(state, text) {
 		if (state.unmodelled.indexOf(text) < 0) state.unmodelled.push(text);
 	}
@@ -1202,7 +1219,7 @@ var RRBattle = (function () {
 
 		// Recoil and drain come from the calculator, not from hand-written data.
 		var mech = data.mechanics || {};
-		if (mech.recoil && !attacker.fainted) {
+		if (mech.recoil && !attacker.fainted && !NO_RECOIL[attacker.set.ability]) {
 			damage(attacker, dealt * (mech.recoil[0] / mech.recoil[1]));
 		}
 		if (mech.drain) heal(attacker, dealt * (mech.drain[0] / mech.drain[1]));
@@ -1218,6 +1235,13 @@ var RRBattle = (function () {
 		var secondary = data.effect && data.effect.secondary;
 		if (secondary && !defender.fainted) {
 			var chance = data.secondaryChance;
+			// Serene Grace doubles it, which turns a 30% flinch into 60% and a
+			// Togekiss or Jirachi from an annoyance into the thing that ends the
+			// run. Capped at 100 so a 60% secondary does not become 120% and
+			// silently start reading as guaranteed further down.
+			if (attacker.set.ability === "Serene Grace" && chance > 0) {
+				chance = Math.min(100, chance * 2);
+			}
 			var fires;
 			if (data.effect.guaranteed) {
 				fires = true;

@@ -438,3 +438,51 @@ full-width pass finished everything inside 24 turns and truncated. Then "no clea
 line in 24 turns" is a fact and 32 is the next question. It is off unless a
 caller names a ceiling, and it is inert on both hard fights, which is correct:
 they are budget-bound, not horizon-bound.
+
+## What the engine will get wrong LATER (2026-08-24)
+
+Every measurement above is taken on the nine early battles up to the Surge cap.
+There are 167 battles. `tools/audit_coverage.js` asks the question the benchmark
+structurally cannot: across the WHOLE game, what do trainers carry that the
+engine does not understand?
+
+Speed problems announce themselves -- the search sits there. Coverage problems
+do not: the engine simulates the mechanic it does not model as something
+simpler, finds a clean line through the misunderstanding, and reports it with
+exactly the same confidence as a real one.
+
+**Moves are completely covered.** All 421 distinct trainer moves are known, none
+is a status move simulated as doing nothing, and none has an unapplied
+secondary. The move-effects work holds up across the whole game.
+
+**Abilities had four real gaps**, invisible to every benchmark here because
+nothing before the Surge cap carries them:
+
+    Rock Head       16 uses, from Kanto Rematch    recoil was applied anyway
+    Serene Grace    10 uses, from Johto Leaders    secondary chance not doubled
+    Magic Guard      4 uses, from Mini Bosses      recoil was applied anyway
+    Reckless         2 uses                        (damage only, calc handles)
+
+Rock Head is the one that mattered. Head Smash recoils for half the damage
+dealt, so the engine had **Mega Aggron beating itself to death** over a few
+turns, and a search is entitled to "win" by waiting for an opponent that in the
+real game never dies. Three Mega Aggrons appear in Johto Leaders. Both are fixed
+with tests in `tools/test_battle.js`.
+
+**Still open, ranked by how much they change a fight** (from the audit's list of
+64 abilities neither the engine nor the calculator mentions, 183 uses):
+
+    Moxie / Beast Boost   12 uses   attack rises on every KO: snowballs
+    Skill Link             6 uses   multi-hit moves always hit five times
+    Speed Boost            4 uses   +1 Speed every turn, so turn order flips
+    Iron Barbs             4 uses   contact damage back at the attacker
+    Magic Bounce           4 uses   status moves reflected at the user
+
+The rest of the list is mostly genuinely inert in a battle simulation (Illuminate,
+Frisk, Gluttony) or informational (Trace, Pressure). Re-run the audit before
+each new stretch of the game rather than trusting this list to stay current.
+
+**Method note.** The first version of this audit checked only our engine and
+reported 173 missing abilities, nearly all of them damage abilities the vendored
+calculator handles perfectly. A list that long is a list nobody reads, and the
+four real problems were sitting in it undistinguished. It now searches both.
