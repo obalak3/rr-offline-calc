@@ -35,10 +35,47 @@ const dex = new Function('return ' +
 const moveName = {};
 for (const key in dex.moves) moveName[dex.moves[key].ID] = dex.moves[key].name;
 
-// Species you could plausibly be carrying before the third gym.
+const byID = {};
+for (const key in dex.species) byID[dex.species[key].ID] = dex.species[key];
+
+/**
+ * Evolve a species as far as its level allows.
+ *
+ * Without this the generator handed the planner a level 44 Poliwag, because the
+ * old filter excluded anything with a base stat total over 480 and that removes
+ * most FULLY EVOLVED Pokemon rather than the legendaries it was aiming at. A
+ * team of babies at gym-leader levels is not the team anyone brings, so the
+ * benchmark was measuring fights nobody plays.
+ *
+ * Evolution methods, read from the dex: 4 / 22 / 23 are level-up at a level, 7
+ * is a stone, 1 is friendship, and 254 is MEGA evolution, which the player does
+ * not get for free and must never be applied here.
+ */
+const BY_LEVEL = {4: true, 22: true, 23: true};
+const EARNED = {7: true, 1: true};   // stones and friendship: assume by mid-game
+function evolve(species, level) {
+	const chain = [species];
+	let current = species;
+	for (let hop = 0; hop < 4; hop++) {
+		let next = null;
+		for (const evo of (current.evolutions || [])) {
+			const method = evo[0], param = evo[1], target = byID[evo[2]];
+			if (!target || target.ID === current.ID) continue;
+			if (BY_LEVEL[method] && param <= level) { next = target; break; }
+			if (EARNED[method] && level >= 28) { next = target; break; }
+		}
+		if (!next) break;
+		current = next;
+		chain.push(current);
+	}
+	return {species: current, chain: chain};
+}
+
+// Species you could plausibly be carrying before the third gym: any Kanto line,
+// minus the legendaries and Dragonite (dex 144-151), evolved to match its level.
 const POOL = Object.values(dex.species).filter(function (sp) {
-	return sp.dexID && sp.dexID <= 151 && (sp.levelupMoves || []).length >= 4 &&
-		(sp.stats || []).reduce(function (a, b) { return a + b; }, 0) < 480;
+	return sp.dexID && sp.dexID <= 143 && (sp.levelupMoves || []).length >= 4 &&
+		!(sp.name || '').includes('-');
 });
 
 // Deterministic pseudo-random, so a benchmark run is reproducible.
@@ -53,11 +90,23 @@ const IVS = {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31};
 const NATURES = ['Adamant', 'Modest', 'Jolly', 'Timid', 'Impish', 'Careful'];
 
 /** A legal set: the four most recent level-up moves it would actually know. */
-function build(species, level) {
-	const known = (species.levelupMoves || [])
-		.filter(function (pair) { return pair[1] <= level; })
-		.map(function (pair) { return moveName[pair[0]]; })
-		.filter(Boolean);
+function build(base, level) {
+	const grown = evolve(base, level);
+	const species = grown.species;
+	// Moves come from the WHOLE line, not just the final form: a Poliwrath still
+	// knows what it learned as a Poliwag, and several evolved forms have almost
+	// no level-up list of their own.
+	const seen = {};
+	const known = [];
+	for (const stage of grown.chain) {
+		for (const pair of (stage.levelupMoves || [])) {
+			if (pair[1] > level) continue;
+			const name = moveName[pair[0]];
+			if (!name || seen[name]) continue;
+			seen[name] = true;
+			known.push(name);
+		}
+	}
 	const moves = known.slice(-4);
 	if (!moves.length) return null;
 	const ability = (species.abilities && species.abilities[0] &&
@@ -103,7 +152,11 @@ const trouble = {};
 
 for (let t = 0; t < teamCount; t++) {
 	for (const battle of early) {
-		const level = battle.team[0].level.value + 2;
+		// levelOffset is a diagnostic knob: if a fight stays unwinnable as the
+		// player's level advantage grows, the fight is not hard, the planner is
+		// broken. That distinction is what it is for.
+		const level = battle.team[0].level.value +
+			(opts.levelOffset === undefined ? 2 : opts.levelOffset);
 		const party = team(level, 6);
 		if (party.length < 6) continue;
 		const foe = battle.team.map(function (m) {
@@ -115,9 +168,10 @@ for (let t = 0; t < teamCount; t++) {
 		const started = Date.now();
 		let route;
 		try {
-			route = S.planRoute(B.createState(party, foe, {}),
-				Object.assign({lookahead: 2, budget: 20000, maxTurns: 30,
-					risks: {roll: 'median'}}, opts));
+			const planOpts = Object.assign({lookahead: 2, budget: 20000,
+				maxTurns: 30, risks: {roll: 'median'}}, opts);
+			delete planOpts.levelOffset;
+			route = S.planRoute(B.createState(party, foe, {}), planOpts);
 		} catch (e) { continue; }
 		ms += Date.now() - started;
 		runs++;

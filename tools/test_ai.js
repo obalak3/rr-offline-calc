@@ -96,8 +96,13 @@ function scoreOf(state, key, move, flags) {
 	const fresh = scoreOf(state, 'foe', 'Swords Dance');
 	B.active(state.foe).boosts.atk = 6;
 	const capped = scoreOf(state, 'foe', 'Swords Dance');
+	// Setting up safely now EARNS a bonus, so the gap is no longer exactly the
+	// 10 point cap penalty. What has to hold is that the cap is penalised below
+	// base, and that setting up with room to spare beats it.
 	check('boosting at +6 is penalised (' + fresh + ' -> ' + capped + ')',
-		capped === fresh - 10);
+		capped === AI.BASE - 10);
+	check('  and setting up with room to spare is worth doing (' + fresh + ')',
+		fresh > AI.BASE, 'setup scored ' + fresh + ' against a base of ' + AI.BASE);
 }
 
 // ------------------------------------------------- the set must stay honest

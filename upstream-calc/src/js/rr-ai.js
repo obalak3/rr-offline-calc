@@ -240,7 +240,24 @@ var RRAI = (function () {
 				var now = target.boosts[stat] || 0;
 				if (effect.boosts[stat] > 0 ? now < 6 : now > -6) maxed = false;
 			}
-			if (maxed) bad(10, "stats already at the cap");
+			if (maxed) { bad(10, "stats already at the cap"); break; }
+
+			// Setting up is only worth it if you survive to use it. CFRU scores
+			// this through IncreaseStatViability, gated on not being about to
+			// die; before this, setup moves were the single largest blind spot
+			// in the model -- 175 evaluations across the game, not one of them
+			// scored, so a boss holding Dragon Dance rated it exactly as
+			// interesting as Growl.
+			if (effect.target === "self") {
+				var incoming = worstIncomingDamage(state, key);
+				if (incoming >= self.curHP) {
+					bad(10, "would be knocked out before it pays off");
+				} else if (self.curHP === self.maxHP && incoming * 3 < self.curHP) {
+					good(7, "safe to set up");
+				} else if (incoming * 2 < self.curHP) {
+					good(3, "room to set up");
+				}
+			}
 			break;
 		case "heal":
 		case "wish":
@@ -278,6 +295,27 @@ var RRAI = (function () {
 			var anyBoost = false;
 			for (var s2 in foe.boosts) if (foe.boosts[s2] > 0) anyBoost = true;
 			if (!anyBoost) bad(10, "nothing to reset");
+			break;
+		case "selfSwitch":
+			// Volt Switch and U-turn are everywhere in Radical Red and the model
+			// had nothing to say about 503 of the 591 times one came up. The AI
+			// pivots to escape a bad matchup, so the question is whether anyone
+			// on the bench does better against what is in front of it.
+			// Swap the active index and put it back, rather than cloning the
+			// whole state per bench member. Nothing here mutates, and cloning
+			// made the benchmark three times slower for no measured gain.
+			var benchFits = false;
+			var wasActive = side.active;
+			for (var bi = 0; bi < side.team.length; bi++) {
+				if (bi === wasActive || side.team[bi].fainted) continue;
+				side.active = bi;
+				var takes = worstIncomingDamage(state, key);
+				if (takes * 3 < side.team[bi].curHP) { benchFits = true; break; }
+			}
+			side.active = wasActive;
+			var hurtsHere = worstIncomingDamage(state, key) * 2 >= self.curHP;
+			if (benchFits && hurtsHere) good(6, "pivots out of a bad matchup");
+			else if (!benchFits && hurtsHere) bad(10, "nowhere better to go");
 			break;
 		case "unsupported":
 			notes.unsupported = notes.unsupported || [];
