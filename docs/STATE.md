@@ -214,14 +214,25 @@ have none of these abilities, so the obvious test was inert.
 
 ## Open questions
 
+0. **The whole game is unmeasured, and that is now the headline.** Every number
+   in `TUNING.md` comes from nine battles out of the thirty-six fixed-level
+   singles fights in the dataset, all of them from the first tenth of the run.
+   `tools/bench_game.js` measures the rest, and the first run says the Elite
+   Four is 0/9 with four of those UNDECIDED rather than lost. Whether that is
+   budget or something structural is the open question that matters most: it is
+   the difference between "needs more compute" and "does not work up there".
 1. **Misty.** The one fight nothing has touched. Beam widths 2 through unlimited
    at horizons 10, 16 and 24, plus every ordering built, produce neither a line
    nor a verdict. A narrow beam exhausts its whole slice in 242 nodes finding
    nothing, which says the winning lines — if any exist — are nowhere near the
    moves that look best. Not yet known to be hard rather than unwinnable.
-2. **Is Lt. Surge cleanly winnable with the real team?** Still open, but much
-   closer: the witness for a *generated* team now costs 27,585 nodes against
-   86,776 before, and the app searches on every core.
+2. **Is Lt. Surge cleanly winnable with the real team?** Still open after
+   **56 million nodes across seven processes** (26 minutes, 2026-08-24). Five of
+   the seven shares finished their openings and found nothing; two ran out. The
+   answer is not near the surface, so another doubling of cores is not obviously
+   what finds it -- this is the trigger the plan set for proof-number search.
+   `tools/hunt_parallel.js` checkpoints which openings are settled, so a resumed
+   run only searches what is left.
 3. **What is the real ceiling?** `ceiling.js` now calls the shipped engine
    instead of its own stale copy, so its recorded 67/0/33 split is void and it
    needs re-running. Expect more fights to come back decided.
