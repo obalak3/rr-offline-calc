@@ -164,16 +164,32 @@ function makeGenerator(loaded, dexParts, startSeed) {
 	return {team: team, build: build, evolve: evolve, pool: POOL};
 }
 
-/** Every fixed-level singles battle up to the Surge cap, as the bench sees them. */
+/**
+ * Fixed-level singles battles, optionally capped by level.
+ *
+ * `maxLevel` defaults to 34, the Surge cap, because that is what every number
+ * recorded in docs/TUNING.md was measured against. Passing a higher cap opens up
+ * the rest of the game: there are 37 fixed-level singles battles in the dataset
+ * and the benchmark has only ever used nine of them. The other 28 include the
+ * whole Indigo League at level 85 with six a side, which is a different regime
+ * from a level 20 gym and had never been measured at all.
+ *
+ * The remaining 103 singles battles scale their levels to the player's, so they
+ * need a level assumption rather than a lookup, and 27 are doubles.
+ */
 function earlyBattles(loaded, opts) {
 	const only = (opts && opts.pattern) || null;
+	const maxLevel = (opts && opts.maxLevel) || 34;
+	const segmentFilter = (opts && opts.segment) || null;
 	const out = [];
 	for (const segment of loaded.TRAINERS.segments) {
+		if (segmentFilter && segment.name !== segmentFilter) continue;
 		for (const b of (segment.battles || [])) {
 			if ((b.effects || []).some(e => /DOUBLES/i.test(e))) continue;
 			if (b.team[0].level.type !== 'fixed') continue;
-			if (b.team[0].level.value > 34) continue;
+			if (b.team[0].level.value > maxLevel) continue;
 			if (only && !only.test(label(b))) continue;
+			b.__segment = segment.name;
 			out.push(b);
 		}
 	}
