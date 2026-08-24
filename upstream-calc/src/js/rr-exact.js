@@ -50,9 +50,22 @@ var RRExact = (function () {
 		return true;
 	}
 
-	/** The AI's reply: a function of the position, not a distribution. */
+	/**
+	 * The AI's reply: a function of the position, not a distribution.
+	 *
+	 * Memoised, and that only became worth doing once the visited set started
+	 * keying on remaining turns as well as position. Before that every position
+	 * was explored exactly once and a cache could never hit; now a position can
+	 * legitimately be revisited with a larger budget, and scoring the
+	 * opponent's options is about 265us -- the single biggest cost per node.
+	 */
+	var singleReplyCache = {};
+
 	function reply(state, opts) {
 		if (typeof RRAI === "undefined") return null;
+		var cacheKey = RRBattle.positionKey(state);
+		var hit = singleReplyCache[cacheKey];
+		if (hit !== undefined) return hit;
 		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
 			{checkBadMove: true, checkGoodMove: true};
 		var scored = RRAI.scoreAll(state, "foe", flags, {});
@@ -63,7 +76,9 @@ var RRExact = (function () {
 			if (entry.action.type === "switch" && !gate.maySwitch) continue;
 			if (!best || entry.score > best.score) best = entry;
 		}
-		return best ? best.action : null;
+		var chosen = best ? best.action : null;
+		singleReplyCache[cacheKey] = chosen;
+		return chosen;
 	}
 
 	/**
@@ -85,18 +100,68 @@ var RRExact = (function () {
 		for (var i = 0; i < actions.length; i++) {
 			var action = actions[i], rank;
 			if (action.type === "switch") {
-				rank = -1;
+				// Switches used to be dumped at the back of the queue on the
+				// grounds that there are a lot of them and they rarely start a
+				// winning line. That was wrong in exactly the fights that
+				// matter: the proved line through Lt. Surge attacks once and
+				// then switches on turn two, so every attack-first subtree had
+				// to be exhausted before the search would even look at it.
+				//
+				// A switch is now ranked on the matchup it creates -- what the
+				// incoming Pokemon can do to what is standing there, minus what
+				// it takes for the privilege. Good pivots compete with attacks,
+				// hopeless ones still sort to the bottom.
+				var incoming = state.me.team[action.index];
+				if (!incoming || incoming.fainted) { rank = -1000; }
+				else {
+					var was = state.me.active;
+					state.me.active = action.index;
+					var out = RRBattle.damageRolls(state, "me", bestMoveOf(state, incoming));
+					var back = worstAgainstActive(state);
+					state.me.active = was;
+					var deal = out ? out.noCrit[out.noCrit.length - 1] / Math.max(1, defender.curHP) : 0;
+					var take = back / Math.max(1, incoming.curHP);
+					// Below zero, so a switch only outranks an attack that is
+					// doing almost nothing -- but a good pivot now beats a bad
+					// attack instead of losing to every one of them.
+					rank = -1 + 40 * deal - 30 * Math.min(1, take);
+				}
 			} else {
 				var rolls = RRBattle.damageRolls(state, "me", action.move);
 				var hit = rolls ? rolls.noCrit[rolls.noCrit.length - 1] : 0;
-				rank = hit >= defender.curHP ? 1000 + hit : hit;
+				rank = hit >= defender.curHP ? 1000 + hit : 100 * hit / Math.max(1, defender.curHP);
 			}
 			ranked.push({action: action, rank: rank});
 		}
 		ranked.sort(function (a, b) { return b.rank - a.rank; });
-		var out = [];
-		for (var j = 0; j < ranked.length; j++) out.push(ranked[j].action);
-		return out;
+		var out2 = [];
+		for (var j = 0; j < ranked.length; j++) out2.push(ranked[j].action);
+		return out2;
+	}
+
+	/** The hardest-hitting move a Pokemon has against what is out now. */
+	function bestMoveOf(state, mon) {
+		var moves = (mon.set && mon.set.moves) || [];
+		var best = moves[0], bestHit = -1;
+		for (var i = 0; i < moves.length; i++) {
+			var r = RRBattle.damageRolls(state, "me", moves[i]);
+			var hit = r ? r.noCrit[r.noCrit.length - 1] : 0;
+			if (hit > bestHit) { bestHit = hit; best = moves[i]; }
+		}
+		return best;
+	}
+
+	/** The worst the opponent can do to whoever is standing there now. */
+	function worstAgainstActive(state) {
+		var foe = RRBattle.active(state.foe);
+		var moves = (foe.set && foe.set.moves) || [];
+		var worst = 0;
+		for (var i = 0; i < moves.length; i++) {
+			var r = RRBattle.damageRolls(state, "foe", moves[i]);
+			var hit = r ? r.noCrit[r.noCrit.length - 1] : 0;
+			if (hit > worst) worst = hit;
+		}
+		return worst;
 	}
 
 	/**
@@ -125,6 +190,7 @@ var RRExact = (function () {
 			truncated: false
 		};
 		var seen = {};
+		singleReplyCache = {};
 		var line = [];
 		var started = Date.now();
 		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
@@ -145,9 +211,21 @@ var RRExact = (function () {
 			if (allDown(current.foe)) return true;
 			if (turnsLeft <= 0) { limits.truncated = true; return false; }
 
+			// Memoise on the position AND on how many turns were left when it
+			// was tried. Keying on the position alone was unsound: depth-first
+			// search can reach a position late in a long line, fail it with two
+			// turns to spare, and then reach the same position early in a short
+			// line with eighteen turns available -- where it skipped it and
+			// reported no line existed. That is both a missed win and, worse, a
+			// false "impossible", which is the one claim this module must never
+			// get wrong.
+			//
+			// Storing the largest budget already tried keeps nearly all of the
+			// pruning: failing with 18 turns does imply failing with 12.
 			var key = RRBattle.positionKey(current);
-			if (seen[key]) return false;
-			seen[key] = true;
+			var triedWith = seen[key];
+			if (triedWith !== undefined && triedWith >= turnsLeft) return false;
+			seen[key] = turnsLeft;
 
 			var theirs = reply(current, opts);
 			if (!theirs) return false;

@@ -182,16 +182,22 @@ function ordered(state) {
  * checks `exhausted` before counting anything as impossible.
  */
 function cleanWinExists(state, limits) {
-	const seen = new Set();
+	const seen = new Map();
 
 	function walk(current, turnsLeft) {
 		if (limits.nodes++ > limits.budget) { limits.exhausted = true; return false; }
 		if (allDown(current.foe)) return true;
 		if (turnsLeft <= 0) { limits.truncated = true; return false; }
 
+		// Position AND remaining turns: keying on the position alone lets a
+		// failure with two turns left suppress the same position reached with
+		// eighteen, which loses real wins and can manufacture a false
+		// "impossible". Storing the largest budget already tried keeps the
+		// pruning, since failing with more turns implies failing with fewer.
 		const key = B.positionKey(current);
-		if (seen.has(key)) return false;
-		seen.add(key);
+		const triedWith = seen.get(key);
+		if (triedWith !== undefined && triedWith >= turnsLeft) return false;
+		seen.set(key, turnsLeft);
 
 		const theirs = reply(current);
 		if (!theirs) return false;

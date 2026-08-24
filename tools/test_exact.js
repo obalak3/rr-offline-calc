@@ -233,5 +233,46 @@ function replay(state, steps) {
 		result.decided === false && result.found === false);
 }
 
+// --------------------------------------------------- more turns cannot hurt
+
+// A soundness invariant that the old position-only memo could break: if a clean
+// line is found with N turns to work with, it must still be found with more.
+// The old code keyed its visited set on the position alone, so a position that
+// failed with two turns left silently suppressed the same position reached with
+// eighteen -- which loses real wins and can manufacture a false "impossible".
+{
+	const TRAINERS = sandbox.RR_TRAINER_DATA;
+	let brock = null;
+	for (const segment of TRAINERS.segments) {
+		for (const b of (segment.battles || [])) {
+			if (/BROCK/.test(b.trainer || '') && !brock &&
+				b.team[0].level.type === 'fixed') brock = b;
+		}
+	}
+	const foe = brock.team.map(m => ({
+		species: m.species, level: m.level.value, nature: m.nature,
+		ability: m.ability, item: m.item || '', moves: m.moves.slice(0, 4),
+		evs: m.evs, ivs: m.ivs
+	}));
+	const level = brock.team[0].level.value + 4;
+	const party = [
+		set('Squirtle', ['Water Gun', 'Bite', 'Withdraw', 'Tackle'], level, {item: 'Oran Berry'}),
+		set('Bulbasaur', ['Vine Whip', 'Leech Seed', 'Tackle', 'Growl'], level, {item: 'Oran Berry'}),
+		set('Mankey', ['Karate Chop', 'Low Kick', 'Scratch', 'Leer'], level, {item: 'Oran Berry'})
+	];
+	const state = B.createState(party, foe, {});
+
+	let firstFound = null, broke = null;
+	for (const turns of [10, 14, 18, 24]) {
+		const r = X.cleanWin(state, {exactBudget: 300000, maxTurns: turns});
+		if (r.found && firstFound === null) firstFound = turns;
+		if (firstFound !== null && !r.found) broke = turns;
+	}
+	check('a line found at one horizon is still found at a longer one' +
+		(firstFound === null ? ' (never found, invariant vacuous)'
+			: ' (first found at ' + firstFound + ')'),
+		broke === null, 'lost the line at maxTurns ' + broke);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);
