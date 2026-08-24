@@ -1268,3 +1268,65 @@ hardest-hitting one.
 That is a concrete, reproducible target rather than a vague "make it faster",
 and it is the first time a fight this project fails has been shown to be
 winnable by something already in the repo.
+
+## Why Brock could not be found, and the beam that was not a beam (2026-08-24)
+
+James asked the right question: the exact search is exhaustive, so with enough
+time it must find the 16-turn line the weighted search already found. Why does
+it not?
+
+**Measured first.** Brock's mirror, plain exhaustive search, no hunt passes:
+
+    200,000 nodes    undecided
+    1,000,000        undecided
+    4,000,000        undecided     (2.5 minutes)
+
+So it is not close. And the reason is not that the winning move is buried --
+Rock Tomb sits **second of seven** in the ordering, right behind Bulldoze. The
+problem is what depth-first does with that: it takes Bulldoze and explores
+everything underneath it before ever trying Rock Tomb, and everything underneath
+Bulldoze is about 7^15, roughly 4.7 trillion positions. **The search never gets
+past its first guess.**
+
+Both mechanisms that normally make this affordable are defeated by this
+particular fight:
+
+    the Nuzlocke cut       abandons any branch where one of ours faints. Brock's
+                           mirror has two Sturdy users and Berry Juice, so almost
+                           nothing dies and almost nothing is cut. Being hard to
+                           kill makes the search HARDER.
+    the transposition      catches repeated positions. This is a long grind where
+    table                  HP drifts a point or two every turn, and HP is part of
+                           a position's identity, so almost nothing repeats.
+
+**And checking that turned up a real bug.** The portfolio exists to hedge against
+exactly this -- a beam pass that reaches deep quickly instead of drowning in one
+branch. The beam was 8. A 4v4 has **seven** legal actions:
+
+    Math.min(7, 8) = 7      the beam restricted nothing
+
+So in every small fight the portfolio was a matchup-ordered pass, an identical
+unrestricted pass, and the exhaustive one: two of three passes doing the same
+work. The hedge built for Brock's situation was inert in it.
+
+Beams are now a FRACTION of the branching factor (0.4, floor of two), so they
+narrow in a 4v4 as well as a 6v6:
+
+    Brock mirror, before   undecided at 4,000,000 nodes
+    Brock mirror, after    CLEAN WIN in 23,796 nodes, and a 13-turn line --
+                           three turns SHORTER than the weighted search's 16
+
+Early-game mirrors go from 8 of 9 to **9 of 9**.
+
+## The cheap-witness probe, and why it is off by default
+
+If the weighted search produces a line that loses nobody, that line is a witness
+and the exact search need not rediscover it. `planRoute` can run it first as a
+probe. On Brock it turned 200,000 fruitless nodes into a clean line in 269 ms.
+
+It is **opt-in** (`probe: true`) rather than the default, because measuring it
+exposed the cost: on a fight that genuinely certifies, the probe returns
+`line-found` with no certificate where the real search returns `certified`. It
+trades a provable answer for an unprovable one to save 200 ms, and it does it
+silently. The idea is sound for the case it was built for; it needs to certify
+the line it borrows before it can be the default.

@@ -485,8 +485,20 @@ var RRExact = (function () {
 			// what makes a hunt pass cheap enough to reach turn twenty. It can
 			// miss lines, so a pass with a beam is never allowed to conclude
 			// anything -- see the pass loop below.
-			var width = (isRoot && rootFilter) ? actions.length
-				: Math.min(actions.length, beam);
+			// A beam given as a FRACTION scales with the branching factor. An
+			// absolute 8 was inert wherever it mattered most: a 4v4 has seven
+			// legal actions, so Math.min(7, 8) restricted nothing and the
+			// portfolio's narrow pass explored exactly the same tree as the
+			// exhaustive one behind it. Two of three passes doing identical work
+			// is not a hedge.
+			var width;
+			if (isRoot && rootFilter) {
+				width = actions.length;
+			} else if (beam > 0 && beam < 1) {
+				width = Math.max(2, Math.ceil(actions.length * beam));
+			} else {
+				width = Math.min(actions.length, beam);
+			}
 			for (var i = 0; i < width; i++) {
 				var next;
 				try {
@@ -554,7 +566,9 @@ var RRExact = (function () {
 			// which is what makes a portfolio legitimate here at all.
 			passes.push({beam: Infinity, turns: limits.maxTurns, share: 0.05,
 				matchup: true});
-			passes.push({beam: 8, turns: limits.maxTurns, share: 0.20,
+			// Two fifths of the available actions, so it narrows in a 4v4 as
+			// well as a 6v6, with a floor of two so it is always a real choice.
+			passes.push({beam: 0.4, turns: limits.maxTurns, share: 0.20,
 				matchup: false});
 			// The decider. Full width, full horizon, no pairing prior -- the
 			// search exactly as it was before any of this, and the only pass
@@ -585,8 +599,11 @@ var RRExact = (function () {
 			// "no-clean-line-exists". That is the one lie this module exists not
 			// to tell, and it was reachable through a documented option.
 			if (typeof pass.beam !== "number") pass.beam = Infinity;
+			// A fraction below 1 narrows, so it counts as a beam for the
+			// entitlement test below exactly as an absolute width does.
+			var narrows = pass.beam < Infinity;
 			if (typeof pass.turns !== "number") pass.turns = limits.maxTurns;
-			var exhaustive = !(pass.beam < Infinity) && pass.turns >= limits.maxTurns;
+			var exhaustive = !narrows && pass.turns >= limits.maxTurns;
 			// Being ENTITLED TO CONCLUDE and being given the whole budget are two
 			// different things, and running them off one flag was a real bug: the
 			// table-ordered first pass is full width at full horizon, so it
@@ -603,7 +620,7 @@ var RRExact = (function () {
 			// Only a pass already forbidden from concluding may blur positions
 			// together. `exhaustive` below is computed from the same facts and
 			// must stay in agreement with this.
-			hpBuckets = (pass.beam < Infinity)
+			hpBuckets = narrows
 				? (opts.hpBuckets === undefined ? 8 : opts.hpBuckets) : 0;
 			// Ordering differs per pass, so a cached order from the last one is
 			// the wrong order for this one.
@@ -764,7 +781,15 @@ var RRExact = (function () {
 		var opts = options || {};
 		var started = Date.now();
 
-		if (opts.probe !== false) {
+		// OFF unless asked for. Taking the cheap line skips certification
+		// entirely: measured on a fight that certifies, the probe returns
+		// `line-found` with no certificate where the real search returns
+		// `certified`. Downgrading a provable answer to an unprovable one to
+		// save 200 ms is a bad trade, and it is silent, which is worse. Left
+		// here because the idea is sound for the case it was built for -- Brock,
+		// where the exact search finds nothing -- and needs to certify the line
+		// it borrows before it can be the default.
+		if (opts.probe === true) {
 			var cheap = cheapWitness(state, opts);
 			if (cheap) {
 				// Same wording as any other line found at median rolls: real,
