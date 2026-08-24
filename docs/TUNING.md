@@ -1128,3 +1128,48 @@ Left as future work rather than done now: the harness should read the BUILT dex
 and delete its own normalisation entirely, which is the same unification that
 fixed `ceiling.js`. Not done while a benchmark was running, and not urgent, since
 the current normalisation is now verified correct rather than merely present.
+
+## The first benchmark taken with the player's abilities working (2026-08-24)
+
+`tools/bench_early.js 15 '{"engine":"exact"}'`, the first run after the three
+ability bugs and after `bench_early` stopped generating its own teams:
+
+    won losing NOTHING   96/135  (71%)   unchanged in total
+    won at all          103/135  (76%)   was 78%
+    1.70s per fight                      was 2.09
+
+    hardest:  MISTY 15/15, LT. SURGE 14/15, MT. MOON 8/15, FALKNER 2/15
+
+**The headline held and the composition moved**, which is the honest result.
+Lt. Surge produced a clean win for the first time in this benchmark's history
+(14 failures against 15), Mt. Moon lost one, and the whole thing runs a fifth
+faster.
+
+That the total did not move is explicable rather than suspicious: Misty and Surge
+are 29 of the 39 failures and both are compute-bound, so handing the player its
+abilities cannot help a search that never finishes. The fights that abilities
+could decide were already being won.
+
+**Three tools were found carrying private duplicates of shared logic today**, and
+each silently refused a fix that had already been made and verified:
+
+    ceiling.js   its SEARCH, ranking every switch at -1 like the old engine
+    bench_early  its GENERATOR, still reading `ability.name`
+    ceiling.js   its GENERATOR, the same
+
+The middle one is the instructive case. Two full 135-fight runs completed after
+the shared harness was fixed, both reported an unchanged 71%, and that looked
+like evidence the abilities did not matter. It was evidence the fix had not
+arrived. **A number that does not move after a fix you believe in is a claim to
+check, not a result to accept.**
+
+## Properties checked by measurement rather than by reading (2026-08-24)
+
+    27 found lines replayed independently   all lose nobody, all finish the foe
+    27 beam+bucket searches                 none falsely reported "decided"
+     9 fights re-solved on warm caches      no cross-fight contamination
+
+The last one matters because `positionKey` does not encode species, so a cache
+surviving between two different fights could in principle answer one with the
+other's reply. Deliberately leaving the caches warm across fights changed no
+verdict.
