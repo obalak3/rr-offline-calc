@@ -180,6 +180,13 @@ const plannerBudget = parseInt(process.env.PLANNER_BUDGET, 10) || 200000;
 const plannerMs = parseInt(process.env.PLANNER_MS, 10) || 5000;
 
 let possible = 0, impossible = 0, unknown = 0, plannerWon = 0, missed = 0;
+// Planner wins on fights the ORACLE could not settle. These are not a bug and
+// not a rounding error: the planner and the oracle now run the same engine, but
+// the planner gets a small budget and quits early where the oracle grinds, so
+// the planner sometimes stumbles onto a line the oracle never reached. Counted
+// separately because mixing them into the ratio below is what made it read
+// 20/20 while `missed` said 1.
+let wonUndecided = 0;
 const perBattle = {};
 
 for (let t = 0; t < teamCount; t++) {
@@ -222,6 +229,7 @@ for (let t = 0; t < teamCount; t++) {
 		catch (e) { limits.exhausted = true; }
 
 		if (exists) { possible++; row.possible++; if (!won) missed++; }
+		else if (won) wonUndecided++;
 		else if (limits.exhausted || limits.truncated) { unknown++; row.unknown++; }
 		else { impossible++; row.impossible++; }
 	}
@@ -239,9 +247,19 @@ console.log('  undecided (budget ran out)  ' + String(unknown).padStart(4) +
 console.log('  the planner won cleanly     ' + String(plannerWon).padStart(4) +
 	'  (' + Math.round(100 * plannerWon / total) + '% of all fights)');
 if (possible) {
-	console.log('  of the fights it COULD win  ' + plannerWon + '/' + possible +
-		'  (' + Math.round(100 * plannerWon / possible) + '%)   <- the real score');
+	// The honest ratio: wins ON FIGHTS SHOWN TO BE WINNABLE, over those fights.
+	// It used to divide every planner win by that same denominator, which mixed
+	// in wins on fights the oracle never settled and could read 100% while
+	// fights were being missed.
+	const wonAmongPossible = possible - missed;
+	console.log('  of the fights it COULD win  ' + wonAmongPossible + '/' + possible +
+		'  (' + Math.round(100 * wonAmongPossible / possible) + '%)   <- the real score');
 	console.log('  winnable but missed         ' + String(missed).padStart(4));
+	if (wonUndecided) {
+		console.log('  won where the oracle could not decide  ' +
+			String(wonUndecided).padStart(4) +
+			'   (found a line the oracle never reached)');
+	}
 }
 
 console.log('\nPer battle (possible / impossible / undecided | planner won):');
