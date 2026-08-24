@@ -1173,3 +1173,53 @@ The last one matters because `positionKey` does not encode species, so a cache
 surviving between two different fights could in principle answer one with the
 other's reply. Deliberately leaving the caches warm across fights changed no
 verdict.
+
+## The correctness pass finally moved the number (2026-08-24)
+
+`tools/bench_early.js 15 '{"engine":"exact"}'`, after roughly twenty fixes to
+the engine, the AI model and the generator:
+
+    won losing NOTHING   99/135  (73%)   was 96/135 (71%)
+    won at all          103/135  (76%)
+    1.85s per fight
+
+Three clean wins that were not there before. Small, and it is the first genuine
+movement in this benchmark for a long time -- every earlier "unchanged 71%" was
+either a fix that had not reached the generator or a fix that could not help a
+search which never finishes.
+
+## Lt. Lance does not get easier with levels, and that breaks the level sweep
+
+`tools/counter_team.js` sweeps the player's level apart to separate "the search
+failed" from "the fight is genuinely that hard". Against ELITE FOUR LANCE it
+separates nothing:
+
+    +2 levels    undecided       +15 levels   undecided
+    +8 levels    undecided       +25 levels   undecided
+
+The reason is not the search. **At +25 levels -- a level 110 team against his
+85 -- Iron Jugulis's Dark Hole still does 78% of our bulkiest Pokemon's maximum
+HP.** Lance two-shots anything, however overlevelled, so a clean win may simply
+not exist and no amount of searching will find one. Beam 1 and beam 2 EXHAUST
+their trees (372 and 7,732 nodes) rather than running out of budget, which points
+the same way.
+
+His team is built for it, and the shape is worth recording:
+
+    Aerodactyl @Focus Sash     Stealth Rock, Stone Edge -- survives one hit
+    Melmetal @Assault Vest     Double Iron Bash
+    Iron Jugulis @Booster      Dark Hole, Aeroblast -- the two-shot
+    Dragonite @Weakness Policy Dragon Dance, Multiscale -- hitting it super
+                               effectively hands it +2/+2
+    Dialga-Primal              Roar of Time, Rest/Sleep Talk
+    Salamence-Mega             Dragon Dance -- and the AI's top pick, scored 103
+
+**So the level sweep is the wrong instrument for endgame bosses.** It works on
+the early gyms, where more levels really do make a fight trivial, and it tells
+you nothing where the opponent's damage does not scale with your bulk. Validating
+the search needs a fight where a clean win is DEMONSTRABLE, which means working
+up from fights already solved rather than down from the hardest fight in the game.
+
+Also worth noting for the counter-team builder: picking on type matchups is the
+wrong axis against an opponent who two-shots you regardless. Bulk and speed are
+what matter there.
