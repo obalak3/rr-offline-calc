@@ -1015,3 +1015,36 @@ out of time, everywhere, rather than reaching wrong answers.
 The three segments that finish cleanly (Johto, Rivals, Postgame) are the ones
 with smaller or lower-level teams. Cost scales with the size of the fight, which
 is what a wide-tree diagnosis predicts.
+
+## The third time this benchmark measured teams nobody would field (2026-08-24)
+
+Species right, levels right, EVs right, items right -- and the **moves** were two
+random level-up picks plus two random TMs. That produced:
+
+    Medicham    Recover / Counter / Pain Split / Drain Punch   one attack
+    Beheeyem    Guard Split / Power Split / Return / Toxic     effectively none
+    Crabominable Close Combat / Gigaton Hammer / Protect / Substitute
+
+Nobody walks into the Elite Four like that. **A Nuzlocke restricts WHICH Pokemon
+you have; it does not stop you teaching them their best moves.** So a random
+species with a chosen moveset is the honest model of a Nuzlocke team, and a
+random species with a random moveset is not a model of anything -- which means
+the 0/18 on the Indigo League was measuring a handicap the benchmark invented.
+
+Sets above level 40 are now chosen: the strongest same-type attack first, then
+the strongest attacks of DIFFERENT types for coverage, then at most one utility
+move. Accuracy is priced in, because a 120-power move landing 70% of the time is
+worse than a 90-power one that always lands and a player choosing moves knows
+it. Deterministic, so the benchmark stays reproducible.
+
+    Medicham    Focus Punch / Psychic / Energy Ball / Detect
+    Magmortar   Overheat / Focus Punch / Steam Eruption / Leer
+    Beheeyem    Synchronoise / Meteor Beam / Thunderbolt / Psychic Terrain
+
+Early game untouched again, verified by the same fingerprint: `ec3d71803436a23f`
+before and after.
+
+**The rule, stated for the third time and hopefully the last:** every part of a
+generated team is a claim about what a player would have. Species, level,
+evolution, EVs, item AND moves. Getting five of six right still measures a team
+nobody would field.

@@ -211,6 +211,70 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		return out;
 	}
 
+	/**
+	 * Pick a moveset the way a player would, rather than at random.
+	 *
+	 * This is the third time this benchmark has been caught measuring teams
+	 * nobody would field, and the subtlest. The species were right, the levels
+	 * were right, the EVs were right -- and the moves were **two random level-up
+	 * moves plus two random TMs**, which produced a Medicham carrying Recover,
+	 * Counter, Pain Split and Drain Punch (one attacking move) and a Beheeyem
+	 * carrying Guard Split, Power Split, Return and Toxic (effectively none).
+	 *
+	 * Nobody walks into the Elite Four like that. A Nuzlocke restricts WHICH
+	 * Pokemon you have; it does not stop you teaching them their best moves. So
+	 * a random species with a chosen moveset is the honest model of a Nuzlocke
+	 * team, and a random species with a random moveset is not a model of
+	 * anything.
+	 *
+	 * The rule: the strongest same-type attack first, since that is what any
+	 * player leads with, then the strongest attacks of DIFFERENT types for
+	 * coverage, then at most one piece of utility. Ties break on power, so this
+	 * is deterministic and the benchmark stays reproducible.
+	 */
+	function chooseMoveset(pool, species) {
+		const byName = {};
+		for (const key in dex.moves) byName[dex.moves[key].name] = dex.moves[key];
+		const speciesTypes = species.type || [];
+
+		const scored = [];
+		for (const name of pool) {
+			const data = byName[name];
+			if (!data) continue;
+			const damaging = data.power > 0;
+			const stab = speciesTypes.indexOf(data.type) >= 0;
+			scored.push({
+				name: name, data: data, damaging: damaging, stab: stab,
+				// Accuracy matters: a 120-power move that lands 70% of the time
+				// is worse than a 90-power one that always does, and a player
+				// picking moves knows it.
+				value: damaging ? data.power * (data.accuracy || 100) / 100 *
+					(stab ? 1.5 : 1) : 0
+			});
+		}
+		scored.sort(function (a, b) { return b.value - a.value; });
+
+		const picked = [], typesUsed = {};
+		for (const entry of scored) {
+			if (picked.length >= 3 || !entry.damaging) continue;
+			// One attack per type: four Fire moves is not coverage.
+			if (typesUsed[entry.data.type]) continue;
+			typesUsed[entry.data.type] = true;
+			picked.push(entry.name);
+		}
+		// One utility slot, if the pool has anything worth the space.
+		const utility = scored.find(function (e) {
+			return !e.damaging && picked.indexOf(e.name) < 0;
+		});
+		if (utility && picked.length < 4) picked.push(utility.name);
+		while (picked.length < 4) {
+			const filler = scored.find(function (e) { return picked.indexOf(e.name) < 0; });
+			if (!filler) break;
+			picked.push(filler.name);
+		}
+		return picked;
+	}
+
 	/** A legal set: what it would actually be carrying at this point in the run. */
 	function build(base, level) {
 		const grown = evolve(base, level);
@@ -228,24 +292,17 @@ function makeGenerator(loaded, dexParts, startSeed) {
 			}
 		}
 		let moves = known.slice(-4);
+		// Placeholder; late-game sets are chosen properly just below.
 		// Past the early game, TMs and tutors are most of what a team knows, and
 		// leaving them out was the last reason late-game numbers were a floor
 		// rather than a measurement. Early game keeps level-up moves only, which
 		// is both what a Nuzlocke actually has before the third gym and what
 		// every number in TUNING.md was measured against.
 		if (level > 40) {
-			const taught = taughtMoves(grown.species).filter(function (n) {
-				return !seen[n];
-			});
-			if (taught.length) {
-				// Two learned and two taught, so a set keeps the STAB it grew up
-				// with and gains the coverage a player would have added.
-				const picked = [];
-				for (let i = 0; i < 2 && taught.length; i++) {
-					picked.push(taught.splice(rand(taught.length), 1)[0]);
-				}
-				moves = known.slice(-2).concat(picked);
-			}
+			const pool = known.concat(taughtMoves(grown.species))
+				.filter(function (n, i, a) { return a.indexOf(n) === i; });
+			const chosen = chooseMoveset(pool, grown.species);
+			if (chosen.length) moves = chosen;
 		}
 		if (!moves.length) return null;
 		const ability = (grown.species.abilities && grown.species.abilities[0] &&
