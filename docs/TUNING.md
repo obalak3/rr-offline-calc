@@ -1223,3 +1223,48 @@ up from fights already solved rather than down from the hardest fight in the gam
 Also worth noting for the counter-team builder: picking on type matchups is the
 wrong axis against an opponent who two-shots you regardless. Bulk and speed are
 what matter there.
+
+## Mirror matches, and the exact search losing to the heuristic (2026-08-24)
+
+`tools/bench_mirror.js` gives us exactly the opponent's team -- same species,
+levels, moves, items, abilities -- plus one level to break speed ties. Every
+other benchmark confounds the planner's skill with the team it was handed; a
+mirror removes the team entirely, so what is left is whether our side chooses
+better than a one-ply scorer with no lookahead.
+
+**The bare bones work.** Early game, 8 of 9 clean, and the two fights that fail
+against random teams fall cheaply:
+
+    LT. SURGE      clean win in    206 nodes
+    KOGA (6v6)     clean win in     85 nodes
+    MT. MOON       clean win in     75 nodes
+    MISTY          clean win in 12,859 nodes
+
+**A true mirror is the harder side to play**, which is worth knowing before
+reading any of it: this engine hands every speed tie to the opponent, so with
+identical Pokemon we move second forever. All three 2v2 Rival fights came back
+"no clean line exists" at parity and are won in 19 to 32 nodes with one level.
+
+### The finding that matters: Brock
+
+    exact search    undecided at 200,000 nodes, at maxTurns 24, 32 AND 40
+                    (the horizon is never even reached)
+    weighted search WINS, LOSING NOBODY, in 16 turns
+
+Replayed independently against the AI's real replies: 16 turns, zero losses, all
+four of his Pokemon down. **A clean line exists and the exact search cannot find
+it** -- so this is not a hard fight, it is a search failure, and it inverts the
+premise the architecture rests on. `TUNING.md` above says "searching exactly
+beats scoring positions"; here the heuristic beats the exhaustive search outright.
+
+Why Brock specifically is legible from his team: two Sturdy users, Berry Juice,
+Protect and a Custap Berry Self-Destruct. Nothing dies to one hit, so **no move
+ever registers as a kill** -- and `ordered()` ranks kills first, damage second,
+switches last. With no kills available the ordering degenerates to raw damage,
+while the line that actually wins is patient and switch-heavy: four Gyro Balls,
+a pivot, four Bulldozes, another pivot. The winning move is almost never the
+hardest-hitting one.
+
+That is a concrete, reproducible target rather than a vague "make it faster",
+and it is the first time a fight this project fails has been shown to be
+winnable by something already in the repo.

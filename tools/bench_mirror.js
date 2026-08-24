@@ -28,7 +28,7 @@
 const H = require('./lib/harness.js');
 
 const loaded = H.loadEngine();
-const B = loaded.B, X = loaded.X;
+const B = loaded.B, X = loaded.X, S = loaded.S;
 
 const args = process.argv.slice(2).filter(a => a.charAt(0) !== '-');
 const pattern = args[0] ? args[0].toUpperCase() : null;
@@ -56,7 +56,7 @@ console.log('Mirror matches: our team IS their team, +' + offset +
 	' level.  budget ' + budget.toLocaleString() + ' nodes\n');
 console.log('  fight                     size  verdict                 nodes      s');
 
-let found = 0, impossible = 0, undecided = 0;
+let found = 0, impossible = 0, undecided = 0, wonAnyway = 0, lost = 0;
 for (const battle of battles) {
 	// The mirror. foeSets already produces the shape createState wants, so both
 	// sides are built from the identical description.
@@ -79,10 +79,27 @@ for (const battle of battles) {
 		: result.decided ? 'no clean line exists' : 'undecided (budget)';
 	if (result.found) found++; else if (result.decided) impossible++; else undecided++;
 
+	// The two questions are different and only one of them should be near
+	// perfect. cleanWin asks "is there a line where NOBODY faints", which is the
+	// Nuzlocke objective and which some fights genuinely fail on merit. Whether
+	// we win AT ALL is the test of the planner against the AI, and in a mirror
+	// -- same team, one level up, against a one-ply scorer with no lookahead --
+	// there is no excuse for losing that one.
+	let plain = '';
+	if (!result.found) {
+		B.clearCache();
+		try {
+			const route = S.planRoute(B.createState(ours, theirs, {}),
+				{lookahead: 2, budget: 30000, maxTurns: 40, risks: {roll: 'median'}});
+			plain = route.won ? 'wins, losing ' + route.losses : 'LOSES THE FIGHT';
+			if (route.won) wonAnyway++; else lost++;
+		} catch (e) { plain = 'error'; }
+	} else { wonAnyway++; }
+
 	console.log('  ' + H.label(battle).slice(0, 24).padEnd(25) +
 		String(theirs.length) + 'v' + theirs.length + '  ' +
 		verdict.padEnd(22) + result.nodes.toLocaleString().padStart(9) + '  ' +
-		Math.round((Date.now() - started) / 1000));
+		String(Math.round((Date.now() - started) / 1000)).padStart(3) + '  ' + plain);
 
 	if (result.found && show) {
 		for (const step of X.toSteps(result.line)) {
@@ -97,5 +114,8 @@ const total = found + impossible + undecided;
 console.log('\n  clean wins   ' + found + '/' + total);
 console.log('  no line      ' + impossible + '/' + total);
 console.log('  undecided    ' + undecided + '/' + total);
-console.log('\nA mirror has no team advantage in it, so anything not won is the');
-console.log('planner losing to a one-ply scorer using its own team.');
+console.log('\n  won the fight at all      ' + wonAnyway + '/' + total);
+console.log('  actually LOST            ' + lost + '/' + total);
+console.log('\nThe two lines mean different things. A clean win is the Nuzlocke');
+console.log('objective and some fights fail it on merit. Losing outright, with the');
+console.log('same team and a level in hand against a one-ply scorer, is the planner.');
