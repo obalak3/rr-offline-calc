@@ -930,3 +930,24 @@ ones in both directions.** It said Mystic Water and Guts were unhandled when
 both work perfectly, and it could not see that Protosynthesis does nothing.
 Every conclusion here that turned out to be right came from measuring the
 mechanic, not from reading the source.
+
+## Seventeen correctness fixes cost the early game nothing (2026-08-24)
+
+`tools/bench_early.js 15 '{"engine":"exact"}'`, run against the engine after the
+whole audit landed:
+
+    won losing NOTHING   96/135  (71%)   unchanged
+    won at all          105/135  (78%)   unchanged
+    2.14s per fight                      against 2.15 before
+
+    hardest, unchanged:  MISTY 15/15, SURGE 15/15, MT. MOON 7/15, FALKNER 2/15
+
+The interesting part is Brock. Protosynthesis is the one fix that touches a
+battle in this benchmark -- his Great Tusk holds a Booster Energy and now gets
+its boost -- and **Brock is still 15/15 clean**. So the opponent got measurably
+stronger in that fight and the planner still never loses anybody in it.
+
+Read together with the audit: the engine became materially more accurate without
+the planner becoming worse at what it already did. That is the outcome to want
+from a correctness pass, and it is not the automatic one -- a fix that made the
+opponent stronger could easily have cost clean wins.
