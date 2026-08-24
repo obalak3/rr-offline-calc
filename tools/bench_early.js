@@ -23,11 +23,12 @@ const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number, Dat
 vm.createContext(sandbox);
 for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
 	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-ai.js',
-	'src/js/rr-plan.js', 'src/js/rr-solver.js']) {
+	'src/js/rr-plan.js', 'src/js/rr-solver.js', 'src/js/rr-mcts.js']) {
 	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
 }
 const B = sandbox.RRBattle;
 const S = sandbox.RRSolver;
+const M = sandbox.RRMCTS;
 const TRAINERS = sandbox.RR_TRAINER_DATA;
 
 const dex = new Function('return ' +
@@ -171,7 +172,12 @@ for (let t = 0; t < teamCount; t++) {
 			const planOpts = Object.assign({lookahead: 2, budget: 20000,
 				maxTurns: 30, risks: {roll: 'median'}}, opts);
 			delete planOpts.levelOffset;
-			route = S.planRoute(B.createState(party, foe, {}), planOpts);
+			// engine: "mcts" swaps the fixed-depth proxy search for the tree
+			// search over the real objective. Same result shape, same scoring,
+			// so the two are measured against identical fights.
+			const engine = planOpts.engine === 'mcts' ? M : S;
+			delete planOpts.engine;
+			route = engine.planRoute(B.createState(party, foe, {}), planOpts);
 		} catch (e) { continue; }
 		ms += Date.now() - started;
 		runs++;
