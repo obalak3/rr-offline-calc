@@ -445,5 +445,46 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		bounced.mine === 'slp' && bounced.theirs === null, JSON.stringify(bounced));
 }
 
+{
+	// Skill Link makes every multi-hit move hit five times. Nothing else in the
+	// stack applies it -- the calculator does not mention the ability -- so
+	// Icicle Spear was priced at three hits and incoming damage came out low,
+	// which is the one direction a Nuzlocke planner must never be wrong in.
+	function spearDamage(ability) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Tackle']})],
+			[set('Cloyster', {moves: ['Icicle Spear'], ability: ability})], {});
+		const rolls = B.damageRolls(state, 'foe', 'Icicle Spear');
+		return rolls ? rolls.noCrit[8] : 0;
+	}
+	const linked = spearDamage('Skill Link');
+	const plain = spearDamage('Sturdy');
+	check('Skill Link hits five times, not the average three', linked > plain * 1.4,
+		'linked ' + linked + ' vs plain ' + plain);
+}
+
+{
+	// Iron Barbs hurts whatever touches it. Unmodelled, this is chip damage on
+	// OUR side the search never accounts for.
+	function afterHitting(ability, ourMove) {
+		const state = B.createState(
+			[set('Snorlax', {moves: [ourMove]})],
+			[set('Ferrothorn', {moves: ['Tackle'], ability: ability})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: ourMove},
+			{type: 'move', index: 0, move: 'Tackle'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.me).curHP;
+	}
+	const barbed = afterHitting('Iron Barbs', 'Body Slam');
+	const safe = afterHitting('Sturdy', 'Body Slam');
+	check('Iron Barbs hurts a contact attacker', barbed < safe,
+		'barbed ' + barbed + ' vs safe ' + safe);
+	// A move that does not touch is not punished.
+	const ranged = afterHitting('Iron Barbs', 'Flamethrower');
+	const rangedSafe = afterHitting('Sturdy', 'Flamethrower');
+	check('  but leaves a non-contact move alone', ranged === rangedSafe,
+		'ranged ' + ranged + ' vs ' + rangedSafe);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

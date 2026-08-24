@@ -311,7 +311,21 @@ var RRBattle = (function () {
 
 		var move;
 		try {
-			move = new calc.Move(gen(), moveName);
+			// Skill Link makes every multi-hit move hit the maximum number of
+			// times, and nothing else in the stack applies it -- the calculator
+			// has no mention of the ability at all. Left alone, Icicle Spear off
+			// a Cloyster was priced at three hits instead of five, so incoming
+			// damage came out **forty per cent low**. Underestimating what the
+			// opponent does to you is the one direction a Nuzlocke planner must
+			// never be wrong in: it turns a Pokemon that dies into one the
+			// search believes survives.
+			var opts = null;
+			if (attacker.set.ability === "Skill Link") {
+				var probe = new calc.Move(gen(), moveName);
+				if (probe.hits && probe.hits > 1) opts = {hits: 5};
+			}
+			move = opts ? new calc.Move(gen(), moveName, opts)
+				: new calc.Move(gen(), moveName);
 		} catch (e) {
 			state.unmodelled.push("move not in calculator: " + moveName);
 			return null;
@@ -333,7 +347,9 @@ var RRBattle = (function () {
 			crit: applySpecialStatusScaling(arrays.crit, attacker, moveName),
 			critChance: RRCritKO.critChance(toCalcPokemon(attacker),
 				toCalcPokemon(defender), move, 0),
-			hits: arrays.hits
+			hits: arrays.hits,
+			// Whether the move touches, which decides Iron Barbs and Rough Skin.
+			contact: !!(move.flags && move.flags.contact)
 		});
 	}
 
@@ -1068,6 +1084,9 @@ var RRBattle = (function () {
 	 */
 	var NO_RECOIL = {"Rock Head": true, "Magic Guard": true};
 
+	/** Abilities that hurt whatever touches them, for an eighth of max HP. */
+	var SPIKY_SKIN = {"Iron Barbs": true, "Rough Skin": true};
+
 	function note(state, text) {
 		if (state.unmodelled.indexOf(text) < 0) state.unmodelled.push(text);
 	}
@@ -1239,6 +1258,15 @@ var RRBattle = (function () {
 			damage(attacker, dealt * (mech.recoil[0] / mech.recoil[1]));
 		}
 		if (mech.drain) heal(attacker, dealt * (mech.drain[0] / mech.drain[1]));
+		// Iron Barbs and Rough Skin bite back at anything that touches them, for
+		// an eighth of its maximum HP. Unmodelled, this is chip damage on YOUR
+		// side that the search never accounts for -- so a Pokemon it believes
+		// finishes a fight at a sliver of health actually finishes it dead.
+		// Magic Guard blocks it, being indirect damage like recoil.
+		if (rolls && rolls.contact && !attacker.fainted &&
+			SPIKY_SKIN[defender.set.ability] && !NO_RECOIL[attacker.set.ability]) {
+			damage(attacker, attacker.maxHP / 8);
+		}
 		// Self-Destruct and friends take the user with them. Missing this let the
 		// exact search "prove" a clean run through Surge in which Weezing used
 		// Self-Destruct on turn 17 and switched out on turn 18.

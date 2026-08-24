@@ -472,11 +472,24 @@ with tests in `tools/test_battle.js`.
 **Still open, ranked by how much they change a fight** (from the audit's list of
 64 abilities neither the engine nor the calculator mentions, 183 uses):
 
-    Moxie / Beast Boost   12 uses   attack rises on every KO: snowballs
-    Skill Link             6 uses   multi-hit moves always hit five times
-    Speed Boost            4 uses   +1 Speed every turn, so turn order flips
-    Iron Barbs             4 uses   contact damage back at the attacker
-    Magic Bounce           4 uses   status moves reflected at the user
+    Skill Link             6 uses   FIXED: was three hits instead of five
+    Speed Boost            4 uses   FIXED: turn order was wrong from turn two
+    Iron Barbs             4 uses   FIXED: contact chip on our side was missed
+    Magic Bounce           4 uses   FIXED: status moves now bounce back
+    Moxie / Beast Boost   12 uses   left alone, and the reason is interesting
+
+**Why Moxie was skipped.** It raises Attack whenever its holder scores a knock
+out, and against the clean-win search it can essentially never fire: the moment
+a trainer's Pokemon knocks out one of ours the branch is worth zero and is cut,
+so the boosted state is never explored. It matters only on the `winChance` and
+fallback paths, where losses are counted rather than cutting. Worth doing
+eventually, worth nothing now.
+
+**The direction of an error decides its priority.** Skill Link and Iron Barbs
+both made the engine OPTIMISTIC -- it underestimated incoming damage by forty
+per cent on a Cloyster's Icicle Spear, and missed chip damage on our own side
+entirely. A planner whose whole job is to not lose a Pokemon can survive being
+too cautious; being too hopeful is how a run ends.
 
 The rest of the list is mostly genuinely inert in a battle simulation (Illuminate,
 Frisk, Gluttony) or informational (Trace, Pressure). Re-run the audit before
