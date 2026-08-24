@@ -627,3 +627,42 @@ anybody would bring. The dex carries `tmMoves` and `tutorMoves`, but the arrays
 are indices into a scheme that does not decode as plain move IDs -- mapping them
 straight gives Medicham Gust and Horn Attack -- so decoding it is its own task.
 **Until that is done, late-game numbers are a floor and not a measurement.**
+
+## Every hard fight in the game fails the same way (2026-08-24)
+
+The Elite Four re-probed with a team somebody would actually bring (fully
+evolved, trained, Sitrus):
+
+       budget    verdict      nodes    horizon hit?
+        50,000   undecided   50,001    no
+       200,000   undecided  200,001    no
+       800,000   undecided  800,001    no
+
+Against 161 nodes and IMPOSSIBLE with the old untrained pool. So the trained team
+is not obviously losing -- the search simply cannot settle it, and **the horizon
+is not what stops it**, at any budget.
+
+That is now the same signature everywhere: Misty, Lt. Surge on the real team at
+56 million nodes, and the Elite Four all come back undecided, none of them
+horizon-bound, none proved impossible. One failure mode, at every stage of the
+game, and it is breadth.
+
+Which tells us what the tree looks like. It is **wide and shallow, not deep**:
+about ten actions a turn, four moves and up to six switches, over fights that
+resolve in ten to twenty-four turns. Depth costs nothing; branching costs
+everything. That rules some tools in and others out:
+
+    ordering            measured 10x to 35x        the only thing that has worked
+    parallel search     measured 3.4x              real, and already spent
+    prunes              measured 0                 both attempts inert
+    deeper horizons     measured inert             not the constraint
+    shallower first     measured 8x WORSE          the shallow tree is not small
+
+And it points at the one thing not yet tried: **the opponent does not branch.**
+`cleanWin` asks the AI for a single reply, so the search is not a game tree at
+all, it is single-agent pathfinding through a graph where only our choices
+multiply. Game-tree machinery -- proof-number search, alpha-beta -- is aimed at a
+shape this problem does not have. The tools that fit a wide single-agent graph
+are better duplicate detection and better ordering, and duplicate detection has
+never been looked at: the visited set keys on exact HP, so two positions one
+point apart are explored twice over.
