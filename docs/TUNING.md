@@ -574,3 +574,41 @@ records which -- a resumed run searches only what is left.
 
 This is the trigger the plan named for the reserve lever. Proof-number search is
 now the candidate rather than more cores.
+
+## The late-game benchmark was measuring the wrong fights, again (2026-08-24)
+
+The first whole-game run reported the Elite Four at 0 for 9 and it was not the
+planner. `bench_game` inherited the generator's species pool, which is hard-coded
+to the Kanto lines a player might have before the third gym, so the Elite Four
+was being fought by a **level 87 Pikachu, Electrode and Kingler** against
+Zacian-Crowned, Iron Valiant, Great Tusk and Mega Lucario. The search proved
+that unwinnable in 161 nodes and was right to.
+
+**This file already records this mistake.** "The benchmark was measuring the
+wrong fights (2026-08-23)" is about a base-stat filter that sent level 44
+Poliwags into Lt. Surge. It was written down, the lesson was explicit, and it
+happened again in a new form the moment the benchmark reached a part of the game
+nobody had looked at. So it is worth stating as a rule rather than an anecdote:
+
+> **A generated team must be the team someone would actually have at that point
+> in the run, and reaching a new part of the game means asking that question
+> again from scratch.**
+
+Three things were wrong, of which only the first was obvious:
+
+    species pool   Kanto lines only, at every level
+    EVs            zero, at every level -- about fifty stat points at level 85
+    items          Oran Berry, at every level
+
+All three now scale with level, and **the early game is untouched**: below level
+40 the pool, spread and item are exactly what they were, so every number
+recorded above keeps its meaning. Verified by generating a level 36 team before
+and after and getting the same six species.
+
+Still wrong, and parked deliberately: sets are built from **level-up moves
+only**. A real late-game team is largely TMs and tutors, and Medicham arriving
+at the Elite Four with Power Trick, Reversal, Recover and Counter is not a team
+anybody would bring. The dex carries `tmMoves` and `tutorMoves`, but the arrays
+are indices into a scheme that does not decode as plain move IDs -- mapping them
+straight gives Medicham Gust and Horn Attack -- so decoding it is its own task.
+**Until that is done, late-game numbers are a floor and not a measurement.**

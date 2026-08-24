@@ -105,10 +105,49 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		return {species: current, chain: chain};
 	}
 
-	const POOL = Object.values(dex.species).filter(function (sp) {
-		return sp.dexID && sp.dexID <= 143 && (sp.levelupMoves || []).length >= 4 &&
-			!(sp.name || '').includes('-');
-	});
+	/**
+	 * The species a player could plausibly be carrying, WHICH DEPENDS ON WHEN.
+	 *
+	 * Before the third gym that is a Kanto line, and the pool was hard-coded to
+	 * exactly that. Applied to the Elite Four it produced a level 87 Pikachu,
+	 * Electrode and Kingler against Zacian-Crowned, Iron Valiant and Great Tusk,
+	 * and the search correctly proved the fight unwinnable in 161 nodes -- which
+	 * looked exactly like the planner failing the Elite Four 0 for 9.
+	 *
+	 * This is the same mistake `TUNING.md` already records under "the benchmark
+	 * was measuring the wrong fights", where a base-stat filter meant to exclude
+	 * legendaries sent level 44 Poliwags into Lt. Surge. It was written down, and
+	 * it still happened again in a new form, so it is worth stating as a rule
+	 * rather than an anecdote: **a generated team has to be the team someone
+	 * would actually have at that point in the run**, and every time the
+	 * benchmark reaches a new part of the game that question has to be asked
+	 * again.
+	 *
+	 * The pool now widens with level, in the shape a real run does: early on you
+	 * have whatever Kanto thing you caught, and by the Elite Four you have six
+	 * fully evolved Pokemon chosen on purpose.
+	 */
+	function poolFor(level) {
+		const all = Object.values(dex.species).filter(function (sp) {
+			return sp.dexID && (sp.levelupMoves || []).length >= 4 &&
+				!(sp.name || '').includes('-');
+		});
+		if (level <= 40) {
+			return all.filter(function (sp) { return sp.dexID <= 143; });
+		}
+		// Past the early game: anything fully evolved and not absurd. The cap on
+		// total stats keeps box legendaries out, since the player does not have
+		// one, while leaving genuinely strong final forms in.
+		return all.filter(function (sp) {
+			if ((sp.evolutions || []).some(function (e) { return e[0] !== 254; })) {
+				return false;   // still evolves, so not what you would be carrying
+			}
+			const total = (sp.stats || []).reduce(function (a, b) { return a + b; }, 0);
+			return total >= 400 && total <= 600;
+		});
+	}
+
+	const POOL = poolFor(0);
 
 	// Deterministic pseudo-random, so a benchmark run is reproducible.
 	let seed = startSeed === undefined ? 12345 : startSeed;
@@ -117,7 +156,33 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		return seed % n;
 	}
 
+	/**
+	 * EVs, which the generator used to leave at zero everywhere.
+	 *
+	 * Nobody arrives at the Elite Four with a blank stat spread. Zero EVs costs
+	 * roughly fifty points of a stat at level 85, which against teams built to
+	 * win is the difference between trading and being swept -- and it made the
+	 * late-game benchmark ask whether an untrained team can sweep a trained one,
+	 * a question whose answer is no and which says nothing about the planner.
+	 *
+	 * Early game keeps the zero spread, because that IS what a Nuzlocke team
+	 * looks like before the third gym, and because every number recorded in
+	 * TUNING.md was measured against it.
+	 */
 	const EVS = {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0};
+
+	/** A trained spread: bulk, plus the better attacking stat, plus speed. */
+	function evsFor(level, species) {
+		if (level <= 40) return EVS;
+		const stats = species.stats || [];
+		const physical = (stats[1] || 0) >= (stats[3] || 0);
+		return {
+			hp: 252,
+			atk: physical ? 252 : 0,
+			spa: physical ? 0 : 252,
+			def: 0, spd: 0, spe: 4
+		};
+	}
 	const IVS = {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31};
 	const NATURES = ['Adamant', 'Modest', 'Jolly', 'Timid', 'Impish', 'Careful'];
 
@@ -144,14 +209,18 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		return {species: grown.species.name, level: level,
 			nature: NATURES[rand(NATURES.length)],
 			ability: ability && ability.name ? ability.name : undefined,
-			item: 'Oran Berry', moves: moves, evs: EVS, ivs: IVS};
+			// Sitrus past the early game, matching what the real save carries on
+			// every one of its six; Oran is what you actually have early.
+			item: level > 40 ? 'Sitrus Berry' : 'Oran Berry',
+			moves: moves, evs: evsFor(level, grown.species), ivs: IVS};
 	}
 
 	function team(level, size) {
 		const out = [];
+		const pool = poolFor(level);
 		let guard = 0;
 		while (out.length < size && guard++ < 300) {
-			const set = build(POOL[rand(POOL.length)], level);
+			const set = build(pool[rand(pool.length)], level);
 			if (!set) continue;
 			if (out.some(m => m.species === set.species)) continue;
 			try { new calc.Pokemon(calc.Generations.get(9), set.species, {level: level}); }
