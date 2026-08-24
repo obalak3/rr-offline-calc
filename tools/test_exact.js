@@ -25,7 +25,8 @@ const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number, Dat
 vm.createContext(sandbox);
 for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
 	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-ai.js',
-	'src/js/rr-plan.js', 'src/js/rr-solver.js', 'src/js/rr-exact.js']) {
+	'src/js/rr-plan.js', 'src/js/rr-solver.js', 'src/js/rr-matchup.js',
+	'src/js/rr-exact.js']) {
 	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
 }
 const B = sandbox.RRBattle;
@@ -147,8 +148,16 @@ function replay(state, steps) {
 	];
 	const state = B.createState(party, foe, {});
 
-	const full = X.cleanWin(state, {budget: 400000});
-	const starved = X.cleanWin(state, {budget: Math.max(1, Math.floor(full.nodes / 3))});
+	// Both searches run as a single exhaustive pass. What is being tested is
+	// that a budget too small to finish the TREE reports undecided, so the
+	// budget has to be starved relative to the tree -- and with the hunt passes
+	// on, `full.nodes` counts three restarts over the same tree rather than the
+	// tree, so a third of it was still comfortably enough to finish and the
+	// search rightly said so. Guessing a budget instead of deriving one has been
+	// wrong here before; this derives it from the right measurement.
+	const full = X.cleanWin(state, {budget: 400000, hunt: false, matchup: null});
+	const starved = X.cleanWin(state, {budget: Math.max(1, Math.floor(full.nodes / 3)),
+		hunt: false, matchup: null});
 
 	check('the same fight is settled with budget and not without (' +
 		full.nodes + ' nodes needed)', full.decided === true && starved.decided === false,

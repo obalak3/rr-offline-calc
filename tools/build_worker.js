@@ -67,6 +67,9 @@ const engineFiles = [
 	'js/rr-ai.js',
 	'js/rr-plan.js',
 	'js/rr-solver.js',
+	// rr-matchup must precede rr-exact: the exact search reads the pairing
+	// table through the global this file defines.
+	'js/rr-matchup.js',
 	'js/rr-exact.js'
 ];
 

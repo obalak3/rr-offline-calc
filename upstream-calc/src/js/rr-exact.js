@@ -39,6 +39,54 @@ var RRExact = (function () {
 
 	var RISKS = {roll: "median"};
 
+	/**
+	 * Who beats who, one on one -- the ordering prior, held for one search.
+	 *
+	 * Set by whichever top-level search is running and read by ordered(). It is
+	 * never built inside the walk: RRMatchup solves its pairings by calling
+	 * cleanWin, which resets the caches below on entry, so a table built partway
+	 * down a search would wipe the caches of the search that asked for it.
+	 */
+	var matchupTable = null;
+
+	/**
+	 * Whether the pass now running orders by the pairing table.
+	 *
+	 * It is a per-PASS choice rather than a per-search one because measurement
+	 * said so, and said so loudly. The table is worth 35x on Mt. Moon Archer
+	 * (150,000 nodes and undecided, against a witness in 4,279) and it is a
+	 * LOSS on Lt. Surge, where the search that finds the 23-turn line in 86,776
+	 * nodes without it cannot find that line at all with it. The reason is not
+	 * mysterious: Surge is won by setting up Growth twice on something the
+	 * table rates a poor pairing, and a prior that ranks "wins the 1v1" highest
+	 * steers away from exactly that. Neither ordering dominates, so the search
+	 * tries both rather than picking a winner it does not have evidence for.
+	 */
+	var passUsesMatchup = true;
+
+	/**
+	 * Build the pairing table for this fight, unless the caller supplied one or
+	 * asked for none. `matchup: null` disables it, which is what the 1v1 solves
+	 * inside RRMatchup pass so that building a table cannot recurse.
+	 */
+	function tableFor(state, opts) {
+		if (opts.matchup !== undefined) return opts.matchup;
+		if (typeof RRMatchup === "undefined") return null;
+		// A table is not free: up to thirty-six little searches, which on a
+		// six-a-side fight has measured around 1,700 nodes and can run higher.
+		// That is nothing against the budget the app gives a hard fight and it
+		// is a quarter of the budget the 135-fight benchmark gives an easy one,
+		// where the plain search was going to win in a few hundred nodes
+		// anyway. So a small budget skips it and searches immediately.
+		var budget = opts.exactBudget || opts.budget || 400000;
+		if (budget < (opts.matchupMinBudget || 50000)) return null;
+		try {
+			return RRMatchup.build(state, opts);
+		} catch (e) {
+			return null;
+		}
+	}
+
 	function countFainted(side) {
 		var n = 0;
 		for (var i = 0; i < side.team.length; i++) if (side.team[i].fainted) n++;
@@ -204,10 +252,26 @@ var RRExact = (function () {
 					var take = back / Math.max(1, incoming.curHP);
 					var free = freeValueOfSwitch(state, incoming,
 						state.me.team[was], threat);
+					// What the pairing table already knows about this switch.
+					// `deal` and `take` above compare one hit against another,
+					// which is a snapshot; the table has played the whole 1v1
+					// out, so it knows the difference between a Pokemon that
+					// trades well for a turn and one that actually wins the
+					// matchup. Ordering cannot change which lines exist, so this
+					// is free to be as opinionated as it is useful.
+					var cell = passUsesMatchup && matchupTable &&
+						typeof RRMatchup !== "undefined"
+						? RRMatchup.versus(matchupTable, action.index, state.foe.active)
+						: null;
+					var prior = 0;
+					if (cell) {
+						if (cell.beats) prior = 25 + 35 * cell.endHPFrac;
+						else if (cell.hopeless) prior = -40;
+					}
 					// Below zero, so a switch only outranks an attack that is
 					// doing almost nothing -- but a good pivot now beats a bad
 					// attack instead of losing to every one of them.
-					rank = -1 + 40 * deal - 30 * Math.min(1, take) + free;
+					rank = -1 + 40 * deal - 30 * Math.min(1, take) + free + prior;
 				}
 			} else {
 				var rolls = RRBattle.damageRolls(state, "me", action.move);
@@ -275,15 +339,31 @@ var RRExact = (function () {
 			budget: opts.exactBudget || opts.budget || 400000,
 			maxTurns: opts.maxTurns || 24,
 			exhausted: false,
-			truncated: false
+			truncated: false,
+			passOver: false
 		};
-		var seen = {};
 		var onProgress = opts.onProgress || null;
+		var started = Date.now();
+		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
+
+		// Built before the caches are cleared, because building it runs 1v1
+		// searches of its own and those clear the caches too.
+		matchupTable = tableFor(state, opts);
+		limits.nodes += (matchupTable && matchupTable.nodes) || 0;
+
 		singleReplyCache = {};
 		orderCache = {};
 		var line = [];
-		var started = Date.now();
-		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
+
+		// Per-pass state. `seen` is rebuilt for every pass and never shared:
+		// under a beam a position fails because its good replies were never
+		// tried, and carrying that failure into a wider pass would make the
+		// wider pass skip exactly the positions it was widened to examine --
+		// turning "I did not look" into "there is nothing there", which is the
+		// one lie this module must never tell.
+		var seen = {};
+		var beam = Infinity;
+		var passCap = limits.budget;
 
 		function walk(current, turnsLeft) {
 			// Once the search has given up, EVERY node must return immediately.
@@ -292,8 +372,14 @@ var RRExact = (function () {
 			// ran for over three minutes and only stopped when the node budget
 			// ran out. The budget check got away with the same shape by
 			// accident, because every later node also exceeds the budget.
-			if (limits.exhausted) return false;
+			if (limits.exhausted || limits.passOver) return false;
 			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return false; }
+			// A pass running out is not the search running out. The first stops
+			// this pass and lets the next, wider one start; the second stops
+			// everything. Sharing one flag would have let a cheap hunt pass
+			// consume the whole budget and report the fight undecided without
+			// the exhaustive pass ever running.
+			if (limits.nodes > passCap) { limits.passOver = true; return false; }
 			if ((limits.nodes & 1023) === 0) {
 				if (deadline && Date.now() > deadline) {
 					limits.exhausted = true;
@@ -330,7 +416,12 @@ var RRExact = (function () {
 
 			var before = countFainted(current.me);
 			var actions = ordered(current, key);
-			for (var i = 0; i < actions.length; i++) {
+			// The beam. Only the first few ranked actions are tried, which is
+			// what makes a hunt pass cheap enough to reach turn twenty. It can
+			// miss lines, so a pass with a beam is never allowed to conclude
+			// anything -- see the pass loop below.
+			var width = Math.min(actions.length, beam);
+			for (var i = 0; i < width; i++) {
 				var next;
 				try {
 					next = RRBattle.step(current, actions[i], theirs,
@@ -347,10 +438,100 @@ var RRExact = (function () {
 			return false;
 		}
 
-		var found = walk(state, limits.maxTurns);
+		/**
+		 * Hunt first, then decide.
+		 *
+		 * The two questions this search gets asked are not the same question,
+		 * and running them as one is what made the hard fights hopeless. "Is
+		 * there a line?" only needs ONE witness, and a witness is real however
+		 * recklessly it was found -- every step of it was simulated by the
+		 * engine, so a line that turns up under a beam of three is exactly as
+		 * playable as one that turns up after exhausting the tree. "Is there NO
+		 * line?" is the expensive claim, and only an exhaustive pass may make it.
+		 *
+		 * So the cheap narrow passes run first, and if any of them produces a
+		 * witness the fight is settled and the expensive pass never has to run.
+		 * If they all come up empty, nothing has been concluded and the
+		 * exhaustive pass runs with whatever budget is left.
+		 */
+		var passes = [];
+		// A portfolio is three restarts, so it pays for the same easy tree
+		// three times: a fight the plain search settles in 10 nodes costs 73
+		// through the passes. That is nothing on a fight worth hunting and it is
+		// pure waste on one that is not, so the same budget test that decides
+		// whether a pairing table is worth building decides whether to hunt at
+		// all. Below it, this is the search exactly as it was.
+		var huntWorthIt = limits.budget >= (opts.huntMinBudget || 50000);
+		if (opts.hunt === false || (!huntWorthIt && !opts.passes)) {
+			passes.push({beam: Infinity, turns: limits.maxTurns, share: 1,
+				matchup: opts.matchup === null ? false : true});
+		} else if (opts.passes) {
+			passes = opts.passes;
+		} else {
+			// A PORTFOLIO, not a ladder. Each hunt pass is a different way of
+			// looking at the same tree, and they were chosen because each one
+			// finds fights the others do not:
+			//
+			//   the pairing table    Mt. Moon Archer, in 4,279 nodes, where
+			//                        everything else was still lost at 150,000
+			//   a narrow beam        Lt. Surge, in 47,487 nodes, where the
+			//                        table-ordered search never arrives
+			//
+			// They are cheap when they work and capped when they do not, so the
+			// exhaustive pass still gets the bulk of the budget. Restarting the
+			// search under a different order cannot change which lines exist,
+			// which is what makes a portfolio legitimate here at all.
+			passes.push({beam: Infinity, turns: limits.maxTurns, share: 0.05,
+				matchup: true});
+			passes.push({beam: 8, turns: limits.maxTurns, share: 0.20,
+				matchup: false});
+			// The decider. Full width, full horizon, no pairing prior -- the
+			// search exactly as it was before any of this, and the only pass
+			// entitled to conclude anything.
+			passes.push({beam: Infinity, turns: limits.maxTurns, share: 1,
+				matchup: false});
+		}
+
+		var found = false;
+		var decidedHere = false;
+		for (var p = 0; p < passes.length && !found; p++) {
+			var pass = passes[p];
+			// Full width and full horizon is what earns the right to conclude.
+			// The ORDER does not enter into it: reordering changes which line
+			// is found first and never which lines exist, so a table-ordered
+			// pass that runs out of things to try has searched the same tree as
+			// a plainly-ordered one. Only the beam can hide a line, and a beam
+			// of Infinity hides nothing.
+			var exhaustive = !(pass.beam < Infinity) && pass.turns >= limits.maxTurns;
+			seen = {};
+			beam = pass.beam;
+			passUsesMatchup = pass.matchup !== false;
+			// Ordering differs per pass, so a cached order from the last one is
+			// the wrong order for this one.
+			orderCache = {};
+			line.length = 0;
+			limits.truncated = false;
+			limits.passOver = false;
+			// The last pass gets everything that is left; the hunt passes get a
+			// slice each, so a hunt that finds nothing cannot starve the pass
+			// that is allowed to conclude.
+			passCap = exhaustive ? limits.budget
+				: Math.min(limits.budget, limits.nodes + Math.ceil(limits.budget * pass.share));
+
+			found = walk(state, pass.turns);
+			if (found) break;
+			// Only a full-width, full-horizon pass that actually FINISHED is
+			// entitled to say the fight has no clean line.
+			if (exhaustive && !limits.exhausted && !limits.passOver &&
+				!limits.truncated) {
+				decidedHere = true;
+			}
+			if (limits.exhausted) break;   // out of budget or out of time
+		}
+
 		return {
 			found: found,
-			decided: found || !(limits.exhausted || limits.truncated),
+			decided: found || decidedHere,
 			nodes: limits.nodes,
 			elapsedMs: Date.now() - started,
 			line: found ? line.slice() : null
@@ -459,9 +640,9 @@ var RRExact = (function () {
 	 */
 	var replyCache = {};
 
-	function replies(state, opts) {
+	function replies(state, opts, key) {
 		if (typeof RRAI === "undefined") return null;
-		var cacheKey = RRBattle.positionKey(state);
+		var cacheKey = key === undefined ? RRBattle.positionKey(state) : key;
 		var cached = replyCache[cacheKey];
 		if (cached !== undefined) return cached;
 		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
@@ -535,16 +716,23 @@ var RRExact = (function () {
 				return 0;
 			}
 
-			var key = RRBattle.positionKey(current) + "@" + turnsLeft;
+			// One positionKey, used three ways. It used to be computed here for
+			// the memo and then computed again inside replies(), while ordered()
+			// was called with no key at all -- so this search re-priced every
+			// bench member's best move and the opponent's worst reply at every
+			// node, which is dozens of damage lookups, where cleanWin caches the
+			// same work. Same answers, less of them computed twice.
+			var posKey = RRBattle.positionKey(current);
+			var key = posKey + "@" + turnsLeft;
 			var cached = memo[key];
 			if (cached !== undefined) return cached;
 			memo[key] = 0;   // guard against revisiting a position mid-descent
 
-			var theirs = replies(current, opts);
+			var theirs = replies(current, opts, posKey);
 			if (!theirs) return 0;
 
 			var before = countFainted(current.me);
-			var actions = ordered(current);
+			var actions = ordered(current, posKey);
 			var best = 0;
 
 			// At the root every action is priced, even once a certain win is
@@ -591,6 +779,13 @@ var RRExact = (function () {
 		}
 
 		replyCache = {};
+		matchupTable = tableFor(state, opts);
+		// Cleared because this search now uses it too. positionKey does NOT
+		// encode species, so an entry left over from a different fight can
+		// legitimately collide with a key here, and the order it returned would
+		// be for somebody else's team. Ordering cannot make an answer wrong, but
+		// it can make one arbitrarily slow, and a stale hit is not debuggable.
+		orderCache = {};
 		rootRanking = [];
 		var chance = value(state, limits.maxTurns, true);
 		rootRanking.sort(function (x, y) { return y.chance - x.chance; });

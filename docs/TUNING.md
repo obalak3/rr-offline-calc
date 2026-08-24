@@ -228,3 +228,79 @@ needed 360 fights to answer.
 arguments and returns `{noCrit, crit}`, not `rolls`. Passing a defender key made
 every move in Surge's team read as "no damage", which looked exactly like an
 engine bug for several minutes.
+
+## Two orderings, each of which breaks the other's fight (2026-08-24)
+
+The hard fights were attacked by making the exact search FIND lines faster
+rather than by changing what it looks for. Two levers were built and measured
+separately, on the assumption that both would help. Only one of them helps any
+given fight, and each one destroys the other's result.
+
+`tools/bench_hunt.js` is the instrument. It runs `RRExact.cleanWin` on the three
+fights that fail across the board and reports found / decided / nodes per fight,
+because a nine-fight win rate cannot tell "no clean line exists" from "the search
+ran out", and that is the distinction this work turns on.
+
+**The pairing table** (`rr-matchup.js`) solves every 1v1 up front and orders
+switches by who wins the matchup. **The beam** tries only the first few ranked
+actions per node. Same fight, same team, node budget only, no clock:
+
+    MT. MOON ARCHER, team 2         verdict      nodes
+      neither (the engine as was)   undecided   150,000
+      pairing table only            FOUND 12T     4,279
+      beam only                     undecided   150,000
+      both                          FOUND 12T     5,065
+
+    LT. SURGE, team 1               verdict      nodes
+      neither (the engine as was)   FOUND 23T    86,776
+      pairing table only            undecided   200,000
+      beam only                     FOUND 23T    47,487
+      both                          undecided   200,000
+
+Read those two tables together. The pairing table is worth 35x on Mt. Moon and
+is a **loss** on Surge, where the search finds the 23-turn line without it and
+cannot find it at all with it. The reason is legible rather than mysterious: the
+Surge line is won by setting up Growth twice on a Pokemon the table rates a poor
+pairing, so a prior that ranks "wins the 1v1" highest steers away from precisely
+the move that wins.
+
+So neither ordering dominates, and the honest response is not to pick one. The
+search now runs a **portfolio**: a cheap table-ordered pass, then a beam pass
+without the table, then the plain exhaustive pass with the bulk of the budget.
+Restarting under a different order cannot change which lines exist, so this is
+free of soundness cost -- only the exhaustive pass may ever conclude, and its
+configuration is the engine exactly as it was.
+
+**Misty resisted everything.** Beam widths 2 through Infinity at horizons 10, 16
+and 24, none found a line and none decided the question:
+
+    beam 2      exhausts its tree in 242 nodes, finding nothing
+    beam 3      exhausts in 1,223
+    beam 5+     runs out of budget at 150,000
+
+A narrow beam finishing that fast is worth reading carefully: it is not evidence
+that Misty is unwinnable, it is evidence that the beam threw the winning lines
+away. Misty remains undecided and is the open question.
+
+**A caution this exercise earned.** The pairing table was built, tested, measured
+on one fight, and looked like a 35x win. It took a second fight to discover it
+also loses fights outright. `TUNING.md` already said one fight is not evidence;
+this is the first time that rule caught something that would otherwise have
+shipped as an unambiguous improvement.
+
+## The ceiling was measured with a weaker search than the planner (2026-08-24)
+
+`tools/ceiling.js` carried a private copy of the clean-win search, with a comment
+promising it was kept identical to the real one. It had drifted: it ranked every
+switch at `-1`, the rule `rr-exact.js` abandoned once the proved Surge line
+turned out to attack on turn one and switch on turn two. It also graded "the
+planner" by running `RRSolver`, which the app stopped asking two commits earlier.
+
+So the oracle was answering with a worse search than the planner it was grading,
+and every fight it called undecided was a fight a better search might have
+settled -- which is the number the whole tool exists to report. It now calls
+`RRExact.cleanWin` and grades `RRExact.planRoute`. **The 67% / 0% / 33% figures
+recorded above predate this and should not be quoted until it is re-run.**
+
+Team generation and battle selection now live in `tools/lib/harness.js`, shared
+by both benchmarks, so the two cannot drift apart again.

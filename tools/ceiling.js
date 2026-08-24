@@ -43,11 +43,13 @@ const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number, Dat
 vm.createContext(sandbox);
 for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
 	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-ai.js',
-	'src/js/rr-plan.js', 'src/js/rr-solver.js']) {
+	'src/js/rr-plan.js', 'src/js/rr-solver.js', 'src/js/rr-matchup.js',
+	'src/js/rr-exact.js']) {
 	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
 }
 const B = sandbox.RRBattle;
 const S = sandbox.RRSolver;
+const X = sandbox.RRExact;
 const AI = sandbox.RRAI;
 const TRAINERS = sandbox.RR_TRAINER_DATA;
 
@@ -128,95 +130,33 @@ function team(level, size) {
 
 const RISKS = {roll: 'median'};
 
-/** The AI's argmax reply: the same opponent the benchmark's routes face. */
-function reply(state) {
-	const flags = {checkBadMove: true, checkGoodMove: true};
-	const scored = AI.scoreAll(state, 'foe', flags, {});
-	const gate = AI.switchGate(state, 'foe', flags);
-	let best = null;
-	for (const entry of scored) {
-		if (entry.action.type === 'switch' && !gate.maySwitch) continue;
-		if (!best || entry.score > best.score) best = entry;
-	}
-	return best ? best.action : null;
-}
-
 const fainted = side => side.team.filter(m => m.fainted).length;
-const allDown = side => side.team.every(m => m.fainted);
-
-/**
- * Try the promising actions first.
- *
- * This is a search for ONE witness, not for all of them: the moment a clean
- * line is found the answer is yes and everything else is wasted work. So the
- * order actions are tried in decides almost the whole cost. Attacks that
- * actually threaten the Pokemon in front go first, biggest first, and switches
- * go last because they are rarely the start of a winning line and there are a
- * lot of them.
- *
- * This changes nothing about the answer, only how long it takes to reach it --
- * the search is still exhaustive when it reports IMPOSSIBLE.
- */
-function ordered(state) {
-	const defender = B.active(state.foe);
-	return B.legalActions(state, 'me').map(function (action) {
-		let rank;
-		if (action.type === 'switch') {
-			rank = -1;
-		} else {
-			const rolls = B.damageRolls(state, 'me', action.move);
-			const hit = rolls ? rolls.noCrit[rolls.noCrit.length - 1] : 0;
-			// A move that kills outright beats one that merely hurts.
-			rank = hit >= defender.curHP ? 1000 + hit : hit;
-		}
-		return {action: action, rank: rank};
-	}).sort(function (a, b) { return b.rank - a.rank; })
-		.map(function (entry) { return entry.action; });
-}
 
 /**
  * Is a clean win reachable from here?
  *
- * Returns true as soon as one line is found. `budget` bounds the work; when it
- * runs out the answer is UNKNOWN rather than false, which is why the caller
- * checks `exhausted` before counting anything as impossible.
+ * This used to be a private copy of the exact search, living in this file. It
+ * had drifted: it ranked every switch at -1, which is the exact rule rr-exact.js
+ * abandoned once the proved line through Lt. Surge turned out to attack on turn
+ * one and switch on turn two. So the oracle was answering with a weaker search
+ * than the planner it was grading, and every fight it called "undecided" was a
+ * fight a better search might have settled -- which is precisely the number this
+ * whole tool exists to report.
+ *
+ * It now calls the shipped engine. A ceiling measured with anything else is not
+ * a ceiling.
  */
 function cleanWinExists(state, limits) {
-	const seen = new Map();
-
-	function walk(current, turnsLeft) {
-		if (limits.nodes++ > limits.budget) { limits.exhausted = true; return false; }
-		if (allDown(current.foe)) return true;
-		if (turnsLeft <= 0) { limits.truncated = true; return false; }
-
-		// Position AND remaining turns: keying on the position alone lets a
-		// failure with two turns left suppress the same position reached with
-		// eighteen, which loses real wins and can manufacture a false
-		// "impossible". Storing the largest budget already tried keeps the
-		// pruning, since failing with more turns implies failing with fewer.
-		const key = B.positionKey(current);
-		const triedWith = seen.get(key);
-		if (triedWith !== undefined && triedWith >= turnsLeft) return false;
-		seen.set(key, turnsLeft);
-
-		const theirs = reply(current);
-		if (!theirs) return false;
-
-		const before = fainted(current.me);
-		for (const mine of ordered(current)) {
-			let next;
-			try {
-				next = B.step(current, mine, theirs, {mode: 'maxroll', risks: RISKS})[0].state;
-			} catch (e) { continue; }
-			// The pruning that makes this tractable: one death and the line is
-			// worthless, so it is cut rather than explored.
-			if (fainted(next.me) > before) continue;
-			if (walk(next, turnsLeft - 1)) return true;
-		}
-		return false;
-	}
-
-	return walk(state, limits.maxTurns);
+	const result = X.cleanWin(state, {
+		exactBudget: limits.budget,
+		maxTurns: limits.maxTurns
+	});
+	limits.nodes = result.nodes;
+	// `decided` already carries the distinction this tool turns on: a search
+	// that finished knowing there is no line, versus one that simply ran out.
+	limits.exhausted = !result.found && !result.decided;
+	limits.truncated = false;
+	return result.found;
 }
 
 const early = [];
@@ -232,6 +172,12 @@ for (const segment of TRAINERS.segments) {
 const teamCount = parseInt(process.argv[2], 10) || 5;
 const budget = parseInt(process.argv[3], 10) || 300000;
 const only = process.argv[4] || '';   // substring filter on the battle name
+// What the planner is allowed, as against what the ORACLE is allowed above.
+// The two differing is the whole point now that both are the same search: the
+// oracle answers "was this winnable at all", the planner answers "was it
+// winnable in the time the app actually spends".
+const plannerBudget = parseInt(process.env.PLANNER_BUDGET, 10) || 200000;
+const plannerMs = parseInt(process.env.PLANNER_MS, 10) || 5000;
 
 let possible = 0, impossible = 0, unknown = 0, plannerWon = 0, missed = 0;
 const perBattle = {};
@@ -255,10 +201,14 @@ for (let t = 0; t < teamCount; t++) {
 
 		// What the shipped planner actually manages.
 		B.clearCache();
+		// The planner as the app runs it -- the exact search, with the budget
+		// the inline path gives it. Grading RRSolver here measured an engine
+		// the app stopped asking two commits before this comment was written.
 		let route = null;
 		try {
-			route = S.planRoute(B.createState(party, foe, {}),
-				{lookahead: 2, budget: 20000, maxTurns: 30, risks: RISKS});
+			route = X.planRoute(B.createState(party, foe, {}),
+				{lookahead: 2, budget: 20000, exactBudget: plannerBudget,
+					timeLimitMs: plannerMs, maxTurns: 24, risks: RISKS});
 		} catch (e) { /* counted as not won */ }
 		const won = !!(route && route.won && route.losses === 0);
 		if (won) { plannerWon++; row.won++; }
