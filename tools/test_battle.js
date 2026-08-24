@@ -762,5 +762,44 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		String(outcome('Icicle Spear', 'Skill Link', 'Focus Sash')));
 }
 
+{
+	// Hazards used to test only for the Flying TYPE, ignoring Levitate and Air
+	// Balloon, and Magic Guard was consulted for recoil and nothing else.
+	function hazardLoss(species, ability) {
+		const state = B.createState(
+			[set('Snorlax'), set(species, {ability: ability})],
+			[set('Pikachu')], {});
+		state.me.hazards = {stealthrock: 1, spikes: 3, toxicspikes: 0, stickyweb: 0};
+		const before = state.me.team[1].curHP;
+		state.me.active = 1;
+		B.applyHazards(state, 'me');
+		return before - state.me.team[1].curHP;
+	}
+	const levitate = hazardLoss('Flygon', 'Levitate');
+	const grounded = hazardLoss('Snorlax', 'Immunity');
+	check('Levitate skips Spikes but not Stealth Rock',
+		levitate > 0 && levitate < grounded, levitate + ' vs grounded ' + grounded);
+	check('Magic Guard takes no hazard damage at all',
+		hazardLoss('Clefable', 'Magic Guard') === 0,
+		String(hazardLoss('Clefable', 'Magic Guard')));
+
+	function burnLoss(ability) {
+		const state = B.createState(
+			[set('Clefable', {moves: ['Harden'], ability: ability})],
+			[set('Pikachu', {moves: ['Harden']})], {});
+		B.active(state.me).status = 'brn';
+		const before = B.active(state.me).curHP;
+		const next = B.step(state, {type: 'move', index: 0, move: 'Harden'},
+			{type: 'move', index: 0, move: 'Harden'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return {lost: before - B.active(next.me).curHP,
+			turnsOut: B.active(next.me).turnsOut};
+	}
+	check('  and no burn damage either', burnLoss('Magic Guard').lost === 0);
+	check('  while an ordinary ability still burns', burnLoss('Cute Charm').lost > 0);
+	// The early return must not skip the per-turn bookkeeping Fake Out depends on.
+	check('  and its turn counter still advances', burnLoss('Magic Guard').turnsOut === 1);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

@@ -620,7 +620,17 @@ var RRBattle = (function () {
 		var mon = active(side);
 		if (mon.fainted) return;
 		var types = typesOf(mon);
-		var grounded = types.indexOf("Flying") < 0;
+		// isGrounded() already knows about Levitate and Air Balloon; this line
+		// only checked for the Flying type, so a Levitate Flygon walked into
+		// three layers of Spikes for 43 HP and a grounded Poison type never
+		// absorbed Toxic Spikes.
+		var grounded = isGrounded(mon);
+
+		// Magic Guard takes no indirect damage at all -- hazards, weather,
+		// status, Leech Seed. It was consulted only for recoil, so a Clefable
+		// switching into Stealth Rock and three Spikes lost 63 HP it should
+		// never lose.
+		if (mon.set.ability === "Magic Guard") return;
 
 		if (side.hazards.stealthrock) {
 			var effectiveness = 1;
@@ -1546,6 +1556,17 @@ var RRBattle = (function () {
 			var side = state[key];
 			var mon = active(side);
 			if (mon.fainted) return;
+
+			// Magic Guard again: sand, burn, poison and Leech Seed all skip it.
+			if (mon.set.ability === "Magic Guard") {
+				mon.volatiles.protecting = false;
+				mon.volatiles.flinched = false;
+				mon.volatiles.moved = false;
+				mon.turnsOut++;
+				if (mon.volatiles.taunt > 0) mon.volatiles.taunt--;
+				if (mon.volatiles.encore > 0) mon.volatiles.encore--;
+				return;
+			}
 
 			if (state.field.weather === "Sand") {
 				var types = typesOf(mon);
