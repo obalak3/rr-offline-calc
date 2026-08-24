@@ -29,6 +29,7 @@
  */
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const {fork} = require('child_process');
@@ -68,9 +69,57 @@ if (!battle) { console.error('no battle matching ' + pattern); process.exit(1); 
 const state = B.createState(party, H.foeSets(battle), {});
 const search = {exactBudget: perCore, maxTurns: 24};
 
+/**
+ * What is already known about this fight, from a run that did not finish.
+ *
+ * The searches ahead are hours long and the machine they run on is a laptop
+ * that gets closed, so a run that is interrupted must not be a total loss. What
+ * can honestly be carried across runs is not the search frontier -- that would
+ * mean serialising a depth-first stack, which is a different project -- but
+ * something simpler and nearly as valuable: **which openings were finished**.
+ *
+ * A share that came back DECIDED has exhausted its openings and proved there is
+ * no clean line beginning with any of them. That fact does not expire. A
+ * resumed run deals out only the openings nobody has settled yet, so six hours
+ * of finished work is six hours nobody repeats.
+ *
+ * Keyed on the fight AND the exact party, because a different team facing the
+ * same trainer is a different question with the same name.
+ */
+const checkpointDir = path.join(H.root, '.checkpoints');
+const fightKey = H.label(battle).replace(/[^A-Za-z0-9]+/g, '_') + '-' +
+	party.map(m => m.species + m.level).join('_').replace(/[^A-Za-z0-9_]+/g, '');
+const checkpointPath = path.join(checkpointDir, fightKey + '.json');
+
+let settledKeys = {};
+let priorNodes = 0;
+if (fs.existsSync(checkpointPath)) {
+	try {
+		const saved = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
+		if (saved.verdict === 'found') {
+			console.log('Already answered, from ' + checkpointPath + ':');
+			console.log('  CLEAN LINE FOUND, ' + saved.steps.length + ' turns');
+			saved.steps.forEach(st => console.log('  ' + st.turn + '. ' + st.myMon +
+				': ' + st.label + '   (' + st.theirMon + ' ' + st.theirLabel + ')'));
+			console.log('\nDelete that file to search again.');
+			process.exit(0);
+		}
+		settledKeys = saved.settledKeys || {};
+		priorNodes = saved.nodes || 0;
+	} catch (e) { settledKeys = {}; }
+}
+
 // Dealt round robin rather than in blocks, so no worker is handed only the
 // hopeless openings while another gets all the promising ones.
-const keys = X.rootActionKeys(state, {});
+const allKeys = X.rootActionKeys(state, {});
+const keys = allKeys.filter(k => !settledKeys[k]);
+if (!keys.length) {
+	console.log(H.label(battle));
+	console.log('\nVERDICT: NO CLEAN LINE EXISTS');
+	console.log('  every opening was settled across earlier runs (' +
+		priorNodes.toLocaleString() + ' nodes)');
+	process.exit(0);
+}
 const hands = [];
 for (let i = 0; i < Math.min(workerCount, keys.length); i++) hands.push([]);
 keys.forEach((k, i) => hands[i % hands.length].push(k));
@@ -79,7 +128,12 @@ console.log(H.label(battle));
 console.log('  party  ' + party.map(m => m.species + ' L' + m.level).join(', '));
 console.log('  foe    ' + battle.team.map(m => m.species + ' L' + m.level.value).join(', '));
 console.log('  ' + hands.length + ' processes x ' + perCore.toLocaleString() +
-	' nodes = ' + (hands.length * perCore).toLocaleString() + ' effective\n');
+	' nodes = ' + (hands.length * perCore).toLocaleString() + ' effective');
+if (Object.keys(settledKeys).length) {
+	console.log('  resuming: ' + Object.keys(settledKeys).length + ' of ' +
+		allKeys.length + ' openings already settled by earlier runs');
+}
+console.log('');
 
 const nodes = new Array(hands.length).fill(0);
 const children = [];
@@ -97,17 +151,47 @@ function report() {
 		Math.round(secs) + 's, ' + Math.round(total / secs).toLocaleString() + '/s   ');
 }
 
-function finish(verdict, extra) {
+/**
+ * Write down what is known, now, rather than at the end.
+ *
+ * Called every time a share reports, so killing the run at any moment leaves
+ * the finished openings recorded. That is the whole point: these searches take
+ * hours and the laptop they run on gets closed.
+ */
+function saveCheckpoint(extra) {
+	try {
+		fs.mkdirSync(checkpointDir, {recursive: true});
+		fs.writeFileSync(checkpointPath, JSON.stringify(Object.assign({
+			fight: H.label(battle),
+			party: party.map(m => m.species + ' L' + m.level),
+			settledKeys: settledKeys,
+			nodes: priorNodes + nodes.reduce((a, b) => a + b, 0),
+			updated: new Date().toISOString()
+		}, extra || {}), null, 1));
+	} catch (e) { /* a checkpoint that cannot be written must not kill the run */ }
+}
+
+function finish(verdict, extra, saveAs) {
 	if (settled) return;
 	settled = true;
 	killAll();
-	const total = nodes.reduce((a, b) => a + b, 0);
+	const total = priorNodes + nodes.reduce((a, b) => a + b, 0);
+	saveCheckpoint(saveAs);
 	console.log('\n\nVERDICT: ' + verdict);
 	console.log('  ' + total.toLocaleString() + ' nodes in ' +
-		Math.round((Date.now() - started) / 1000) + 's across ' + hands.length + ' processes');
+		Math.round((Date.now() - started) / 1000) + 's across ' + hands.length +
+		' processes' + (priorNodes ? ' (including earlier runs)' : ''));
 	if (extra) console.log(extra);
 	process.exit(0);
 }
+
+// Ctrl-C, or a shell closing under us, still leaves the finished work recorded.
+process.on('SIGINT', function () {
+	if (!settled) { saveCheckpoint(); console.log('\n\nStopped. Progress saved to ' +
+		checkpointPath); }
+	killAll();
+	process.exit(130);
+});
 
 hands.forEach(function (hand, index) {
 	const child = fork(path.join(__dirname, 'lib/hunt_child.js'), [], {stdio: 'inherit'});
@@ -127,10 +211,19 @@ hands.forEach(function (hand, index) {
 			const line = msg.steps.map(s => '  ' + s.turn + '. ' + s.myMon + ': ' +
 				s.label + '   (' + s.theirMon + ' ' + s.theirLabel + ')  you ' +
 				s.myHP + '/' + s.myMaxHP).join('\n');
-			finish('CLEAN LINE FOUND, ' + msg.steps.length + ' turns', '\nThe line:\n' + line);
+			finish('CLEAN LINE FOUND, ' + msg.steps.length + ' turns',
+				'\nThe line:\n' + line, {verdict: 'found', steps: msg.steps});
 			return;
 		}
-		if (!msg.decided) decided = false;
+		// A share that FINISHED has proved there is no clean line starting with
+		// any of its openings, and that is true forever. A share that ran out of
+		// budget has proved nothing and its openings stay on the list.
+		if (msg.decided) {
+			hands[index].forEach(k => { settledKeys[k] = true; });
+		} else {
+			decided = false;
+		}
+		saveCheckpoint();
 		if (++done >= hands.length) {
 			finish(decided ? 'NO CLEAN LINE EXISTS (every share finished)'
 				: 'UNDECIDED (budget ran out)');

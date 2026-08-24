@@ -48,6 +48,10 @@ function makeSandbox() {
 		},
 		Worker: function (url) {
 			const self = this;
+			if (sandbox.__failWorkerAt !== undefined &&
+				born.length >= sandbox.__failWorkerAt) {
+				throw new Error('no more workers');
+			}
 			this.url = url;
 			this.sent = [];
 			this.terminated = false;
@@ -194,6 +198,25 @@ function fixture() {
 	const after = seen[seen.length - 1];
 	check('  and a worker\'s new count replaces its old one',
 		after.nodes === 1750, String(after.nodes));
+}
+
+// --- a crew that cannot be fully staffed is not left half-running ----------
+{
+	const {sandbox, state} = fixture();
+	// The third worker refuses to start, after two are already searching.
+	sandbox.__failWorkerAt = 2;
+	let err = null;
+	sandbox.RRSearch.solve(state, {}, function () {},
+		function (e) { err = e; }, function () {});
+
+	check('a crew that cannot be staffed reports the failure',
+		typeof err === 'string' && err.length > 0, String(err));
+	// The bug this covers: solve() used forEach, so a failure partway through
+	// kept starting the remaining workers and left every earlier one alive,
+	// burning a core each for an answer already reported as failed.
+	check('  and no worker is left running behind it',
+		born.every(w => w.terminated),
+		born.map(w => w.terminated).join(','));
 }
 
 console.log('\n' + failures + ' failure(s)');

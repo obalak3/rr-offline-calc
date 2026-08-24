@@ -193,21 +193,36 @@ var RRSearch = (function () {
 			started: Date.now()};
 		for (var i = 0; i < hands.length; i++) crewState.nodes.push(0);
 
-		hands.forEach(function (hand, index) {
+		for (var h = 0; h < hands.length; h++) {
 			var share = {};
 			for (var key in opts) share[key] = opts[key];
-			share.rootActions = hand;
+			share.rootActions = hands[h];
 			var w;
 			try {
-				w = newWorker(function (event) { crewMessage(index, event); },
-					function (event) { crewError(index, event); });
+				w = newWorker(makeOnMessage(h), makeOnError(h));
 			} catch (e) {
+				// One worker failing to start means the crew is incomplete, and
+				// an incomplete crew must not be left running: the search has
+				// already been settled as failed, so anything still working is
+				// burning a core for an answer nobody will read. This was a
+				// forEach, which kept starting workers after the failure and
+				// left every earlier one alive until the next search.
+				crewState = null;
+				killCrew();
 				settle(null, (e && e.message) || "could not start the search");
 				return;
 			}
 			crew.push(w);
 			w.postMessage({kind: "hunt", state: state, search: share});
-		});
+		}
+	}
+
+	function makeOnMessage(index) {
+		return function (event) { crewMessage(index, event); };
+	}
+
+	function makeOnError(index) {
+		return function (event) { crewError(index, event); };
 	}
 
 	function crewProgress() {

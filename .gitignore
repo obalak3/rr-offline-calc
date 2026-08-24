@@ -10,3 +10,4 @@ data/*.ods
 
 # macOS
 .DS_Store
+.checkpoints/
