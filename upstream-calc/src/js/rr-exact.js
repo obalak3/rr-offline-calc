@@ -581,7 +581,8 @@ var RRExact = (function () {
 			// Only a pass already forbidden from concluding may blur positions
 			// together. `exhaustive` below is computed from the same facts and
 			// must stay in agreement with this.
-			hpBuckets = (pass.beam < Infinity) ? (opts.hpBuckets || 0) : 0;
+			hpBuckets = (pass.beam < Infinity)
+				? (opts.hpBuckets === undefined ? 8 : opts.hpBuckets) : 0;
 			// Ordering differs per pass, so a cached order from the last one is
 			// the wrong order for this one.
 			orderCache = new Map();

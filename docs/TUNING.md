@@ -678,3 +678,37 @@ shape this problem does not have. The tools that fit a wide single-agent graph
 are better duplicate detection and better ordering, and duplicate detection has
 never been looked at: the visited set keys on exact HP, so two positions one
 point apart are explored twice over.
+
+## Blurring near-identical positions: small, real, free (2026-08-24)
+
+The diagnosis said the tree is wide and the visited set keys on exact HP, so in
+a twenty-turn fight where HP drifts every turn almost nothing is ever revisited
+and the transposition table has nothing to do. `positionKey(state, {hpBuckets})`
+rounds HP into bands so near-identical positions get the same name.
+
+Measured as a single beam pass with the whole budget, so bucketing is the only
+variable:
+
+    fight              buckets   verdict      nodes
+      LT. SURGE         exact    FOUND 23T     7,584
+      LT. SURGE            20    FOUND 23T     7,517
+      LT. SURGE             8    FOUND 23T     6,174     19% fewer
+      ELITE FOUR BRUNO  exact    undecided   150,001
+      ELITE FOUR BRUNO     20    undecided   150,001
+      ELITE FOUR BRUNO      8    undecided   150,001     no change
+
+So it helps where a witness is findable and does nothing where it is not. Kept
+at 8 bands, and the honest caveat is that this is **one fight's worth of
+evidence** -- `TUNING.md` says elsewhere that one fight is not evidence, and that
+applies here too. It is kept because the downside is structurally bounded rather
+than because the number is convincing: bucketing runs only in the beam pass,
+which is a lottery ticket either way, and the exhaustive pass behind it still
+searches exact positions. A blurred pass that misses a line costs nothing that
+the pass behind it does not recover.
+
+**It must never reach a concluding pass.** Two positions in one band really can
+differ -- one survives the hit, the other does not -- so a blurred search can
+miss a line, and reporting "no clean line exists" on that basis would be the one
+lie this module must not tell. `tools/test_exact.js` asserts both halves: that a
+bucketed search finds what the exact one finds on a fight where both can, and
+that any line it returns really does lose nobody.
