@@ -486,3 +486,31 @@ each new stretch of the game rather than trusting this list to stay current.
 reported 173 missing abilities, nearly all of them damage abilities the vendored
 calculator handles perfectly. A list that long is a list nobody reads, and the
 four real problems were sitting in it undistinguished. It now searches both.
+
+## The coverage prune does not fire (2026-08-24)
+
+Plan step 4: cut a branch when some surviving foe cannot be beaten one on one by
+anyone still standing. Built, wired into the beam passes only (it is unsound in
+general -- a foe nobody beats alone can be worn down by several taking turns),
+and measured on three fights against two teams:
+
+    fight                    prune off        prune on
+      MISTY t1               250,001 nodes    250,001 nodes
+      MISTY t2               250,001 nodes    250,001 nodes
+      MT. MOON t1              1,191 nodes      1,191 nodes
+      SURGE t1                20,085 nodes     20,085 nodes
+
+**Identical node counts everywhere**, so the cut never fired once. That is not
+surprising in hindsight: it needs a foe that EVERY surviving Pokemon fails
+against, and six of yours against three to five of theirs almost always leaves
+somebody who can do the job. It would only bite on a nearly-lost position, which
+in a Nuzlocke search is a position that was already cut for other reasons.
+
+Removed. `RRMatchup.anyCoverageGap` is kept, tested, and unused: the pairing
+table's ordering is where its value turned out to be. The turns-lower-bound
+prune planned alongside it was not built, since the same objection applies with
+more force -- it needs a bound that boosts can invalidate.
+
+**Worth remembering as a pattern.** Ordering has been worth 10x to 35x on these
+fights; both prunes proposed have been worth nothing. On this problem, deciding
+what to look at FIRST beats deciding what not to look at.
