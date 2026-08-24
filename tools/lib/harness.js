@@ -371,14 +371,18 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		// Levitate in slot two, Tinkaton keeps Mold Breaker there -- so reading
 		// `abilities[0]` blindly left more than a quarter of the dex with
 		// nothing even after the `names` fix below.
+		// Each entry is [abilityID, nameIndex], and the second element is not
+		// decoration: one id can carry several same-effect names and the species
+		// picks which. Medicham's [37, 1] is **Pure Power**, where names[0] is
+		// Huge Power. The engine matches abilities by their string, so taking
+		// names[0] blindly hands it a name it will not recognise.
 		let ability = null;
 		for (const slot of (grown.species.abilities || [])) {
 			const record = slot && dex.abilities && dex.abilities[slot[0]];
-			if (record) { ability = record; break; }
-		}
-		// The dex stores `names`, an array, not `name`.
-		if (ability && !ability.name && ability.names) {
-			ability = {name: ability.names[0]};
+			if (!record) continue;
+			const names = record.names || [record.name];
+			const picked = names[slot[1]] || names[0];
+			if (picked) { ability = {name: picked}; break; }
 		}
 		// Restricted mode swaps a banned ability for a named replacement rather
 		// than leaving the Pokemon with none.
