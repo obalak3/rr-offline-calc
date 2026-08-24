@@ -34,6 +34,11 @@ const args = process.argv.slice(2).filter(a => a.charAt(0) !== '-');
 const pattern = (args[0] || 'ELITE FOUR LANCE').toUpperCase();
 const budget = parseInt(args[1], 10) || 400000;
 const show = process.argv.indexOf('--show') >= 0;
+// A level gradient separates the two things an "undecided" could mean. If a
+// team ten levels above the boss still cannot be shown to win, the fight is not
+// what is hard -- the search is. TUNING.md already uses this trick on the early
+// gyms; it is the only way to tell a search failure from a fair fight.
+const sweep = process.argv.indexOf('--sweep') >= 0;
 
 const battle = H.earlyBattles(loaded, {maxLevel: 100})
 	.find(b => H.label(b).toUpperCase().includes(pattern));
@@ -169,14 +174,33 @@ for (const m of party) {
 		(m.ability || '-').padEnd(14) + m.moves.join(' / '));
 }
 
-B.clearCache();
-const started = Date.now();
-const result = X.cleanWin(B.createState(party, H.foeSets(battle), {}),
-	{exactBudget: budget, maxTurns: 24});
-console.log('\n  ' + (result.found ? 'CLEAN LINE FOUND, ' + result.line.length + ' turns'
-	: result.decided ? 'NO CLEAN LINE EXISTS' : 'UNDECIDED (budget ran out)') +
-	'   ' + result.nodes.toLocaleString() + ' nodes, ' +
-	Math.round((Date.now() - started) / 1000) + 's');
+function solveAt(offset) {
+	const lvl = battle.team[0].level.value + offset;
+	const team = party.map(function (m) {
+		return Object.assign({}, m, {level: lvl});
+	});
+	B.clearCache();
+	const t0 = Date.now();
+	const r = X.cleanWin(B.createState(team, H.foeSets(battle), {}),
+		{exactBudget: budget, maxTurns: 24});
+	console.log('  +' + String(offset).padStart(2) + ' levels   ' +
+		(r.found ? 'CLEAN LINE FOUND, ' + r.line.length + ' turns'
+			: r.decided ? 'NO CLEAN LINE EXISTS' : 'UNDECIDED (budget ran out)').padEnd(30) +
+		r.nodes.toLocaleString().padStart(10) + ' nodes  ' +
+		Math.round((Date.now() - t0) / 1000) + 's');
+	return r;
+}
+
+console.log();
+let result;
+if (sweep) {
+	for (const offset of [2, 8, 15, 25]) {
+		result = solveAt(offset);
+		if (result.found) break;   // the boundary is what we came for
+	}
+} else {
+	result = solveAt(2);
+}
 
 if (result.found && show) {
 	console.log();
