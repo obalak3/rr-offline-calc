@@ -184,5 +184,32 @@ console.log('\nDescription cross-read: %d status effects checked against ROM tex
 		(m.effect.status || (m.effect.secondary && m.effect.secondary.status))).length,
 	mismatches);
 
+// ------------------------------------------------------------ who a move hits
+
+// Singles never needed this; doubles cannot work without it. A move wrongly
+// marked as spread would hit your own partner, and Earthquake hitting your
+// partner is the single most consequential rule in the format.
+{
+	const cases = [
+		['Earthquake', 'allAdjacent'], ['Surf', 'allAdjacent'],
+		['Self-Destruct', 'allAdjacent'], ['Growl', 'allFoes'],
+		['Leer', 'allFoes'], ['Swords Dance', 'self'], ['Water Gun', 'selected'],
+		['Stealth Rock', 'foeSide'], ['Outrage', 'random'],
+		// Both are newer than the dex snapshot, which records them as
+		// 'selected'; the calc knows better and wins that tie.
+		['Corrosive Gas', 'allAdjacent'], ['Mortal Spin', 'allFoes']
+	];
+	let wrong = [];
+	for (const [name, want] of cases) {
+		const got = MOVES[name] && MOVES[name].target;
+		if (got !== want) wrong.push(name + ' is ' + got + ', expected ' + want);
+	}
+	check('moves know who they hit', wrong.length === 0, wrong.join('; '));
+
+	let missing = Object.keys(MOVES).filter(n => !MOVES[n].target);
+	check('  and every move has a target', missing.length === 0,
+		missing.slice(0, 8).join(', '));
+}
+
 console.log('\n%d failure(s), %d warning(s)', failures, warnings);
 process.exit(failures ? 1 : 0);

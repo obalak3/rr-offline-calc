@@ -71,6 +71,51 @@ const GEN = calc.Generations.get(9);
  * looking for missing SEMANTICS passes them straight through. `selfKOAudit`
  * below is the guard against a third one.
  */
+/**
+ * Who a move hits, which singles never had to care about and doubles cannot
+ * work without.
+ *
+ * The ROM's target field is the authoritative source and covers the whole
+ * taxonomy; the calculator only records a target for the 80 spread moves,
+ * because that is all that changes DAMAGE. Where both have an opinion they are
+ * cross-checked below, since a move wrongly marked as spread would hit an ally
+ * that it should not -- and Earthquake hitting your own partner is the single
+ * most consequential rule in doubles.
+ *
+ * Counts across the 1003 ROM moves: 768 selected, 131 self, 59 allFoes,
+ * 24 allAdjacent, 11 special, 5 random, 4 foeSide, 1 ally.
+ */
+const ROM_TARGET = {
+	0: 'selected',      // one chosen target
+	1: 'special',       // decided by the move: Counter, Metronome, Sleep Talk
+	2: 'ally',          // Acupressure
+	4: 'random',        // Thrash, Petal Dance, Outrage
+	8: 'allFoes',       // both opponents, ally untouched: Growl, Leer, Acid
+	16: 'self',         // Swords Dance, Growth, Agility
+	32: 'allAdjacent',  // both opponents AND your partner: Earthquake, Surf
+	64: 'foeSide'       // hazards: Spikes, Stealth Rock
+};
+
+const CALC_TO_TARGET = {allAdjacentFoes: 'allFoes', allAdjacent: 'allAdjacent'};
+
+/** Where the calc has an opinion on targeting, it must match the ROM's. */
+function targetAudit(table) {
+	const disagreements = [];
+	for (const name of Object.keys(table)) {
+		const calcMove = CALC_MOVES[name];
+		if (!calcMove || !calcMove.target) continue;
+		const expected = CALC_TO_TARGET[calcMove.target];
+		if (!expected) continue;
+		const got = table[name].target;
+		// 'selected' losing to the calc is the resolved stale-snapshot case
+		// handled above, not a disagreement worth reporting.
+		if (got && got !== expected && got !== 'selected') {
+			disagreements.push([name, got, expected]);
+		}
+	}
+	return disagreements;
+}
+
 const SELF_KO = new Set([
 	'Self-Destruct', 'Explosion', 'Misty Explosion', 'Final Gambit',
 	'Memento', 'Healing Wish', 'Lunar Dance'
@@ -219,6 +264,16 @@ function buildTable(names) {
 				entry.mechanics = entry.mechanics || {};
 				entry.mechanics.selfKO = true;
 			}
+			// The dex snapshot predates the calc fork, so newer moves can carry a
+			// stale target of 0 ("selected") when they are really spread moves:
+			// Corrosive Gas and Mortal Spin both do. Where the ROM says
+			// "selected" and the calc knows better, take the calc -- the same
+			// dex-first-calc-as-fallback rule the rest of this file follows.
+			// A conflict between two NON-selected values stays a warning, since
+			// that would be a real disagreement rather than a stale record.
+			var romTarget = ROM_TARGET[dexRecord.target] || 'selected';
+			var calcTarget = CALC_MOVES[lookup] && CALC_TO_TARGET[CALC_MOVES[lookup].target];
+			entry.target = (romTarget === 'selected' && calcTarget) ? calcTarget : romTarget;
 			table[name] = entry;
 			report.dex++;
 			continue;
@@ -230,6 +285,7 @@ function buildTable(names) {
 				table[name].mechanics = table[name].mechanics || {};
 				table[name].mechanics.selfKO = true;
 			}
+			table[name].target = CALC_TO_TARGET[calcRecord.target] || 'selected';
 			report.calc++;
 			continue;
 		}
@@ -312,6 +368,16 @@ if (report.priorityDisagreements.length) {
 } else {
 	console.log('\nPriority agrees between the ROM dex and the calc for all %d moves.',
 		report.dex);
+}
+
+const targetDisagreements = targetAudit(table);
+if (targetDisagreements.length) {
+	console.log('\nWARNING: the calc and the ROM disagree on who these moves hit:');
+	targetDisagreements.forEach(function (d) {
+		console.log('  ' + d[0] + ': rom says ' + d[1] + ', calc says ' + d[2]);
+	});
+} else {
+	console.log('\nTargeting agrees between the ROM and the calc wherever both know.');
 }
 
 const selfKOSuspects = selfKOAudit(table);
