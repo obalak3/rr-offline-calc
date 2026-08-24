@@ -101,9 +101,22 @@ On the fights that actually fail, measured the same way before and after
     Mt. Moon             1 team in 3   ->  2 teams in 3
     Misty                nothing       ->  nothing
 
-Measured against fights *proven winnable* rather than against an imagined 100%,
-the planner was at 11/12. `tools/ceiling.js` computes that ceiling; it needs
-re-running because it shared a memoisation bug that has since been fixed.
+Measured against fights *proven winnable* rather than against an imagined 100%
+(`tools/ceiling.js 3 300000`, re-run once the oracle stopped using its own stale
+copy of the search):
+
+    a clean win EXISTS            20  (74%)
+    provably IMPOSSIBLE            0  (0%)
+    undecided (budget ran out)     7  (26%)
+    of the fights it COULD win  20/20  (100%)
+
+**Judgement is no longer where anything is lost.** The planner wins every fight
+anybody has shown to be winnable, and it won a Falkner fight the oracle itself
+could not decide. Every remaining failure is a fight nobody has decided, and
+nothing in any run recorded here has ever been proved impossible. Misty is 0 for
+3 on both sides of that table: not merely unwon, undecided.
+
+So the work left is compute and horizon, not evaluation.
 
 Speed on Lt. Surge, generated team: **1,183,765 ms → 34,265 ms**, a 34x
 improvement, from switch-matchup ordering (11x), deleting a clone-per-candidate
@@ -281,8 +294,18 @@ the fight is longer than 24 turns.
 This is why nothing in this repo has ever been proved impossible, and why that
 fact is not the reassurance it sounds like.
 
-The horizon itself deserves suspicion rather than trust. The proved Surge line
-for a generated team is **23 turns against a cap of 24**, which is close enough
-to the ceiling that the cap, not the budget, may be what binds on Surge and
-Misty. `tools/` has no permanent probe for this yet; it is the next thing to
-measure.
+The horizon itself deserved suspicion, and has now been measured. The proved
+Surge line for a generated team is **23 turns against a cap of 24**, which looked
+like the cap might be what binds. It is not, on either hard fight: both are
+budget-bound. A 10-turn search on Misty already costs as much as a 24-turn one,
+because this tree is wide rather than tall.
+
+Two things follow, and the second is the one that surprised me:
+
+1. `cleanWin` will extend the horizon UPWARD, to `maxTurnsCeiling`, but only
+   when a full-width pass finished everything inside the horizon and stopped
+   because lines ran past it. The app asks for 40. It is inert on Surge and
+   Misty, correctly.
+2. **Starting shallow and climbing is eight times WORSE**, not better. See
+   `TUNING.md`. Do not re-propose iterative deepening here without re-reading
+   that measurement first.

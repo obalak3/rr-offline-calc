@@ -456,6 +456,12 @@
 			RRSearch.solve(state, {
 				lookahead: 3, budget: 30000,
 				exactBudget: 60000000, maxTurns: 24,
+				// The only caller with no clock and every core, so the only one
+				// that can afford to ask a bigger question when the answer is
+				// "no clean line inside 24 turns". It fires only when the search
+				// finished that tree and stopped at the horizon; on a fight that
+				// ran out of budget it does nothing.
+				maxTurnsCeiling: 40,
 				certify: true, certifyBudget: 800000, certifyTimeLimitMs: 30000
 			}, function (result) {
 				var found = {route: result.route, risk: [], stepRisks: result.priced};
