@@ -13,128 +13,29 @@
  */
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
-
-const root = path.join(__dirname, '..');
-const calc = require(path.join(root, 'upstream-calc/calc/dist/index.js'));
-const sandbox = {calc, console, Math, JSON, Object, Array, Infinity, Number, Date};
-vm.createContext(sandbox);
-for (const file of ['src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
-	'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-ai.js',
-	'src/js/rr-plan.js', 'src/js/rr-solver.js', 'src/js/rr-mcts.js',
-	'src/js/rr-exact.js']) {
-	vm.runInContext(fs.readFileSync(path.join(root, 'upstream-calc', file), 'utf8'), sandbox);
-}
-const B = sandbox.RRBattle;
-const S = sandbox.RRSolver;
-const M = sandbox.RRMCTS;
-const X = sandbox.RRExact;
-const TRAINERS = sandbox.RR_TRAINER_DATA;
-
-const dex = new Function('return ' +
-	fs.readFileSync(path.join(root, 'data/rr-dex-data.js'), 'utf8') + ';')();
-const moveName = {};
-for (const key in dex.moves) moveName[dex.moves[key].ID] = dex.moves[key].name;
-
-const byID = {};
-for (const key in dex.species) byID[dex.species[key].ID] = dex.species[key];
+const H = require('./lib/harness.js');
 
 /**
- * Evolve a species as far as its level allows.
+ * Engine, dex and team generation all come from tools/lib/harness.js.
  *
- * Without this the generator handed the planner a level 44 Poliwag, because the
- * old filter excluded anything with a base stat total over 480 and that removes
- * most FULLY EVOLVED Pokemon rather than the legendaries it was aiming at. A
- * team of babies at gym-leader levels is not the team anyone brings, so the
- * benchmark was measuring fights nobody plays.
+ * This file used to carry its own copy of all three, and it drifted, exactly as
+ * tools/ceiling.js did before it. The copy here still read `ability.name` from a
+ * dex that stores `names`, so **every team this benchmark has ever generated
+ * fought with no ability at all** -- and it kept doing so for hours after the
+ * shared harness was fixed, because the fix could not reach a private duplicate.
  *
- * Evolution methods, read from the dex: 4 / 22 / 23 are level-up at a level, 7
- * is a stone, 1 is friendship, and 254 is MEGA evolution, which the player does
- * not get for free and must never be applied here.
+ * The headline number in docs/TUNING.md comes from this file. It has no business
+ * generating its own teams.
  */
-const BY_LEVEL = {4: true, 22: true, 23: true};
-const EARNED = {7: true, 1: true};   // stones and friendship: assume by mid-game
-function evolve(species, level) {
-	const chain = [species];
-	let current = species;
-	for (let hop = 0; hop < 4; hop++) {
-		let next = null;
-		for (const evo of (current.evolutions || [])) {
-			const method = evo[0], param = evo[1], target = byID[evo[2]];
-			if (!target || target.ID === current.ID) continue;
-			if (BY_LEVEL[method] && param <= level) { next = target; break; }
-			if (EARNED[method] && level >= 28) { next = target; break; }
-		}
-		if (!next) break;
-		current = next;
-		chain.push(current);
-	}
-	return {species: current, chain: chain};
-}
-
-// Species you could plausibly be carrying before the third gym: any Kanto line,
-// minus the legendaries and Dragonite (dex 144-151), evolved to match its level.
-const POOL = Object.values(dex.species).filter(function (sp) {
-	return sp.dexID && sp.dexID <= 143 && (sp.levelupMoves || []).length >= 4 &&
-		!(sp.name || '').includes('-');
-});
-
-// Deterministic pseudo-random, so a benchmark run is reproducible.
-let seed = 12345;
-function rand(n) {
-	seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-	return seed % n;
-}
-
-const EVS = {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0};
-const IVS = {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31};
-const NATURES = ['Adamant', 'Modest', 'Jolly', 'Timid', 'Impish', 'Careful'];
-
-/** A legal set: the four most recent level-up moves it would actually know. */
-function build(base, level) {
-	const grown = evolve(base, level);
-	const species = grown.species;
-	// Moves come from the WHOLE line, not just the final form: a Poliwrath still
-	// knows what it learned as a Poliwag, and several evolved forms have almost
-	// no level-up list of their own.
-	const seen = {};
-	const known = [];
-	for (const stage of grown.chain) {
-		for (const pair of (stage.levelupMoves || [])) {
-			if (pair[1] > level) continue;
-			const name = moveName[pair[0]];
-			if (!name || seen[name]) continue;
-			seen[name] = true;
-			known.push(name);
-		}
-	}
-	const moves = known.slice(-4);
-	if (!moves.length) return null;
-	const ability = (species.abilities && species.abilities[0] &&
-		dex.abilities && dex.abilities[species.abilities[0][0]]) || null;
-	return {
-		species: species.name, level: level,
-		nature: NATURES[rand(NATURES.length)],
-		ability: ability && ability.name ? ability.name : undefined,
-		item: 'Oran Berry', moves: moves, evs: EVS, ivs: IVS
-	};
-}
-
-function team(level, size) {
-	const out = [];
-	let guard = 0;
-	while (out.length < size && guard++ < 200) {
-		const set = build(POOL[rand(POOL.length)], level);
-		if (!set) continue;
-		if (out.some(function (m) { return m.species === set.species; })) continue;
-		try { new calc.Pokemon(calc.Generations.get(9), set.species, {level: level}); }
-		catch (e) { continue; }
-		out.push(set);
-	}
-	return out;
-}
+const loaded = H.loadEngine();
+const dexParts = H.loadDex();
+const gen = H.makeGenerator(loaded, dexParts);
+const B = loaded.B;
+const S = loaded.S;
+const M = loaded.M;
+const X = loaded.X;
+const TRAINERS = loaded.TRAINERS;
+const team = gen.team;
 
 // Real early-game battles: fixed levels, before the Surge cap.
 const early = [];
