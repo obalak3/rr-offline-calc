@@ -712,3 +712,18 @@ miss a line, and reporting "no clean line exists" on that basis would be the one
 lie this module must not tell. `tools/test_exact.js` asserts both halves: that a
 bucketed search finds what the exact one finds on a fight where both can, and
 that any line it returns really does lose nobody.
+
+## Hard fights with everything turned on (2026-08-24)
+
+`tools/bench_hunt.js 2`, 300,000 nodes and 45 s, portfolio plus pairing table
+plus bucketing:
+
+    GYM LEADER MISTY      found 0/2   undecided 2
+    GYM LEADER LT. SURGE  found 1/2   undecided 1   witness at 21,175 nodes
+    MT. MOON ARCHER       found 2/2                 witness at  4,279 nodes
+
+    witnesses found      3/6
+
+Mt. Moon is now solved on every team tried, at a cost that was 150,000-plus and
+undecided before any of this work. Surge's witness has come down from 86,776 to
+21,175. Misty remains the one fight nothing has moved.
