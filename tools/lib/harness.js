@@ -169,6 +169,54 @@ function makeGenerator(loaded, dexParts, startSeed) {
 	 * looks like before the third gym, and because every number recorded in
 	 * TUNING.md was measured against it.
 	 */
+	/**
+	 * What Restricted mode takes away from the PLAYER.
+	 *
+	 * This save is on Restricted / Minimal Grinding, which is not a difficulty
+	 * setting but a rules change, and it is asymmetric: the player loses these,
+	 * the trainers keep everything. That asymmetry is why the AI's weather and
+	 * terrain are permanent -- Pincurchin still has Electric Surge, and the
+	 * engine is right to model Lt. Surge's terrain as never expiring.
+	 *
+	 * The generator was building teams with moves the player cannot legally
+	 * have: 20 of 240 generated Pokemon carried one, including Electric Terrain,
+	 * Quiver Dance and Toxic Spikes. That is the same class of error as the
+	 * Poliwags and the level 87 Pikachu -- a team nobody could field -- and this
+	 * time it flatters the player rather than handicapping them.
+	 *
+	 * Source: the community Hardcore/Restricted documentation. Growth is
+	 * deliberately NOT here: it is not on the banned list, which matters because
+	 * the proved Lt. Surge line sets up Growth twice and would otherwise have
+	 * been an illegal line all along.
+	 */
+	const RESTRICTED_MOVES = {
+		"Shell Smash": 1, "Quiver Dance": 1, "Dragon Dance": 1, "Calm Mind": 1,
+		"Bulk Up": 1, "Curse": 1, "Rain Dance": 1, "Sandstorm": 1, "Hail": 1,
+		"Sunny Day": 1, "Tailwind": 1, "Electric Terrain": 1, "Misty Terrain": 1,
+		"Grassy Terrain": 1, "Psychic Terrain": 1, "Toxic Spikes": 1,
+		"Sticky Web": 1, "Shift Gear": 1, "Tail Glow": 1, "Coil": 1,
+		"Belly Drum": 1, "Cotton Guard": 1, "No Retreat": 1, "Amnesia": 1,
+		"Acid Armor": 1, "Iron Defense": 1, "Cosmic Power": 1, "Stockpile": 1,
+		"Swallow": 1, "Spit Up": 1, "Geomancy": 1, "Clangorous Soul": 1,
+		"Fell Stinger": 1
+	};
+
+	/** Banned abilities are REPLACED rather than removed, so a set stays legal. */
+	const RESTRICTED_ABILITIES = {
+		"Drought": "Solar Power", "Sand Stream": "Sand Force",
+		"Sand Spit": "Sand Force", "Snow Warning": "Slush Rush",
+		"Drizzle": "Swift Swim", "Speed Boost": "Infiltrator",
+		"Contrary": "Clear Body", "Defiant": "Clear Body",
+		"Competitive": "Clear Body", "Electric Surge": "Telepathy",
+		"Grassy Surge": "Telepathy", "Misty Surge": "Telepathy",
+		"Psychic Surge": "Telepathy", "Moxie": "Unnerve",
+		"Grim Neigh": "Unnerve", "Soul-Heart": "Unnerve",
+		"Beast Boost": "Unnerve", "Imposter": "Limber",
+		"Magic Bounce": "Magic Guard", "Storm Drain": "Water Absorb",
+		"Lightning Rod": "Volt Absorb", "Motor Drive": "Volt Absorb",
+		"Trace": "Synchronize", "Stamina": "Inner Focus"
+	};
+
 	const EVS = {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0};
 
 	/** A trained spread: bulk, plus the better attacking stat, plus speed. */
@@ -300,13 +348,24 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		// every number in TUNING.md was measured against.
 		if (level > 40) {
 			const pool = known.concat(taughtMoves(grown.species))
-				.filter(function (n, i, a) { return a.indexOf(n) === i; });
+				.filter(function (n, i, a) { return a.indexOf(n) === i; })
+				.filter(function (n) { return !RESTRICTED_MOVES[n]; });
 			const chosen = chooseMoveset(pool, grown.species);
 			if (chosen.length) moves = chosen;
+		} else {
+			// Early sets come off the level-up list, which can still contain a
+			// banned move.
+			const legal = known.filter(function (n) { return !RESTRICTED_MOVES[n]; });
+			if (legal.length) moves = legal.slice(-4);
 		}
 		if (!moves.length) return null;
-		const ability = (grown.species.abilities && grown.species.abilities[0] &&
+		let ability = (grown.species.abilities && grown.species.abilities[0] &&
 			dex.abilities && dex.abilities[grown.species.abilities[0][0]]) || null;
+		// Restricted mode swaps a banned ability for a named replacement rather
+		// than leaving the Pokemon with none.
+		if (ability && ability.name && RESTRICTED_ABILITIES[ability.name]) {
+			ability = {name: RESTRICTED_ABILITIES[ability.name]};
+		}
 		return {species: grown.species.name, level: level,
 			nature: NATURES[rand(NATURES.length)],
 			ability: ability && ability.name ? ability.name : undefined,

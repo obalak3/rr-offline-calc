@@ -1048,3 +1048,30 @@ before and after.
 generated team is a claim about what a player would have. Species, level,
 evolution, EVs, item AND moves. Getting five of six right still measures a team
 nobody would field.
+
+## Restricted mode bans player moves, and the generator ignored them (2026-08-24)
+
+This save is on Restricted / Minimal Grinding, which is a rules change rather
+than a difficulty setting, and it is **asymmetric**: the player loses a long list
+of moves and abilities, the trainers keep everything. That asymmetry is exactly
+why the AI's weather and terrain are permanent -- Pincurchin still has Electric
+Surge, and the engine is right to model Lt. Surge's terrain as never expiring.
+
+The generator was handing the player moves it cannot legally have: 20 of 240
+generated Pokemon carried one, including Electric Terrain, Quiver Dance and
+Toxic Spikes. Same class of error as the Poliwags and the level 87 Pikachu, in
+the opposite direction -- this one flattered the player.
+
+Now filtered, and banned abilities are swapped for their documented replacements
+(Speed Boost to Infiltrator, Magic Bounce to Magic Guard, Moxie to Unnerve)
+rather than left blank. Early sets change slightly too, since a level-up list can
+contain a banned move, so the early fingerprint moves from `ec3d71803436a23f` to
+`02727428303d05a6`. That is a correctness fix rather than a drift: the old sets
+were illegal.
+
+**Growth is not on the banned list**, which matters because the proved Lt. Surge
+line sets up Growth twice and would otherwise have been an illegal line all
+along.
+
+Worth keeping in proportion, though: whether the planner wins Surge *with*
+Growth is not the question. Whether it wins at all is.
