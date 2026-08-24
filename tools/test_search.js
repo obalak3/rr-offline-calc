@@ -171,5 +171,30 @@ function fixture() {
 		asked && asked.decided === false, asked && String(asked.decided));
 }
 
+// --- progress is the whole search, not one share of it ----------------------
+{
+	const {sandbox, state} = fixture();
+	const seen = [];
+	sandbox.RRSearch.solve(state, {}, function () {}, function () {},
+		function (nodes, elapsedMs) { seen.push({nodes, elapsedMs}); });
+	const crew = born.slice();
+	crew[0].reply({kind: 'progress', nodes: 1000, elapsedMs: 50});
+	crew[1].reply({kind: 'progress', nodes: 250, elapsedMs: 50});
+	const last = seen[seen.length - 1];
+	check('progress adds up every share rather than reporting one',
+		!!last && last.nodes === 1250, JSON.stringify(seen));
+	// This was wrong at first: elapsed was measured from a start time read at
+	// the moment it was printed, so every search reported zero seconds.
+	check('  and the clock runs from when the search started',
+		!!last && typeof last.elapsedMs === 'number' && last.elapsedMs >= 0 &&
+		last.elapsedMs < 60000, last && String(last.elapsedMs));
+
+	// A later report from one worker replaces its own count, never adds to it.
+	crew[0].reply({kind: 'progress', nodes: 1500, elapsedMs: 90});
+	const after = seen[seen.length - 1];
+	check('  and a worker\'s new count replaces its old one',
+		after.nodes === 1750, String(after.nodes));
+}
+
 console.log('\n' + failures + ' failure(s)');
 process.exit(failures ? 1 : 0);

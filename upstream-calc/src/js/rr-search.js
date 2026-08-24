@@ -186,7 +186,11 @@ var RRSearch = (function () {
 	 */
 	function startCrew(state, opts, hands, id) {
 		crewState = {id: id, done: 0, total: hands.length, decided: true,
-			nodes: [], settled: false, state: state, opts: opts};
+			nodes: [], settled: false, state: state, opts: opts,
+			// Without this the panel reported every long search as taking zero
+			// seconds, since elapsed was measured from a start time that was
+			// read at the moment it was printed.
+			started: Date.now()};
 		for (var i = 0; i < hands.length; i++) crewState.nodes.push(0);
 
 		hands.forEach(function (hand, index) {
@@ -210,7 +214,7 @@ var RRSearch = (function () {
 		if (!pending || !pending.onProgress || !crewState) return;
 		var total = 0;
 		for (var i = 0; i < crewState.nodes.length; i++) total += crewState.nodes[i];
-		pending.onProgress(total, Date.now() - (crewState.started || Date.now()));
+		pending.onProgress(total, Date.now() - crewState.started);
 	}
 
 	function crewMessage(index, event) {
