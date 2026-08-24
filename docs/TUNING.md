@@ -1110,3 +1110,21 @@ the first slot that actually resolves brings it to **0 species without an
 ability, from 1343**.
 
 Both halves were invisible for the same reason: nothing ever printed the column.
+
+**The app was never affected, and why not is the useful part.** The page reads
+the BUILT dex (`upstream-calc/src/js/data/rr-dex-data.js`), where `build_dex.js`
+has already normalised abilities into `{name, hidden, slot}` objects -- and
+`rr-save.js` resolves them through a rule that `tools/test_save.js` asserts.
+The harness reads the RAW snapshot (`data/rr-dex-data.js`) and normalises it
+itself, badly. **The bug lived exactly where the test was not.**
+
+`tools/test_harness.js` now covers the generator the way `test_save.js` covers
+the importer: that every one of 1343 species resolves an ability, that no banned
+move reaches a player team, and that a late-game team is six distinct fully
+evolved Pokemon with trained spreads and at least two attacking moves each --
+the four things that have now gone wrong in turn.
+
+Left as future work rather than done now: the harness should read the BUILT dex
+and delete its own normalisation entirely, which is the same unification that
+fixed `ceiling.js`. Not done while a benchmark was running, and not urgent, since
+the current normalisation is now verified correct rather than merely present.
