@@ -16,6 +16,49 @@ encounters ahead and each gets harder as the opponents' teams strengthen, so the
 value of any change here is measured by whether it scales to those fights, not
 by whether it squeezes one more early gym. Basis first.
 
+## The engine's own correctness was the biggest thing wrong (2026-08-24)
+
+Read this before any search work, because a search is worthless on a fight whose
+mechanics it does not understand, and a coverage bug does not announce itself:
+the engine simulates what it cannot model as something simpler, finds a clean
+line through the misunderstanding, and reports it with the same confidence as a
+real one.
+
+`tools/audit_coverage.js` walks all 792 trainer Pokemon in all 167 battles and
+reports what the stack does not know. It found **seventeen mechanics**, and none
+of them would ever have surfaced from the benchmark, which exercises exactly one:
+
+    abilities (11)  Rock Head, Magic Guard, Serene Grace, Speed Boost,
+                    Magic Bounce, Skill Link, Iron Barbs, Rough Skin,
+                    Poison Heal, Protosynthesis, Quark Drive
+    items (6)       Lum Berry, Life Orb, Rocky Helmet, Weakness Policy,
+                    Flame Orb, Toxic Orb
+    moves           421 distinct, no gaps at all
+
+Three that mattered most, as examples of the shapes these take:
+
+- **Rock Head.** Recoil was applied anyway, so the engine had Mega Aggron
+  beating itself to death with Head Smash and a search could "win" by waiting
+  for an opponent that never dies.
+- **Lum Berry.** Cures the status the instant it lands, so seventeen trainer
+  Pokemon shrugged off every status the search planned around. This party runs
+  two Sleep Powders.
+- **Protosynthesis / Quark Drive.** Applied by nobody, engine or calculator.
+  They start at GYM LEADER BROCK and Lt. Surge fields two under his own
+  permanent Electric Terrain.
+
+**The method matters more than the list.** Grep found imaginary gaps and missed
+real ones in both directions: it said Mystic Water and Guts were unhandled when
+both work perfectly, and it could not see that Protosynthesis did nothing.
+Everything that survived came from *measuring the mechanic* -- computing damage
+with and without it. The audit tool now does that, and labels its item output a
+triage list rather than a bug list. Re-run it before each new stretch of the
+game rather than trusting the list to stay current.
+
+Verified fine, so nobody re-checks them: Guts, burn halving, Eviolite, resist
+berries, type-boost items, Choice items, Assault Vest, and mega forms (the
+trainer data already names the mega SPECIES, so the stones are decoration).
+
 ## Three engines exist. Know which one produced an answer.
 
 | Engine | File | What it does | Trust |
@@ -239,6 +282,38 @@ have none of these abilities, so the obvious test was inert.
 4. **Does the free-action ordering help?** Still unmeasured. The generated
    benchmark teams have none of the abilities it ranks, so the obvious test is
    inert.
+
+## The tools, and which question each answers
+
+    tools/bench_early.js     9 early battles x N teams. THE headline number,
+                             71% clean. Unchanged since before this work, which
+                             is how every other measurement keeps its meaning.
+    tools/bench_game.js      all 36 fixed-level singles battles, by segment.
+                             Says where the planner starts struggling, which
+                             bench_early structurally cannot.
+    tools/bench_hunt.js      only the fights that fail, reporting found /
+                             decided / nodes. A win rate cannot tell "no clean
+                             line exists" from "the search ran out", and that is
+                             the distinction all the search work turns on.
+    tools/ceiling.js         how many fights are winnable AT ALL, so the planner
+                             is scored against the achievable rather than 100%.
+    tools/hunt_parallel.js   one fight, one process per core, with checkpoints.
+                             For the questions worth hours.
+    tools/audit_coverage.js  what the engine does not understand, across the
+                             whole game rather than the benchmarked corner.
+
+`tools/lib/harness.js` holds the engine loader, the team generator and the
+battle selection, shared by all of them. It exists because bench_early and
+ceiling.js each had their own copy and had silently drifted apart -- ceiling was
+grading the planner with a weaker search than the planner used.
+
+**The generator scales with the level, and that is load-bearing.** Below 40 it
+is Kanto lines, zero EVs, Oran Berries and level-up moves, which is what a
+Nuzlocke actually has before the third gym. Above 40 it is fully evolved species,
+trained spreads, Sitrus, and TM and tutor moves. Getting this wrong produced a
+level 87 Pikachu against Zacian-Crowned and made the Elite Four look impossible;
+`TUNING.md` records that it was the SECOND time this benchmark measured teams
+nobody would field. Early-game output is verified byte-identical by fingerprint.
 
 ## Known gaps, in rough priority order
 
