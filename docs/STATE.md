@@ -10,6 +10,12 @@ Radical Red, singles, Nuzlocke rules: **win without losing a single Pokémon**.
 A win costing one Pokémon is a failure. Everything below is judged by that and
 not by win rate.
 
+James's framing of the long game, worth keeping in view when choosing work:
+**Misty and Surge are very easy compared to what is coming.** The run has many
+encounters ahead and each gets harder as the opponents' teams strengthen, so the
+value of any change here is measured by whether it scales to those fights, not
+by whether it squeezes one more early gym. Basis first.
+
 ## Three engines exist. Know which one produced an answer.
 
 | Engine | File | What it does | Trust |
