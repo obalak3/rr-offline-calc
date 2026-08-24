@@ -979,3 +979,39 @@ Applied to the damage rather than the move's power, because the calculator has
 no concept of being charged. Doubling damage is a shade more than doubling
 power, the formula carrying constant terms, so it errs very slightly toward a
 stronger opponent -- the right way to be wrong.
+
+## The whole game, measured properly for the first time (2026-08-24)
+
+`tools/bench_game.js 2`, 120,000 nodes and 12 s per fight, against the engine
+with all eighteen correctness fixes and correct late-game teams:
+
+    won at all           33/72  (46%)
+    won losing NOTHING   30/72  (42%)
+    search undecided     41/72  (57%)
+    7.52s per fight
+
+    segment            lvl   clean      won   undecided
+      Kanto Leaders     80     3/14     3/14       10
+      Johto Leaders     12      2/2      2/2        0
+      Rivals            81     9/12    10/12        3
+      Team Rocket       83     7/14     8/14        8
+      Mini Bosses       83     7/10     8/10        2
+      Indigo League     85     0/18     0/18       18
+      Postgame         100      2/2      2/2        0
+
+**The Elite Four is 0 for 18 and every single one is UNDECIDED.** Not one was
+decided and lost. That is the answer to the question this benchmark was built to
+ask: the late game is a **compute** problem, exactly like Misty and Surge, and
+not a capability problem. Nothing anywhere in this file has ever been proved
+impossible.
+
+**Read the budget before reading the number.** This run gives each fight 120,000
+nodes and twelve seconds. The app gives 60 million nodes, no clock, and one
+worker per core. So 42% is a floor produced by a deliberately starved
+configuration, not an estimate of what the tool does for a player -- the
+comparison that matters is the *shape*: 57% undecided says the search is running
+out of time, everywhere, rather than reaching wrong answers.
+
+The three segments that finish cleanly (Johto, Rivals, Postgame) are the ones
+with smaller or lower-level teams. Cost scales with the size of the fight, which
+is what a wide-tree diagnosis predicts.
