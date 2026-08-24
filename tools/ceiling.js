@@ -225,6 +225,7 @@ for (const segment of TRAINERS.segments) {
 
 const teamCount = parseInt(process.argv[2], 10) || 5;
 const budget = parseInt(process.argv[3], 10) || 300000;
+const only = process.argv[4] || '';   // substring filter on the battle name
 
 let possible = 0, impossible = 0, unknown = 0, plannerWon = 0, missed = 0;
 const perBattle = {};
@@ -240,6 +241,7 @@ for (let t = 0; t < teamCount; t++) {
 			evs: m.evs, ivs: m.ivs
 		}));
 		const title = (battle.title ? battle.title + ' ' : '') + battle.trainer;
+		if (only && !title.includes(only)) continue;
 		perBattle[title] = perBattle[title] ||
 			{possible: 0, impossible: 0, unknown: 0, won: 0, n: 0};
 		const row = perBattle[title];
