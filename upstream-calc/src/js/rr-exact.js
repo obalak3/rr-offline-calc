@@ -247,8 +247,179 @@ var RRExact = (function () {
 		return fallback;
 	}
 
+	/**
+	 * The AI's replies as a DISTRIBUTION, not a single choice.
+	 *
+	 * CFRU picks uniformly at random among everything tied at the top score
+	 * (ai_master.c:360), so collapsing that to one action throws away real
+	 * branching. Usually the tie set has one member and this costs nothing.
+	 */
+	var replyCache = {};
+
+	function replies(state, opts) {
+		if (typeof RRAI === "undefined") return null;
+		var cacheKey = RRBattle.positionKey(state);
+		var cached = replyCache[cacheKey];
+		if (cached !== undefined) return cached;
+		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
+			{checkBadMove: true, checkGoodMove: true};
+		var scored = RRAI.scoreAll(state, "foe", flags, {});
+		var gate = RRAI.switchGate(state, "foe", flags);
+		var best = -Infinity, tied = [];
+		for (var i = 0; i < scored.length; i++) {
+			var entry = scored[i];
+			if (entry.action.type === "switch" && !gate.maySwitch) continue;
+			if (entry.score > best) { best = entry.score; tied = [entry.action]; }
+			else if (entry.score === best) tied.push(entry.action);
+		}
+		if (!tied.length) return null;
+		var share = 1 / tied.length;
+		var out = [];
+		for (var t = 0; t < tied.length; t++) out.push({action: tied[t], p: share});
+		// Scoring the opponent's options costs about 265us and the same position
+		// turns up at several depths, so this is memoised for the life of one
+		// search. Cleared per search because it is only valid while the teams
+		// and field are the ones it was built for.
+		replyCache[cacheKey] = out;
+		return out;
+	}
+
+	/**
+	 * The probability of winning without losing anybody, played perfectly.
+	 *
+	 * This replaces the boolean question with the one actually worth asking.
+	 * Searching for a line that survives the WORST roll answers "is this fight a
+	 * formality", and against anything real the answer is no -- so it threw away
+	 * every line that wins ninety-five times in a hundred, which are exactly the
+	 * lines you want to be shown. Scoring the true distribution instead keeps
+	 * them, ranked honestly, and a proof is simply the case where the answer
+	 * comes back 1.
+	 *
+	 * The Nuzlocke objective is what keeps this affordable, in the same way it
+	 * did for the boolean search: a branch where anything of yours faints is
+	 * worth zero, so it is cut instead of explored rather than being followed to
+	 * see how the battle turns out. Damage is bucketed by CONSEQUENCE -- whether
+	 * the hit kills -- so sixteen rolls become two branches, not sixteen.
+	 *
+	 * Chance nodes are averaged and your own choices maximised, which is exactly
+	 * right here: the dice are indifferent, and you are not.
+	 */
+	function winChance(state, options) {
+		var opts = options || {};
+		var limits = {
+			nodes: 0,
+			budget: opts.budget || 200000,
+			maxTurns: opts.maxTurns || 20,
+			forkBudget: opts.forkBudget === undefined ? 2 : opts.forkBudget,
+			exhausted: false
+		};
+		var memo = {};
+		var started = Date.now();
+		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
+
+		var rootRanking = null;
+
+		function value(current, turnsLeft, isRoot) {
+			if (allDown(current.foe)) return 1;
+			if (turnsLeft <= 0) return 0;
+			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return 0; }
+			if (deadline && (limits.nodes & 1023) === 0 && Date.now() > deadline) {
+				limits.exhausted = true;
+				return 0;
+			}
+
+			var key = RRBattle.positionKey(current) + "@" + turnsLeft;
+			var cached = memo[key];
+			if (cached !== undefined) return cached;
+			memo[key] = 0;   // guard against revisiting a position mid-descent
+
+			var theirs = replies(current, opts);
+			if (!theirs) return 0;
+
+			var before = countFainted(current.me);
+			var actions = ordered(current);
+			var best = 0;
+
+			// At the root every action is priced, even once a certain win is
+			// found, because the point there is the ranking rather than the
+			// best value. Deeper down the early exit stands: nothing beats 1.
+			for (var a = 0; a < actions.length && (isRoot || best < 1); a++) {
+				// `remaining` is the probability mass this action has not
+				// resolved yet, so total + remaining is the most it could still
+				// reach. Once that cannot beat the best action already priced,
+				// the rest of its branches cannot change the answer and are
+				// abandoned. This is what makes pricing the whole distribution
+				// affordable: the boolean search could stop at the first line
+				// that worked, and this one has no such luxury without it.
+				var total = 0, remaining = 1;
+				for (var t = 0; t < theirs.length && total + remaining > best; t++) {
+					var successors;
+					try {
+						successors = RRBattle.step(current, actions[a], theirs[t].action,
+							{mode: "odds", forkBudget: limits.forkBudget});
+					} catch (e) { successors = null; }
+					if (!successors) continue;
+					for (var i = 0; i < successors.length; i++) {
+						var next = successors[i].state;
+						var weight = theirs[t].p * successors[i].probability;
+						if (weight <= 0) continue;
+						// Anything of ours dying is worth nothing, so the branch
+						// is cut here rather than followed.
+						if (countFainted(next.me) > before) { remaining -= weight; continue; }
+						total += weight * value(next, turnsLeft - 1);
+						remaining -= weight;
+						if (!isRoot && total + remaining <= best) break;
+					}
+				}
+				if (isRoot) rootRanking.push({action: actions[a], chance: total});
+				if (total > best) best = total;
+			}
+
+			memo[key] = best;
+			return best;
+		}
+
+		replyCache = {};
+		rootRanking = [];
+		var chance = value(state, limits.maxTurns, true);
+		rootRanking.sort(function (x, y) { return y.chance - x.chance; });
+		// Multiplying a few dozen branch probabilities together lands a certain
+		// win on 0.999999999999999667 rather than 1, so "certain" needs a
+		// tolerance. Without one a fight that genuinely cannot be lost reports
+		// as merely likely, which is the sort of quiet wrongness that makes a
+		// tool untrustworthy for the thing it was built for.
+		var CERTAIN = 1 - 1e-9;
+		return {
+			chance: chance,
+			ranking: rootRanking,
+			certain: chance >= CERTAIN,
+			nodes: limits.nodes,
+			exhausted: limits.exhausted,
+			elapsedMs: Date.now() - started
+		};
+	}
+
+	/**
+	 * The action to take now, with the odds it carries.
+	 *
+	 * Every legal action is priced by the chance it leads to a clean win, so the
+	 * answer is not just what to click but what it costs to be wrong -- the
+	 * difference between "use Drain Punch" and "use Drain Punch, and if it does
+	 * not kill, which happens one time in twenty, the plan is off".
+	 *
+	 * This is one search, not one per action. The first version ran a fresh
+	 * search for every action with its own memo and took nine minutes on a
+	 * three-Pokemon fight; the positions overlap almost entirely, so sharing the
+	 * table is most of the work.
+	 */
+	function rank(state, options) {
+		return winChance(state, options).ranking || [];
+	}
+
 	return {
 		cleanWin: cleanWin,
+		winChance: winChance,
+		rank: rank,
 		planRoute: planRoute,
 		toSteps: toSteps
 	};
