@@ -474,15 +474,29 @@ function earlyBattles(loaded, opts) {
 	const only = (opts && opts.pattern) || null;
 	const maxLevel = (opts && opts.maxLevel) || 34;
 	const segmentFilter = (opts && opts.segment) || null;
+	// Most battles in the dataset scale to the player rather than carrying a
+	// fixed level: 103 singles fights against 36. They were skipped entirely
+	// because scoring them needs an assumption about how strong the player is.
+	// A MIRROR does not need that assumption -- both sides are the same team, so
+	// the absolute level cancels -- which is what `relativeBase` is for. Leave
+	// it unset and behaviour is exactly as before.
+	const relativeBase = (opts && opts.relativeBase) || 0;
 	const out = [];
 	for (const segment of loaded.TRAINERS.segments) {
 		if (segmentFilter && segment.name !== segmentFilter) continue;
 		for (const b of (segment.battles || [])) {
 			if ((b.effects || []).some(e => /DOUBLES/i.test(e))) continue;
-			if (b.team[0].level.type !== 'fixed') continue;
-			if (b.team[0].level.value > maxLevel) continue;
+			const level = b.team[0].level;
+			if (level.type === 'fixed') {
+				if (level.value > maxLevel) continue;
+			} else if (relativeBase) {
+				if (relativeBase > maxLevel) continue;
+			} else {
+				continue;
+			}
 			if (only && !only.test(label(b))) continue;
 			b.__segment = segment.name;
+			b.__relativeBase = relativeBase;
 			out.push(b);
 		}
 	}
@@ -495,8 +509,14 @@ function label(battle) {
 
 /** A trainer's team in the shape RRBattle.createState wants. */
 function foeSets(battle) {
+	const base = battle.__relativeBase || 0;
 	return battle.team.map(function (m) {
-		return {species: m.species, level: m.level.value, nature: m.nature,
+		// A relative level is an offset from the player's; resolve it against
+		// whatever base the caller assumed.
+		const level = m.level.type === 'fixed'
+			? m.level.value
+			: Math.max(5, base + (m.level.offset || 0));
+		return {species: m.species, level: level, nature: m.nature,
 			ability: m.ability, item: m.item || '', moves: m.moves.slice(0, 4),
 			evs: m.evs, ivs: m.ivs};
 	});
