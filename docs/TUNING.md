@@ -782,17 +782,34 @@ it is parked deliberately rather than forgotten.
 Still open, ranked by whether the error flatters us or them:
 
     charge turns      ~10 uses  two-turn moves fire instantly     safe direction
-    Flame/Toxic Orb    12 uses  self-status, usually with Guts    both, cancelling
     Booster Energy     14 uses  Protosynthesis and Quark Drive    mixed
-    Venusaurite etc.    5 uses  Mega evolution mid-battle         unknown
 
-Flame Orb and Toxic Orb are listed as cancelling because the two halves of the
-error point opposite ways: not modelling the self-burn leaves the holder
-healthier than it should be (which flatters them), and also leaves it hitting at
-full physical power rather than halved (which flatters them again) -- except
-that the ability they are nearly always paired with, Guts, is itself unmodelled
-and would have raised that attack anyway. Worth doing together with Guts or not
-at all.
+**Flame Orb and Toxic Orb: fixed, and the reasoning was wrong first time.** They
+were filed as "cancelling errors, low priority" on the assumption that Guts was
+unmodelled too. Guts is modelled -- by the calculator, which was never checked
+because grep found nothing. Measured directly, a burned Machamp with Guts hits
+for 164 where a burned one without it hits 55 and a healthy one hits 110, so
+Guts is correctly giving 1.5x AND cancelling the burn penalty.
+
+That flips the priority completely. **Every** trainer orb is paired with an
+ability that wants the status:
+
+    Ursaluna, Obstagoon, Ursaring, Conkeldurr  Flame Orb + Guts        6
+    Gliscor, Breloom                           Toxic Orb + Poison Heal 5
+    Zangoose                                   Toxic Orb + Toxic Boost 1
+
+So the engine was leaving an Ursaluna un-burned, therefore un-Guts-boosted,
+therefore hitting at 110 instead of 164. Making the opponent a third weaker than
+they are is the direction that ends runs.
+
+**Poison Heal had to go in at the same time**, and this is why the two were done
+together rather than one at a time: adding the orb alone would have had Gliscor
+taking toxic damage where the real one gains an eighth of its health, a swing of
+a quarter of its HP per turn, wrong in exactly the same dangerous direction the
+orb fix exists to correct.
+
+The lesson repeats today's other one. **Grep said Guts was unhandled; measurement
+said otherwise, and the priority built on the grep was backwards.**
 
 ## Two gaps that closed themselves under inspection (2026-08-24)
 

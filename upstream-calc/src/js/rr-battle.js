@@ -1415,9 +1415,20 @@ var RRBattle = (function () {
 			}
 			if (mon.fainted) return;
 
-			if (mon.status === "brn" || mon.status === "frb") damage(mon, mon.maxHP / 16);
-			else if (mon.status === "psn") damage(mon, mon.maxHP / 8);
-			else if (mon.status === "tox") {
+			// Poison Heal turns being poisoned into a healing engine, which is
+			// the entire point of the Toxic Orb it is always paired with. Five
+			// trainer Pokemon run it -- three Gliscor and two Breloom -- and
+			// without it they take toxic damage instead of gaining an eighth of
+			// their health every turn, which is a swing of a quarter of their HP
+			// per turn in the direction that flatters us.
+			var poisoned = mon.status === "psn" || mon.status === "tox";
+			if (poisoned && mon.set.ability === "Poison Heal") {
+				heal(mon, mon.maxHP / 8);
+			} else if (mon.status === "brn" || mon.status === "frb") {
+				damage(mon, mon.maxHP / 16);
+			} else if (mon.status === "psn") {
+				damage(mon, mon.maxHP / 8);
+			} else if (mon.status === "tox") {
 				damage(mon, mon.maxHP * mon.toxicCounter / 16);
 				mon.toxicCounter++;
 			}
@@ -1449,6 +1460,22 @@ var RRBattle = (function () {
 			// costs a LEAD its first boost, and leads do get one.
 			if (mon.set.ability === "Speed Boost" && mon.boosts.spe < 6) {
 				mon.boosts.spe++;
+			}
+
+			// Flame Orb and Toxic Orb burn or poison their own holder at the end
+			// of the turn, and every single trainer carrying one pairs it with an
+			// ability that wants the status: Guts, Toxic Boost, Poison Heal.
+			// Unmodelled, an Ursaluna that should be hitting at 1.5x through
+			// Guts hits at 1x -- the engine was making the opponent weaker than
+			// they are, which is the direction that ends runs.
+			//
+			// Deliberately done together with Poison Heal above: adding the orb
+			// alone would have had Gliscor taking toxic damage where the real one
+			// heals, which is wrong the same dangerous way.
+			if (!mon.itemGone && !mon.status) {
+				var orb = mon.set.item === "Flame Orb" ? "brn"
+					: mon.set.item === "Toxic Orb" ? "tox" : null;
+				if (orb && setStatus(mon, orb, state)) mon.itemGone = true;
 			}
 
 			if (mon.volatiles.yawn) {

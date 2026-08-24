@@ -566,5 +566,51 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		String(boostAfter('Weakness Policy', 'Headbutt')));
 }
 
+{
+	// Flame Orb and Toxic Orb status their own holder, and every trainer that
+	// carries one pairs it with an ability that wants the status. Unmodelled,
+	// an Ursaluna that should hit at 1.5x through Guts hits at 1x.
+	function afterTurn(item, ability, species, move) {
+		let state = B.createState(
+			[set('Snorlax', {moves: ['Tackle']})],
+			[set(species, {moves: [move], item: item, ability: ability})], {});
+		state = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: move},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(state.foe);
+	}
+	const burned = afterTurn('Flame Orb', 'Guts', 'Ursaluna', 'Facade');
+	check('a Flame Orb burns its own holder', burned.status === 'brn', String(burned.status));
+	check('  and is consumed doing it', burned.itemGone === true);
+	const clean = afterTurn('', 'Guts', 'Ursaluna', 'Facade');
+	check('  and nothing happens without one', clean.status === null);
+
+	// Poison Heal must go in at the same time: an orb without it would have
+	// Gliscor taking toxic damage where the real one heals, which is wrong in
+	// the same dangerous direction the orb fix exists to correct.
+	// Compared against the SAME Pokemon without the ability, from the same
+	// damaged starting HP, because at full health healing is invisible and the
+	// test would pass or fail on whether an attack happened to land.
+	function poisonedTurn(ability) {
+		const state = B.createState(
+			[set('Snorlax', {moves: ['Splash']})],
+			[set('Gliscor', {moves: ['Splash'], ability: ability})], {});
+		const mon = B.active(state.foe);
+		mon.curHP = Math.floor(mon.maxHP / 2);
+		mon.status = 'tox';
+		mon.toxicCounter = 1;
+		const before = mon.curHP;
+		const next = B.step(state, {type: 'move', index: 0, move: 'Splash'},
+			{type: 'move', index: 0, move: 'Splash'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.foe).curHP - before;
+	}
+	const withHeal = poisonedTurn('Poison Heal');
+	const without = poisonedTurn('Sand Veil');
+	check('Poison Heal gains HP from poison where anything else loses it',
+		withHeal > 0 && without < 0,
+		'Poison Heal ' + withHeal + ', ordinary ' + without);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);
