@@ -381,3 +381,60 @@ across cores.
 
 What this does NOT license is a claim that the fight is unwinnable. Nothing has
 been proved impossible in any run recorded in this file.
+
+## The ceiling, re-measured with the engine that ships (2026-08-24)
+
+`node tools/ceiling.js 3 300000`, the first run since the oracle stopped using
+its own stale copy of the search:
+
+                                    was (stale oracle)    now
+      a clean win EXISTS              12  (67%)          20  (74%)
+      provably IMPOSSIBLE              0  (0%)            0  (0%)
+      undecided (budget ran out)       6  (33%)           7  (26%)
+      of the fights it COULD win      11/12  (92%)       20/20  (100%)
+
+    per battle            possible / impossible / undecided | planner won
+      BROCK                  3 / 0 / 0   | 3/3
+      MISTY                  0 / 0 / 3   | 0/3
+      LT. SURGE              1 / 0 / 2   | 0/3
+      PEWTER / FALKNER       2 / 0 / 1   | 3/3
+      ROUTE 22 RIVAL         9 / 0 / 0   | 9/9
+      VIRIDIAN BRENDAN       3 / 0 / 0   | 3/3
+      MT. MOON ARCHER        2 / 0 / 1   | 2/3
+
+**The planner now wins every fight anybody has shown to be winnable.** It also
+won a Falkner fight the ORACLE could not decide, which is why the per-battle
+column beats the summary and why `missed` still reads 1: the two are counted
+against different denominators. That reporting quirk is in `ceiling.js` and is
+worth tidying, but it does not affect the headline.
+
+Read the shape rather than the percentage. Judgement is no longer where anything
+is lost -- **every remaining failure is a fight nobody has decided**, and nothing
+in any run has ever been proved impossible. Misty is 0 for 3 on both sides of the
+table: not merely unwon, undecided.
+
+## Iterative deepening: measured, and it does not work here (2026-08-24)
+
+The idea was to start the search shallow and climb, so short lines are found
+first -- a genuinely better answer, since a 12-turn win exposes you to half the
+critical hits of a 23-turn one. Rungs at 10, 16 and 24 turns:
+
+    LT. SURGE, team 1                verdict      nodes
+      one horizon of 24              FOUND 23T    22,585
+      rungs at 10, 16, 24            FOUND 23T   178,592
+
+Eight times worse. Surge's line is 23 turns long, so neither shallow rung can
+contain it, and they cost 126,000 nodes proving that.
+
+**The assumption iterative deepening rests on is false here.** It works when the
+shallow tree is a small fraction of the deep one, which holds for a tall narrow
+tree. This tree is wide and shallow: a 10-turn search on Misty already exceeds
+150,000 nodes, which is as much as a 24-turn one. Depth is not what makes these
+fights expensive; breadth is.
+
+What survives is the useful half of the idea, going the other way. The search now
+extends the horizon UPWARD, and only when the horizon is what stopped it -- the
+full-width pass finished everything inside 24 turns and truncated. Then "no clean
+line in 24 turns" is a fact and 32 is the next question. It is off unless a
+caller names a ceiling, and it is inert on both hard fights, which is correct:
+they are budget-bound, not horizon-bound.

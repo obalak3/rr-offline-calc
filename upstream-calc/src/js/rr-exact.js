@@ -542,6 +542,10 @@ var RRExact = (function () {
 
 		var found = false;
 		var decidedHere = false;
+		// Did a full-width pass finish its tree and stop only because lines ran
+		// past the horizon? That is the one situation where searching deeper is
+		// the right response rather than a waste.
+		var blockedByHorizon = false;
 		for (var p = 0; p < passes.length && !found; p++) {
 			var pass = passes[p];
 			// Full width and full horizon is what earns the right to conclude.
@@ -578,13 +582,56 @@ var RRExact = (function () {
 
 			found = walk(state, pass.turns, true);
 			if (found) break;
-			// Only a full-width, full-horizon pass that actually FINISHED is
-			// entitled to say the fight has no clean line.
-			if (exhaustive && !limits.exhausted && !limits.passOver &&
-				!limits.truncated) {
-				decidedHere = true;
+			// A full-width pass that FINISHED, and never once ran out of turns,
+			// has seen the whole game tree -- not merely the part of it inside
+			// this rung's horizon. That is the only situation in which "no clean
+			// line exists" is true, and it is why climbing the ladder cannot
+			// make this claim early: a rung that finished but hit its horizon
+			// leaves `truncated` set, and says nothing about longer lines.
+			if (!(pass.beam < Infinity) && !limits.exhausted && !limits.passOver) {
+				if (limits.truncated) blockedByHorizon = true;
+				else { decidedHere = true; break; }
 			}
 			if (limits.exhausted) break;   // out of budget or out of time
+		}
+
+		/**
+		 * Look further, but only when the horizon is what stopped us.
+		 *
+		 * Deepening on a timer, or whenever nothing turns up, is the wrong rule:
+		 * a search that never finished its 24-turn tree has not earned a deeper
+		 * one, and giving it a deeper one multiplies a tree it was already
+		 * drowning in. The right trigger is the search finishing everything
+		 * inside the horizon and stopping only because lines ran past it. Then
+		 * "no clean line in 24 turns" is a fact, and the next question is
+		 * whether there is one in 32.
+		 *
+		 * Starting SHALLOW and climbing was tried first and measured worse:
+		 * rungs at 10 and 16 turns cost 126,000 nodes on Lt. Surge and could
+		 * never find its line, which is 23 turns long. Iterative deepening
+		 * assumes the shallow tree is a small fraction of the deep one, and here
+		 * it is not -- this tree is wide rather than deep, and a 10-turn search
+		 * already exceeds 150,000 nodes on Misty. So the extension only ever
+		 * goes upward, and only on demand.
+		 *
+		 * Off by default: a caller has to say how far it is willing to look, and
+		 * only the app, which searches on every core with no clock, does.
+		 */
+		var ceiling = opts.maxTurnsCeiling || 0;
+		if (!found && !decidedHere && !limits.exhausted && blockedByHorizon &&
+			ceiling > limits.maxTurns) {
+			var deeper = Object.create(null);
+			for (var o in opts) deeper[o] = opts[o];
+			deeper.maxTurns = Math.min(ceiling, limits.maxTurns + 8);
+			deeper.maxTurnsCeiling = ceiling;
+			deeper.exactBudget = Math.max(0, limits.budget - limits.nodes);
+			deeper.matchup = matchupTable;   // built already; do not pay twice
+			if (deeper.exactBudget > 0 && deeper.maxTurns > limits.maxTurns) {
+				var further = cleanWin(state, deeper);
+				further.nodes += limits.nodes;
+				further.horizonReached = deeper.maxTurns;
+				return further;
+			}
 		}
 
 		return {
@@ -592,7 +639,8 @@ var RRExact = (function () {
 			decided: found || decidedHere,
 			nodes: limits.nodes,
 			elapsedMs: Date.now() - started,
-			line: found ? line.slice() : null
+			line: found ? line.slice() : null,
+			blockedByHorizon: blockedByHorizon
 		};
 	}
 
@@ -792,7 +840,13 @@ var RRExact = (function () {
 		var limits = {
 			nodes: 0,
 			budget: opts.exactBudget || opts.budget || 200000,
-			maxTurns: opts.maxTurns || 20,
+			// 24, matching cleanWin. It was 20, which meant the certifier gave
+			// up four turns before the search that found the line did -- and
+			// the proved Surge line is 23 turns long. A line the finder can
+			// produce could not be certified, and the refusal came back as
+			// "some branch loses a Pokemon" when the truth was "I stopped
+			// watching before the end".
+			maxTurns: opts.maxTurns || 24,
 			forkBudget: opts.forkBudget === undefined ? 2 : opts.forkBudget,
 			exhausted: false,
 			collapsed: false
