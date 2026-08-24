@@ -325,5 +325,36 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 	check('Explosion knocks the user out too', after.me.team[0].fainted === true);
 }
 
+// ------------------------------------------------------- cloning keeps state
+
+// JSON.stringify turns Infinity into null, and permanent weather and terrain
+// are stored as Infinity turns -- which is how restricted mode represents
+// AI-set weather. A cloned state therefore disagreed with an uncloned one about
+// the same position, so positionKey produced two different keys for it.
+{
+	const state = B.createState([set('Snorlax', ['Tackle'])], [set('Pikachu', ['Thunderbolt'])],
+		{terrain: 'Electric', permanentTerrain: true});
+	check('permanent terrain starts as Infinity', state.field.terrainTurns === Infinity);
+	const copy = B.clone(state);
+	check('  and survives a clone', copy.field.terrainTurns === Infinity,
+		'became ' + copy.field.terrainTurns);
+	check('  so the same position keys the same either way',
+		B.positionKey(state) === B.positionKey(copy));
+}
+
+// The clone must still be deep, and must still share the immutable set.
+{
+	const state = B.createState([set('Snorlax', ['Tackle'])], [set('Pikachu', ['Thunderbolt'])], {});
+	const copy = B.clone(state);
+	copy.me.team[0].curHP = 1;
+	copy.me.team[0].boosts.atk = 2;
+	copy.me.team[0].pp[0] = 0;
+	check('a clone does not share mutable state with its original',
+		state.me.team[0].curHP !== 1 && state.me.team[0].boosts.atk !== 2 &&
+		state.me.team[0].pp[0] !== 0);
+	check('  but does share the set, which is never mutated',
+		copy.me.team[0].set === state.me.team[0].set);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

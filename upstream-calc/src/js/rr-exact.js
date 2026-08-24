@@ -61,9 +61,9 @@ var RRExact = (function () {
 	 */
 	var singleReplyCache = {};
 
-	function reply(state, opts) {
+	function reply(state, opts, key) {
 		if (typeof RRAI === "undefined") return null;
-		var cacheKey = RRBattle.positionKey(state);
+		var cacheKey = key === undefined ? RRBattle.positionKey(state) : key;
 		var hit = singleReplyCache[cacheKey];
 		if (hit !== undefined) return hit;
 		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
@@ -93,7 +93,17 @@ var RRExact = (function () {
 	 * Ordering changes how long the answer takes and never what it is: when this
 	 * reports "impossible" it has still tried everything.
 	 */
-	function ordered(state) {
+	// Ordering is a pure function of the position and is not cheap: it prices
+	// every bench member's best move and the opponent's worst reply, which is
+	// dozens of damage lookups. Positions repeat now that the visited set keys
+	// on remaining turns too, so this is worth holding on to.
+	var orderCache = {};
+
+	function ordered(state, key) {
+		if (key !== undefined) {
+			var hit = orderCache[key];
+			if (hit !== undefined) return hit;
+		}
 		var defender = RRBattle.active(state.foe);
 		var actions = RRBattle.legalActions(state, "me");
 		var ranked = [];
@@ -136,6 +146,7 @@ var RRExact = (function () {
 		ranked.sort(function (a, b) { return b.rank - a.rank; });
 		var out2 = [];
 		for (var j = 0; j < ranked.length; j++) out2.push(ranked[j].action);
+		if (key !== undefined) orderCache[key] = out2;
 		return out2;
 	}
 
@@ -191,6 +202,7 @@ var RRExact = (function () {
 		};
 		var seen = {};
 		singleReplyCache = {};
+		orderCache = {};
 		var line = [];
 		var started = Date.now();
 		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
@@ -227,11 +239,11 @@ var RRExact = (function () {
 			if (triedWith !== undefined && triedWith >= turnsLeft) return false;
 			seen[key] = turnsLeft;
 
-			var theirs = reply(current, opts);
+			var theirs = reply(current, opts, key);
 			if (!theirs) return false;
 
 			var before = countFainted(current.me);
-			var actions = ordered(current);
+			var actions = ordered(current, key);
 			for (var i = 0; i < actions.length; i++) {
 				var next;
 				try {
