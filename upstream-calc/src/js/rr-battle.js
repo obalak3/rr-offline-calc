@@ -78,10 +78,26 @@ var RRBattle = (function () {
 	function clearCache() {
 		damageCache = {};
 		damageCacheSize = 0;
+		speedCache = Object.create(null);
+		speedCacheSize = 0;
 	}
 
+	// Looked up constantly -- a CPU profile put 10.8% of the search in here, for
+	// what is nominally a property read. The cost is the typeof guard and two
+	// lookups on a 1074-key object, repeated millions of times. Hoisting the
+	// table and memoising by name turns it into one hit on a null-prototype map.
+	var moveTable = null;
+	var moveDataCache = Object.create(null);
+
 	function moveData(name) {
-		return (typeof RR_MOVE_EFFECTS !== "undefined" && RR_MOVE_EFFECTS.moves[name]) || null;
+		var hit = moveDataCache[name];
+		if (hit !== undefined) return hit;
+		if (!moveTable) {
+			moveTable = (typeof RR_MOVE_EFFECTS !== "undefined" && RR_MOVE_EFFECTS.moves) || {};
+		}
+		var found = moveTable[name] || null;
+		moveDataCache[name] = found;
+		return found;
 	}
 
 	// ------------------------------------------------------------ state setup
@@ -332,15 +348,45 @@ var RRBattle = (function () {
 
 	// ------------------------------------------------------------ turn order
 
+	/**
+	 * Speed, cached on the things speed actually depends on.
+	 *
+	 * 19.4% of the search after the clone fix, because every turn order check
+	 * rebuilt a calc.Field and a calc.Pokemon from scratch. The key deliberately
+	 * does NOT reuse monKey: that includes curHP, which changes every single
+	 * turn and has nothing to do with how fast anything moves, so it would have
+	 * thrown the hit rate away. What matters is the set, paralysis, whether the
+	 * item is gone (Unburden, Choice Scarf), the Speed stage, turns out for
+	 * Slow Start, and the weather, terrain and Tailwind that abilities key off.
+	 */
+	var speedCache = Object.create(null);
+	var speedCacheSize = 0;
+
 	function finalSpeed(state, key) {
 		var side = state[key];
 		var mon = active(side);
+		var f = state.field;
+		var cacheKey = setId(mon.set) + "|" + (mon.status || "-") +
+			(mon.itemGone ? 1 : 0) + "|" + mon.boosts.spe + "|" + (mon.turnsOut || 0) +
+			"|" + (f.weather || "-") + (f.terrain || "-") +
+			(side.screens.tailwind ? "T" : "");
+		var hit = speedCache[cacheKey];
+		if (hit !== undefined) return hit;
+
 		var field = buildField(state, key);
+		var value;
 		try {
-			return calc.getFinalSpeed(gen(), toCalcPokemon(mon), field, field.attackerSide);
+			value = calc.getFinalSpeed(gen(), toCalcPokemon(mon), field, field.attackerSide);
 		} catch (e) {
-			return toCalcPokemon(mon).stats.spe;
+			value = toCalcPokemon(mon).stats.spe;
 		}
+		if (speedCacheSize >= CACHE_LIMIT) {
+			speedCache = Object.create(null);
+			speedCacheSize = 0;
+		}
+		speedCache[cacheKey] = value;
+		speedCacheSize++;
+		return value;
 	}
 
 	function actionPriority(state, key, action) {
@@ -634,29 +680,37 @@ var RRBattle = (function () {
 	function chooseReplacement(state, key) {
 		var side = state[key];
 		var best = -1, bestScore = -Infinity;
+		// Swap the active index and put it back rather than cloning the whole
+		// state per candidate. Nothing below mutates -- damageRolls and
+		// legalActions only read -- and cloning here was the single most
+		// expensive thing in the entire search: a CPU profile put 52.6% of
+		// runtime inside clone(), and this loop is where most of those calls
+		// came from, up to six full state copies every time something faints.
+		// The identical mistake was already fixed once in rr-ai.js.
+		var wasActive = side.active;
 		for (var i = 0; i < side.team.length; i++) {
 			if (side.team[i].fainted) continue;
-			var view = clone(state);
-			view[key].active = i;
-			var mon = active(view[key]);
+			side.active = i;
+			var mon = side.team[i];
 			var worst = 0, hit = 0;
-			legalActions(view, other(key)).forEach(function (a) {
+			legalActions(state, other(key)).forEach(function (a) {
 				if (a.type !== "move") return;
-				var r = damageRolls(view, other(key), a.move);
+				var r = damageRolls(state, other(key), a.move);
 				if (r && !r.immune) {
 					var top = r.noCrit[r.noCrit.length - 1];
 					if (top > worst) worst = top;
 				}
 			});
-			legalActions(view, key).forEach(function (a) {
+			legalActions(state, key).forEach(function (a) {
 				if (a.type !== "move") return;
-				var r = damageRolls(view, key, a.move);
+				var r = damageRolls(state, key, a.move);
 				if (r && !r.immune && r.noCrit[0] > hit) hit = r.noCrit[0];
 			});
 			// Room to survive matters more than damage: this is a Nuzlocke.
 			var score = (mon.curHP - worst) * 2 + hit;
 			if (score > bestScore) { bestScore = score; best = i; }
 		}
+		side.active = wasActive;
 		return best;
 	}
 
