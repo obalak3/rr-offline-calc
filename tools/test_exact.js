@@ -191,5 +191,47 @@ function replay(state, steps) {
 		typeof route.exactness === 'string');
 }
 
+// ------------------------------------------------------ the time limit binds
+
+// A cap that does not bind is worse than no cap, because everything downstream
+// is planned around it. The first version set an "exhausted" flag and returned
+// from the node that noticed, while the other 1023 nodes in the batch carried on
+// searching -- so a 12 second cap ran for over three minutes and stopped only
+// when the NODE budget ran out. A whole overnight benchmark run was lost to it.
+{
+	const TRAINERS = sandbox.RR_TRAINER_DATA;
+	let misty = null;
+	for (const segment of TRAINERS.segments) {
+		for (const b of (segment.battles || [])) {
+			if (/MISTY/.test(b.trainer || '') && !misty &&
+				b.team[0].level.type === 'fixed') misty = b;
+		}
+	}
+	const foe = misty.team.map(m => ({
+		species: m.species, level: m.level.value, nature: m.nature,
+		ability: m.ability, item: m.item || '', moves: m.moves.slice(0, 4),
+		evs: m.evs, ivs: m.ivs
+	}));
+	const level = misty.team[0].level.value + 2;
+	// Deliberately a party that neither wins quickly nor loses quickly, so the
+	// search has to be stopped rather than finishing on its own.
+	const party = [
+		set('Poliwrath', ['Body Slam', 'Hypnosis', 'Bubble Beam', 'Double Slap'], level),
+		set('Weezing', ['Smog', 'Haze', 'Tackle', 'Poison Gas'], level),
+		set('Persian', ['Bite', 'Screech', 'Growl', 'Fury Swipes'], level)
+	];
+	const state = B.createState(party, foe, {});
+	const cap = 3000;
+	const started = Date.now();
+	const result = X.cleanWin(state, {exactBudget: 5000000, maxTurns: 30,
+		timeLimitMs: cap});
+	const took = Date.now() - started;
+	check('the time limit actually stops the search (' + took + 'ms for a ' +
+		cap + 'ms cap)', took < cap * 2,
+		'ran ' + took + 'ms, ' + result.nodes + ' nodes');
+	check('  and a search stopped by the clock is UNDECIDED',
+		result.decided === false && result.found === false);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

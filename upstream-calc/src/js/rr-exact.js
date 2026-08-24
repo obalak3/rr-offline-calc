@@ -130,6 +130,13 @@ var RRExact = (function () {
 		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
 
 		function walk(current, turnsLeft) {
+			// Once the search has given up, EVERY node must return immediately.
+			// Without this the time limit did not work: it fired on one node in
+			// 1024 and the other 1023 carried on searching, so a 12 second cap
+			// ran for over three minutes and only stopped when the node budget
+			// ran out. The budget check got away with the same shape by
+			// accident, because every later node also exceeds the budget.
+			if (limits.exhausted) return false;
 			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return false; }
 			if (deadline && (limits.nodes & 1023) === 0 && Date.now() > deadline) {
 				limits.exhausted = true;
@@ -326,6 +333,9 @@ var RRExact = (function () {
 		function value(current, turnsLeft, isRoot) {
 			if (allDown(current.foe)) return 1;
 			if (turnsLeft <= 0) return 0;
+			// Same short-circuit as walk(): giving up has to stop the whole
+			// search, not just the node that noticed.
+			if (limits.exhausted) return 0;
 			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return 0; }
 			if (deadline && (limits.nodes & 1023) === 0 && Date.now() > deadline) {
 				limits.exhausted = true;
