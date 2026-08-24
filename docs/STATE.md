@@ -223,6 +223,32 @@ no kills available the ordering collapses to raw damage, while the line that
 wins is patient and switch-heavy: four Gyro Balls, a pivot, four Bulldozes,
 another pivot. The winning move is almost never the hardest-hitting one.
 
+### Why it could not be found, and the beam that was not a beam
+
+The obvious objection is that an exhaustive search must find the line given
+enough time. Measured: Brock's mirror is still undecided at **4,000,000 nodes**.
+
+Not because the winning move is buried -- Rock Tomb sits second of seven in the
+ordering. Because depth-first takes the first move and explores everything
+underneath it before trying the second, and that subtree is about 7^15. **The
+search never gets past its first guess.** Both mechanisms that normally make
+this affordable are defeated by this fight: the Nuzlocke cut needs things to
+die, and with two Sturdy users and Berry Juice almost nothing does; the
+transposition table needs positions to repeat, and in a long grind where HP
+drifts every turn almost nothing does.
+
+**The portfolio's beam pass exists to hedge against exactly this, and it was
+inert.** The beam was an absolute 8; a 4v4 has seven legal actions, so
+`Math.min(7, 8)` restricted nothing and two of the three passes explored the
+same tree the same way. Beams are now a fraction of the branching factor:
+
+    Brock mirror   undecided at 4,000,000 nodes  ->  clean win in 23,796 nodes,
+                   and a 13-turn line, three shorter than the weighted search's
+    early mirrors  8 of 9  ->  9 of 9
+
+**The general lesson, worth more than the fix:** a cap expressed as an absolute
+number silently stops being a cap when the thing it caps is smaller than it.
+
 ### An open question this raises, deliberately NOT yet decided
 
 If the weighted search produces a line that loses nobody, that line **is** a
@@ -234,11 +260,14 @@ line, labels it "the search ran out of time, here is a guess", and throws the
 important property away.
 
 A `cheapWitness` probe that runs the weighted search first and keeps its line
-when it is clean is **written and working but uncommitted** -- Brock's mirror
-goes from undecided-at-200,000-nodes to a clean line in 269 ms. It is left
-undecided on purpose, because it changes what `planRoute` means: the answer
-would sometimes come from the engine this file has spent a lot of effort
-demoting, and the honest labelling of that needs thought rather than a commit.
+when it is clean is committed but **OFF by default** (`probe: true` to enable).
+Measuring it settled the question, and against making it the default: on a fight
+that genuinely certifies, the probe returns `line-found` with **no certificate**
+where the real search returns `certified`. It trades a provable answer for an
+unprovable one to save 200 ms, and does it silently.
+
+The idea is still right for the case it was built for. It needs to certify the
+line it borrows before it can be the default, and that is the open work.
 
 ## The switch-churn problem: partly fixed
 
