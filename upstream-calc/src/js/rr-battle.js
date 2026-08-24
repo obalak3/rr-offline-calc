@@ -1209,12 +1209,22 @@ var RRBattle = (function () {
 			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: 0.75, value: true}, {p: 0.25, value: false}],
 					key === "me" ? 1 : 0)) return;
-			} else if (against(ctx, key)) {
-				// 25% full paralysis, re-rolled every turn. Assumed to go your
-				// way at a cost; taken against you it would never resolve.
-				assume(state, 0.75);
+			} else if (ctx.mode === "worst") {
+				if (key === "me") {
+					// 25% full paralysis, re-rolled every turn. Assumed to go
+					// your way at a cost; taken against you it would never
+					// resolve.
+					assume(state, 0.75);
+				}
+				// Theirs LANDS. The old code returned here, on the reasoning
+				// that "their paralysis stopping them would only help you" --
+				// which is true, and is exactly why a worst-case mode must not
+				// assume it. It meant a paralysed opponent never moved again, so
+				// a plan opening with Thunder Wave read as though the fight were
+				// over. Measured: a paralysed Machamp's Close Combat did 0
+				// damage in worst mode and 330 in maxroll.
 			} else {
-				return;   // their paralysis stopping them would only help you
+				return;
 			}
 		}
 
@@ -1254,10 +1264,17 @@ var RRBattle = (function () {
 			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: accuracy, value: true},
 					{p: 1 - accuracy, value: false}], key === "me" ? 1 : 0)) return;
-			} else if (against(ctx, key)) {
-				assume(state, accuracy);
+			} else if (ctx.mode === "worst") {
+				if (key === "me") assume(state, accuracy);
+				// Theirs LANDS, for the same reason as paralysis above. The old
+				// code skipped the foe's move entirely, so in the one mode that
+				// exists to assume the worst, every inaccurate enemy move was
+				// treated as harmless. Measured: Dynamic Punch did 0 damage in
+				// worst mode against 330 in maxroll, so a Focus Blast or Stone
+				// Edge attacker read as no threat at all and the search would
+				// happily "prove" a clean sweep past it.
 			} else {
-				return;   // their move missing would only help you
+				return;
 			}
 		}
 

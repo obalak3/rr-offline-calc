@@ -678,5 +678,29 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		plain.second === plain.first, plain.first + ' then ' + plain.second);
 }
 
+{
+	// Worst-case mode exists to assume the opponent's luck goes against you. It
+	// was doing the opposite for two of the three coins: an inaccurate enemy
+	// move was skipped entirely, and a paralysed enemy never moved again -- so
+	// a plan opening with Thunder Wave read as though the fight were over.
+	function incoming(mode, paralysed) {
+		const state = B.createState(
+			[set('Blissey', {moves: ['Tackle']})],
+			[set('Machamp', {moves: ['Dynamic Punch']})], {});
+		if (paralysed) B.active(state.foe).status = 'par';
+		const before = B.active(state.me).curHP;
+		const next = B.step(state, {type: 'move', index: 0, move: 'Tackle'},
+			{type: 'move', index: 0, move: 'Dynamic Punch'},
+			{mode: mode, risks: {roll: 'median', miss: 0, paralysis: 0}})[0].state;
+		return before - B.active(next.me).curHP;
+	}
+	check('an inaccurate enemy move still lands in worst-case mode',
+		incoming('worst', false) > 0, String(incoming('worst', false)));
+	check('  and a paralysed enemy still attacks',
+		incoming('worst', true) > 0, String(incoming('worst', true)));
+	check('  as hard as it would at max roll',
+		incoming('worst', false) === incoming('maxroll', false));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);
