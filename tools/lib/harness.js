@@ -366,8 +366,17 @@ function makeGenerator(loaded, dexParts, startSeed) {
 		// Intimidate, no Volt Absorb, nothing. The trainers were unaffected,
 		// their sets coming from the spreadsheet, so the error handicapped the
 		// player only.
-		let ability = (grown.species.abilities && grown.species.abilities[0] &&
-			dex.abilities && dex.abilities[grown.species.abilities[0][0]]) || null;
+		// Take the first slot that actually HOLDS something. Ability id 0 is an
+		// empty slot and 392 species of 1343 have one first -- Mismagius keeps
+		// Levitate in slot two, Tinkaton keeps Mold Breaker there -- so reading
+		// `abilities[0]` blindly left more than a quarter of the dex with
+		// nothing even after the `names` fix below.
+		let ability = null;
+		for (const slot of (grown.species.abilities || [])) {
+			const record = slot && dex.abilities && dex.abilities[slot[0]];
+			if (record) { ability = record; break; }
+		}
+		// The dex stores `names`, an array, not `name`.
 		if (ability && !ability.name && ability.names) {
 			ability = {name: ability.names[0]};
 		}

@@ -1100,3 +1100,13 @@ ceiling check, a whole-game run and a coverage audit.
 **Worth generalising:** the audit that found seventeen mechanics was looking at
 what the ENGINE does with a team. This was wrong in the team itself. A tool that
 prints its inputs would have caught it on day one.
+
+**And there was a second layer under it.** With `names` fixed, 392 species of
+1343 still came out with nothing, because ability id 0 is an EMPTY SLOT and more
+than a quarter of the dex has one in the first position -- Mismagius keeps
+Levitate in slot two, Tinkaton keeps Mold Breaker there, Beheeyem keeps Analytic.
+Reading `abilities[0]` blindly is wrong even once the field name is right. Taking
+the first slot that actually resolves brings it to **0 species without an
+ability, from 1343**.
+
+Both halves were invisible for the same reason: nothing ever printed the column.
