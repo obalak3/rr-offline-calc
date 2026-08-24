@@ -304,3 +304,31 @@ recorded above predate this and should not be quoted until it is re-run.**
 
 Team generation and battle selection now live in `tools/lib/harness.js`, shared
 by both benchmarks, so the two cannot drift apart again.
+
+## The portfolio was worse than every pass in it (2026-08-24)
+
+Worth recording as a bug because it looked exactly like a tradeoff, and it was
+measured as one for most of a session before anybody checked it against its own
+components.
+
+Same fight, same team, node budget only:
+
+    LT. SURGE, team 1                  verdict      nodes
+      the beam pass, run alone         FOUND 23T     7,423
+      the plain search, run alone      FOUND 23T    86,776
+      all of them, as the portfolio    undecided   300,002
+
+A combination losing to each of its parts is not a tuning result, it is a
+defect. The cause: `exhaustive` was being used for two unrelated questions --
+"is this pass entitled to conclude that no clean line exists" and "does this
+pass get the rest of the budget". The table-ordered first pass is full width at
+full horizon, so it answered yes to the first, so it was handed the entire
+budget, so the beam pass behind it never ran. Separating the two flags:
+
+    LT. SURGE, the portfolio, fixed    FOUND 23T    22,585   (3.8x the plain search)
+
+**The lesson is about the measurement, not the code.** Every earlier number for
+the portfolio was real, reproducible, and meaningless, and it took comparing the
+whole against its own parts to see it. When a combination underperforms, check
+that it is running what you think it is running before concluding anything about
+the ideas in it.

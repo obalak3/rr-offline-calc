@@ -107,12 +107,16 @@ var RRExact = (function () {
 	 * legitimately be revisited with a larger budget, and scoring the
 	 * opponent's options is about 265us -- the single biggest cost per node.
 	 */
-	var singleReplyCache = {};
+	// A Map rather than an object literal. These caches are keyed by position
+	// strings a couple of hundred characters long, and looking those up as object
+	// properties goes through V8's megamorphic path -- the profiler put 6.4% of a
+	// hard search in KeyedLoadIC_Megamorphic. A Map is built for exactly this.
+	var singleReplyCache = new Map();
 
 	function reply(state, opts, key) {
 		if (typeof RRAI === "undefined") return null;
 		var cacheKey = key === undefined ? RRBattle.positionKey(state) : key;
-		var hit = singleReplyCache[cacheKey];
+		var hit = singleReplyCache.get(cacheKey);
 		if (hit !== undefined) return hit;
 		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
 			{checkBadMove: true, checkGoodMove: true};
@@ -125,7 +129,7 @@ var RRExact = (function () {
 			if (!best || entry.score > best.score) best = entry;
 		}
 		var chosen = best ? best.action : null;
-		singleReplyCache[cacheKey] = chosen;
+		singleReplyCache.set(cacheKey, chosen);
 		return chosen;
 	}
 
@@ -145,7 +149,7 @@ var RRExact = (function () {
 	// every bench member's best move and the opponent's worst reply, which is
 	// dozens of damage lookups. Positions repeat now that the visited set keys
 	// on remaining turns too, so this is worth holding on to.
-	var orderCache = {};
+	var orderCache = new Map();
 
 	/**
 	 * How free an action is, in the sense that matters here.
@@ -219,7 +223,7 @@ var RRExact = (function () {
 
 	function ordered(state, key) {
 		if (key !== undefined) {
-			var hit = orderCache[key];
+			var hit = orderCache.get(key);
 			if (hit !== undefined) return hit;
 		}
 		var threat = foeThreat(state);
@@ -287,7 +291,7 @@ var RRExact = (function () {
 		ranked.sort(function (a, b) { return b.rank - a.rank; });
 		var out2 = [];
 		for (var j = 0; j < ranked.length; j++) out2.push(ranked[j].action);
-		if (key !== undefined) orderCache[key] = out2;
+		if (key !== undefined) orderCache.set(key, out2);
 		return out2;
 	}
 
@@ -351,8 +355,8 @@ var RRExact = (function () {
 		matchupTable = tableFor(state, opts);
 		limits.nodes += (matchupTable && matchupTable.nodes) || 0;
 
-		singleReplyCache = {};
-		orderCache = {};
+		singleReplyCache = new Map();
+		orderCache = new Map();
 		var line = [];
 
 		// Per-pass state. `seen` is rebuilt for every pass and never shared:
@@ -361,7 +365,7 @@ var RRExact = (function () {
 		// wider pass skip exactly the positions it was widened to examine --
 		// turning "I did not look" into "there is nothing there", which is the
 		// one lie this module must never tell.
-		var seen = {};
+		var seen = new Map();
 		var beam = Infinity;
 		var passCap = limits.budget;
 
@@ -407,9 +411,9 @@ var RRExact = (function () {
 			// Storing the largest budget already tried keeps nearly all of the
 			// pruning: failing with 18 turns does imply failing with 12.
 			var key = RRBattle.positionKey(current);
-			var triedWith = seen[key];
+			var triedWith = seen.get(key);
 			if (triedWith !== undefined && triedWith >= turnsLeft) return false;
-			seen[key] = turnsLeft;
+			seen.set(key, turnsLeft);
 
 			var theirs = reply(current, opts, key);
 			if (!theirs) return false;
@@ -503,19 +507,29 @@ var RRExact = (function () {
 			// a plainly-ordered one. Only the beam can hide a line, and a beam
 			// of Infinity hides nothing.
 			var exhaustive = !(pass.beam < Infinity) && pass.turns >= limits.maxTurns;
-			seen = {};
+			// Being ENTITLED TO CONCLUDE and being given the whole budget are two
+			// different things, and running them off one flag was a real bug: the
+			// table-ordered first pass is full width at full horizon, so it
+			// counted as exhaustive, so it took the entire budget and the beam
+			// pass behind it never ran at all. That made the portfolio strictly
+			// worse than any single one of its passes on Lt. Surge -- undecided
+			// at 300,002 nodes where the plain search finds the line at 86,776
+			// and the beam finds it at 7,423. Only the LAST pass gets what is
+			// left; every pass before it gets its slice and hands over.
+			var isLast = p === passes.length - 1;
+			seen = new Map();
 			beam = pass.beam;
 			passUsesMatchup = pass.matchup !== false;
 			// Ordering differs per pass, so a cached order from the last one is
 			// the wrong order for this one.
-			orderCache = {};
+			orderCache = new Map();
 			line.length = 0;
 			limits.truncated = false;
 			limits.passOver = false;
 			// The last pass gets everything that is left; the hunt passes get a
 			// slice each, so a hunt that finds nothing cannot starve the pass
 			// that is allowed to conclude.
-			passCap = exhaustive ? limits.budget
+			passCap = isLast ? limits.budget
 				: Math.min(limits.budget, limits.nodes + Math.ceil(limits.budget * pass.share));
 
 			found = walk(state, pass.turns);
@@ -638,12 +652,12 @@ var RRExact = (function () {
 	 * (ai_master.c:360), so collapsing that to one action throws away real
 	 * branching. Usually the tie set has one member and this costs nothing.
 	 */
-	var replyCache = {};
+	var replyCache = new Map();
 
 	function replies(state, opts, key) {
 		if (typeof RRAI === "undefined") return null;
 		var cacheKey = key === undefined ? RRBattle.positionKey(state) : key;
-		var cached = replyCache[cacheKey];
+		var cached = replyCache.get(cacheKey);
 		if (cached !== undefined) return cached;
 		var flags = (opts && opts.flagSets && opts.flagSets[0]) ||
 			{checkBadMove: true, checkGoodMove: true};
@@ -664,7 +678,7 @@ var RRExact = (function () {
 		// turns up at several depths, so this is memoised for the life of one
 		// search. Cleared per search because it is only valid while the teams
 		// and field are the ones it was built for.
-		replyCache[cacheKey] = out;
+		replyCache.set(cacheKey, out);
 		return out;
 	}
 
@@ -698,7 +712,7 @@ var RRExact = (function () {
 			exhausted: false,
 			collapsed: false
 		};
-		var memo = {};
+		var memo = new Map();
 		var started = Date.now();
 		var deadline = opts.timeLimitMs ? started + opts.timeLimitMs : null;
 
@@ -724,9 +738,9 @@ var RRExact = (function () {
 			// same work. Same answers, less of them computed twice.
 			var posKey = RRBattle.positionKey(current);
 			var key = posKey + "@" + turnsLeft;
-			var cached = memo[key];
+			var cached = memo.get(key);
 			if (cached !== undefined) return cached;
-			memo[key] = 0;   // guard against revisiting a position mid-descent
+			memo.set(key, 0);   // guard against revisiting a position mid-descent
 
 			var theirs = replies(current, opts, posKey);
 			if (!theirs) return 0;
@@ -774,18 +788,18 @@ var RRExact = (function () {
 				if (total > best) best = total;
 			}
 
-			memo[key] = best;
+			memo.set(key, best);
 			return best;
 		}
 
-		replyCache = {};
+		replyCache = new Map();
 		matchupTable = tableFor(state, opts);
 		// Cleared because this search now uses it too. positionKey does NOT
 		// encode species, so an entry left over from a different fight can
 		// legitimately collide with a key here, and the order it returned would
 		// be for somebody else's team. Ordering cannot make an answer wrong, but
 		// it can make one arbitrarily slow, and a stale hit is not debuggable.
-		orderCache = {};
+		orderCache = new Map();
 		rootRanking = [];
 		var chance = value(state, limits.maxTurns, true);
 		rootRanking.sort(function (x, y) { return y.chance - x.chance; });
