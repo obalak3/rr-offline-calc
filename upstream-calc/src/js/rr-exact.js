@@ -99,11 +99,82 @@ var RRExact = (function () {
 	// on remaining turns too, so this is worth holding on to.
 	var orderCache = {};
 
+	/**
+	 * How free an action is, in the sense that matters here.
+	 *
+	 * The search looks for ONE line where nothing dies, so the order it tries
+	 * actions in decides how fast it gets there -- and the actions most likely
+	 * to START a clean line are the ones that cost nothing. Ordering can never
+	 * change which lines exist, only how quickly one is found, so unlike an
+	 * evaluation weight this cannot make the answer wrong.
+	 *
+	 * Four things count as free, and all four are things the weighted evaluator
+	 * is structurally blind to because their payoff is not this turn's damage:
+	 *
+	 *   Denying a turn.   A guaranteed flinch means the opponent does not act at
+	 *                     all. Fake Out has +3 priority, so it always lands
+	 *                     first and the turn is simply taken away.
+	 *   Absorbing a hit.  Switching Lanturn into an Electric move does not
+	 *                     reduce the damage, it converts it into healing.
+	 *   Recycling HP.     Regenerator gives back a third of max HP for leaving,
+	 *                     so a damaged pivot returns as a usable body.
+	 *   Blunting future   Intimidate drops Attack a stage on every entry, which
+	 *   damage.           lowers everything physical for the rest of the fight.
+	 *
+	 * These are hints, not bonuses. Nothing here is added to a score that
+	 * decides what is good; it only decides what to look at first.
+	 */
+	function deniesTheirTurn(state, action) {
+		if (action.type !== "move") return false;
+		var data = RRBattle.moveData(action.move);
+		var effect = data && data.effect;
+		if (!effect || !effect.guaranteed) return false;
+		if (!effect.secondary || !effect.secondary.flinch) return false;
+		// firstTurnOnly moves are wasted unless the user just came in.
+		if (effect.firstTurnOnly && RRBattle.active(state.me).turnsOut > 0) return false;
+		return true;
+	}
+
+	/** The foe's hardest-hitting move, and what kind of thing it is. */
+	function foeThreat(state) {
+		var foe = RRBattle.active(state.foe);
+		var moves = (foe.set && foe.set.moves) || [];
+		var best = null, worst = -1;
+		for (var i = 0; i < moves.length; i++) {
+			var rolls = RRBattle.damageRolls(state, "foe", moves[i]);
+			var hit = rolls ? rolls.noCrit[rolls.noCrit.length - 1] : 0;
+			if (hit > worst) { worst = hit; best = moves[i]; }
+		}
+		var data = best ? RRBattle.moveData(best) : null;
+		return {move: best, damage: Math.max(0, worst), data: data};
+	}
+
+	/** What a switch gets for free, over and above the matchup it creates. */
+	function freeValueOfSwitch(state, incoming, outgoing, threat) {
+		var bonus = 0;
+		var absorbRule = RRBattle._internal.ABSORBS[incoming.set.ability];
+		if (absorbRule && threat.data && threat.data.type === absorbRule.type) {
+			// The hit stops being a cost and becomes a gain. Nothing else in the
+			// game swings a turn this hard.
+			bonus += absorbRule.heals ? 120 : 70;
+		}
+		if (outgoing.set.ability === "Regenerator" &&
+			outgoing.curHP < outgoing.maxHP * 0.75) {
+			bonus += 50;
+		}
+		if (incoming.set.ability === "Intimidate" && threat.data &&
+			threat.data.split === "Physical") {
+			bonus += 60;
+		}
+		return bonus;
+	}
+
 	function ordered(state, key) {
 		if (key !== undefined) {
 			var hit = orderCache[key];
 			if (hit !== undefined) return hit;
 		}
+		var threat = foeThreat(state);
 		var defender = RRBattle.active(state.foe);
 		var actions = RRBattle.legalActions(state, "me");
 		var ranked = [];
@@ -131,15 +202,21 @@ var RRExact = (function () {
 					state.me.active = was;
 					var deal = out ? out.noCrit[out.noCrit.length - 1] / Math.max(1, defender.curHP) : 0;
 					var take = back / Math.max(1, incoming.curHP);
+					var free = freeValueOfSwitch(state, incoming,
+						state.me.team[was], threat);
 					// Below zero, so a switch only outranks an attack that is
 					// doing almost nothing -- but a good pivot now beats a bad
 					// attack instead of losing to every one of them.
-					rank = -1 + 40 * deal - 30 * Math.min(1, take);
+					rank = -1 + 40 * deal - 30 * Math.min(1, take) + free;
 				}
 			} else {
 				var rolls = RRBattle.damageRolls(state, "me", action.move);
 				var hit = rolls ? rolls.noCrit[rolls.noCrit.length - 1] : 0;
 				rank = hit >= defender.curHP ? 1000 + hit : 100 * hit / Math.max(1, defender.curHP);
+				// A move that takes the opponent's turn away costs nothing, so
+				// it belongs near the front of the queue even though its damage
+				// is small. Below a kill, above ordinary chip.
+				if (deniesTheirTurn(state, action)) rank += 90;
 			}
 			ranked.push({action: action, rank: rank});
 		}

@@ -1512,6 +1512,13 @@ var RRBattle = (function () {
 		endOfTurn: endOfTurn,
 		accuracyOf: accuracyOf,
 		_internal: {
+			// Exposed so the exact search can ORDER its moves by which ones are
+			// free -- absorbing a hit instead of taking it, denying a turn. It
+			// reads these, never redefines them: a second copy of the absorb
+			// table would drift from this one and the search would order itself
+			// by a rule the engine no longer follows.
+			absorbs: absorbs,
+			ABSORBS: ABSORBS,
 			toCalcPokemon: toCalcPokemon,
 			buildField: buildField,
 			setStatus: setStatus,
