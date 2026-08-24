@@ -332,14 +332,33 @@ function makeGenerator(loaded, dexParts, startSeed) {
 			if (!data) continue;
 			const damaging = data.power > 0;
 			const stab = speciesTypes.indexOf(data.type) >= 0;
-			scored.push({
-				name: name, data: data, damaging: damaging, stab: stab,
+			let value = damaging
 				// Accuracy matters: a 120-power move that lands 70% of the time
 				// is worse than a 90-power one that always does, and a player
 				// picking moves knows it.
-				value: damaging ? data.power * (data.accuracy || 100) / 100 *
-					(stab ? 1.5 : 1) : 0
-			});
+				? data.power * (data.accuracy || 100) / 100 * (stab ? 1.5 : 1)
+				: 0;
+			// Raw power was the whole ranking, so Explosion (150) and Hyper Beam
+			// (150) outranked everything and 48% of generated Pokemon carried a
+			// self-crippling move -- 22% led with one. Nobody builds a team that
+			// way. The drawback is in the move's own description, which is the
+			// only place the dex records it.
+			const text = (data.description || '').toLowerCase();
+			if (damaging) {
+				if (text.indexOf('explodes') >= 0 || text.indexOf('faints') >= 0) {
+					value *= 0.1;    // one use, and you lose the Pokemon
+				} else if (text.indexOf('must rest') >= 0 ||
+					text.indexOf('makes the user rest') >= 0) {
+					value *= 0.5;    // a free turn handed over after every use
+				} else if (text.indexOf('2-turn move') >= 0) {
+					value *= 0.5;    // and a free turn handed over before it
+				} else if (text.indexOf('also hurts') >= 0 ||
+					text.indexOf('half its') >= 0) {
+					value *= 0.7;    // pays HP for the damage
+				}
+			}
+			scored.push({name: name, data: data, damaging: damaging,
+				stab: stab, value: value});
 		}
 		scored.sort(function (a, b) { return b.value - a.value; });
 
@@ -351,11 +370,36 @@ function makeGenerator(loaded, dexParts, startSeed) {
 			typesUsed[entry.data.type] = true;
 			picked.push(entry.name);
 		}
-		// One utility slot, if the pool has anything worth the space.
+		// One utility slot, IF the pool has anything worth the space. It used to
+		// take the first status move in pool order, which is the earliest-learned
+		// one, so 39% of level-85 sets carried Leer, Growl, Harden or Defense
+		// Curl. A level 85 Heracross was generated with Focus Punch, Megahorn,
+		// Earthquake and Leer.
+		//
+		// A status move earns the slot only if it does something a plan can be
+		// built on: heal, protect, or inflict a status. Otherwise the fourth
+		// slot goes to another attack, which is what a player would do.
+		const WORTH_A_SLOT = ['Recover', 'Roost', 'Synthesis', 'Soft-Boiled',
+			'Slack Off', 'Rest', 'Morning Sun', 'Moonlight', 'Protect', 'Detect',
+			'Substitute', 'Toxic', 'Will-O-Wisp', 'Thunder Wave', 'Spore',
+			'Sleep Powder', 'Hypnosis', 'Leech Seed', 'Swords Dance', 'Growth',
+			'Nasty Plot', 'Agility', 'Stealth Rock'];
+		// Dragon Dance, Curse, Calm Mind and the rest of the setup moves are
+		// deliberately absent: Restricted mode bans them for the player and
+		// RESTRICTED_MOVES has already stripped them from the pool, so listing
+		// them here would only mislead the next reader.
 		const utility = scored.find(function (e) {
-			return !e.damaging && picked.indexOf(e.name) < 0;
+			if (e.damaging || picked.indexOf(e.name) >= 0) return false;
+			return WORTH_A_SLOT.indexOf(e.name) >= 0;
 		});
 		if (utility && picked.length < 4) picked.push(utility.name);
+		// No worthwhile utility: take a fourth attack instead.
+		if (picked.length < 4) {
+			const fourth = scored.find(function (e) {
+				return e.damaging && picked.indexOf(e.name) < 0;
+			});
+			if (fourth) picked.push(fourth.name);
+		}
 		while (picked.length < 4) {
 			const filler = scored.find(function (e) { return picked.indexOf(e.name) < 0; });
 			if (!filler) break;

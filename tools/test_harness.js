@@ -135,5 +135,30 @@ for (const key in dexParts.dex.species) {
 		early.every(m => m.evs.hp === 0 && m.item === 'Oran Berry'));
 }
 
+{
+	// Raw power was the entire move ranking, so Explosion and Hyper Beam
+	// outranked everything and half of all generated Pokemon carried a
+	// self-crippling move. The fourth slot always went to a status move, and
+	// always the earliest-learned one, so 39% carried Leer, Growl or Harden.
+	const CRIPPLING = /^(explosion|self-destruct|misty explosion|hyper beam|giga impact)$/i;
+	const JUNK = /^(leer|growl|tail whip|harden|defense curl|scary face|foresight|odor sleuth|lucky chant|mud sport|splash)$/i;
+	let crippling = 0, junk = 0, total = 0;
+	for (let i = 0; i < 20; i++) {
+		for (const mon of gen.team(85, 6)) {
+			total++;
+			for (const move of mon.moves) {
+				if (CRIPPLING.test(move)) crippling++;
+				if (JUNK.test(move)) junk++;
+			}
+		}
+	}
+	// A few survive on Pokemon whose pool is genuinely that thin, which is
+	// honest; half of them was not.
+	check('self-crippling moves are rare, not the default (' + total + ' checked)',
+		crippling / total < 0.1, crippling + ' of ' + total);
+	check('  and no set carries a pure junk status move', junk === 0,
+		junk + ' junk move(s)');
+}
+
 console.log('\n' + failures + ' failure(s)');
 process.exit(failures ? 1 : 0);
