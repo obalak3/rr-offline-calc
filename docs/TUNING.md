@@ -1075,3 +1075,28 @@ along.
 
 Worth keeping in proportion, though: whether the planner wins Surge *with*
 Growth is not the question. Whether it wins at all is.
+
+## Every generated team in this project's history fought without abilities
+
+The dex stores `names`, an array. The generator read `.name`. So this line, in
+place since the commit that created the benchmark:
+
+    ability: ability && ability.name ? ability.name : undefined
+
+has silently produced `undefined` for **every generated Pokemon in every
+measurement ever taken here.** No Levitate, no Intimidate, no Volt Absorb, no
+Regenerator, nothing.
+
+The trainers were unaffected -- their sets come from the community spreadsheet
+with ability names as strings -- so the error was **one-sided**: it handicapped
+the player and left the opponent whole. Every number in this file was measured
+with the player's team missing a mechanic the opponent had.
+
+It surfaced from an unrelated direction. `tools/counter_team.js` prints the team
+it builds, and the ability column was a row of dashes. Nothing else in the repo
+ever printed that column, which is why a bug this size survived a benchmark, a
+ceiling check, a whole-game run and a coverage audit.
+
+**Worth generalising:** the audit that found seventeen mechanics was looking at
+what the ENGINE does with a team. This was wrong in the team itself. A tool that
+prints its inputs would have caught it on day one.

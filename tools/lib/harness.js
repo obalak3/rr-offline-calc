@@ -359,8 +359,18 @@ function makeGenerator(loaded, dexParts, startSeed) {
 			if (legal.length) moves = legal.slice(-4);
 		}
 		if (!moves.length) return null;
+		// The dex stores `names`, an array, not `name`. Reading `.name` here has
+		// silently produced `undefined` since the benchmark was written, which
+		// means **every generated team in every measurement this project has
+		// ever taken has fought with no abilities at all** -- no Levitate, no
+		// Intimidate, no Volt Absorb, nothing. The trainers were unaffected,
+		// their sets coming from the spreadsheet, so the error handicapped the
+		// player only.
 		let ability = (grown.species.abilities && grown.species.abilities[0] &&
 			dex.abilities && dex.abilities[grown.species.abilities[0][0]]) || null;
+		if (ability && !ability.name && ability.names) {
+			ability = {name: ability.names[0]};
+		}
 		// Restricted mode swaps a banned ability for a named replacement rather
 		// than leaving the Pokemon with none.
 		if (ability && ability.name && RESTRICTED_ABILITIES[ability.name]) {
