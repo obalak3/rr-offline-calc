@@ -793,3 +793,54 @@ full physical power rather than halved (which flatters them again) -- except
 that the ability they are nearly always paired with, Guts, is itself unmodelled
 and would have raised that attack anyway. Worth doing together with Guts or not
 at all.
+
+## Two gaps that closed themselves under inspection (2026-08-24)
+
+Both were on the audit's shortlist and neither needed code, which is worth
+recording so nobody spends a day building them.
+
+**Mega evolution.** 127 trainer Pokemon hold a mega stone -- and 113 are already
+listed with the mega SPECIES. `Aggron-Mega` carries 140 attack and 230 defence
+against Aggron's 110 and 180, so the calculator is already fighting the mega
+form. The stone is decoration on top of a Pokemon that has already transformed,
+and the damage probe confirms it moves no number.
+
+**Power Herb**, per above: the engine has no charge turns, so it already fires
+every two-turn move immediately. Everyone effectively holds one.
+
+The pattern in both: an item that looks unmodelled because nothing mentions it,
+where the mechanic is really handled somewhere else entirely. Measure before
+building.
+
+## The fixes were verified against real trainer data, not just unit tests
+
+Unit tests prove a mechanic works in a position built to exercise it. They do not
+prove the mechanic ever fires in a fight anybody will have. Checked against Gym
+Leader Blaine, who carries both:
+
+    Exeggutor @ Lum Berry     Sleep Powder lands, status comes back null,
+                              berry consumed -- the plan a search would have
+                              built on that sleep is correctly refused
+    Slither Wing @ Life Orb   attacks with First Impression and loses 23 HP,
+                              which is exactly 238/10
+
+Nine of the thirty-six fixed-level singles battles carry two or more of the
+newly-modelled mechanics, including Koga, Blaine, Clair and three Victory Road
+trainers. **None of them is in the nine-battle early benchmark**, which is why
+every one of these bugs survived until the whole-game audit: the only early
+exposure is a single Flittle with Speed Boost in the Falkner fight.
+
+## Doubles is missing, not broken (2026-08-24)
+
+Worth stating because it is the one place the app could have been quietly wrong
+and is not. Selecting a double battle disables the advisor and says why:
+
+> This is a double battle, and the advisor only understands singles. Nothing
+> here models a second Pokemon on each side: no spread damage, no redirection,
+> no partner. Rather than answer the 1v1 question and look confident about it,
+> it stops.
+
+`tools/test_advisor.js` asserts both that it refuses and that clicking anyway
+produces no ranking. 27 of 167 battles are doubles, several of them before
+Misty, so this is a real feature gap -- but it is a gap the user can see, which
+is the only acceptable kind.
