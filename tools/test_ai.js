@@ -25,6 +25,7 @@ for (const file of ['src/js/data/rr-move-effects.js', 'src/js/rr-critko.js',
 }
 const B = sandbox.RRBattle;
 const AI = sandbox.RRAI;
+const RRPlan = sandbox.RRPlan;
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -209,6 +210,47 @@ function scoreOf(state, key, move, flags) {
 	check('  and switch scoring being unported is reported',
 		result.notes.switching === true, JSON.stringify(result.notes));
 }
+
+{
+	// Rotating our OWN moveset must not change what the opponent is predicted to
+	// do. movesFirst used whichever move sat in slot zero as its speed
+	// reference, so putting a priority move there flipped the prediction and
+	// could drop an action out of the plausible set entirely.
+	function predict(ourMoves) {
+		const state = B.createState(
+			[set('Alakazam', ourMoves)],
+			[set('Snorlax', ['Body Slam', 'Crunch', 'Yawn', 'Rest'])], {});
+		return AI.scoreAll(state, 'foe', {checkBadMove: true, checkGoodMove: true}, {})
+			.filter(e => e.action.type === 'move')
+			.map(e => e.action.move + '=' + e.score).join(' ');
+	}
+	const normal = predict(['Thunderbolt', 'Shadow Ball', 'Roar', 'Dig']);
+	const rotated = predict(['Roar', 'Thunderbolt', 'Shadow Ball', 'Dig']);
+	check('the AI prediction ignores our own move ordering', normal === rotated,
+		normal + '  vs  ' + rotated);
+}
+
+{
+	// Pivot moves come back one per bench target, and who comes in is part of
+	// the choice. Keying the plausible set on the move name alone kept one and
+	// discarded the rest -- a narrowing, which is the direction that lets a plan
+	// be "proved" against a branch nobody examined.
+	const state = B.createState(
+		[set('Snorlax', ['Tackle'])],
+		[set('Scizor', ['U-turn', 'Bullet Punch']), set('Blastoise', ['Surf']),
+			set('Gengar', ['Shadow Ball'])], {});
+	const legal = B.legalActions(state, 'foe').filter(a => a.move === 'U-turn');
+	const plan = RRPlan;
+	if (plan && plan.plausibleFoeActions) {
+		const kept = plan.plausibleFoeActions(state, {margin: 10})
+			.filter(x => (x.action || x).move === 'U-turn');
+		check('every pivot destination survives into the plausible set',
+			kept.length === legal.length, kept.length + ' of ' + legal.length);
+	} else {
+		check('every pivot destination survives into the plausible set (skipped)', true);
+	}
+}
+
 
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

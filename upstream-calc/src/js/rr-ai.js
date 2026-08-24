@@ -337,9 +337,21 @@ var RRAI = (function () {
 	function movesFirst(state, key, action) {
 		var foeKey = RRBattle.other(key);
 		var foeActions = RRBattle.legalActions(state, foeKey);
+		// The reference used to be whichever move happened to sit in the other
+		// side's slot ZERO, so the answer depended on our own move ordering:
+		// putting Roar (priority -6) first made the model believe the slower AI
+		// moved first, award the "KOs and moves first" bonus instead of "KOs but
+		// is slower", and drop Yawn out of the plausible set entirely. Rotating
+		// our own moveset must not change what the opponent is predicted to do.
+		//
+		// A priority-zero move is the neutral reference: it asks "am I faster",
+		// which is what this function is named for.
 		var reference = null;
 		for (var i = 0; i < foeActions.length; i++) {
-			if (foeActions[i].type === "move") { reference = foeActions[i]; break; }
+			if (foeActions[i].type !== "move") continue;
+			var data = RRBattle.moveData(foeActions[i].move);
+			if (data && !data.priority) { reference = foeActions[i]; break; }
+			if (!reference) reference = foeActions[i];   // fall back to any move
 		}
 		if (!reference) return true;
 		var order = key === "me"
@@ -407,8 +419,18 @@ var RRAI = (function () {
 			scored.forEach(function (entry) { if (entry.score > best) best = entry.score; });
 			scored.forEach(function (entry) {
 				if (entry.score < best - margin) return;
+				// U-turn, Volt Switch, Flip Turn, Baton Pass, Parting Shot and
+				// Teleport come back from legalActions as one action PER BENCH
+				// TARGET, and who comes in is part of the choice rather than a
+				// detail. Keying on the move name alone kept the first and threw
+				// the rest away, so a plan proved safe against U-turn into
+				// Blastoise was asserted safe against U-turn into Gengar -- a
+				// branch that was never examined. Narrowing the opponent's set
+				// is the one direction this function must never err in.
 				var id = entry.action.type === "switch"
-					? "s" + entry.action.index : entry.action.move;
+					? "s" + entry.action.index
+					: entry.action.move + (entry.action.switchTo === undefined
+						? "" : ">" + entry.action.switchTo);
 				if (seen[id]) return;
 				seen[id] = true;
 				chosen.push(entry);
