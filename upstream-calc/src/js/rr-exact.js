@@ -87,6 +87,21 @@ var RRExact = (function () {
 		}
 	}
 
+	/**
+	 * A stable name for an action.
+	 *
+	 * Needed because a parallel search has to describe "you take these root
+	 * moves and I will take those" across a postMessage boundary, where the
+	 * action objects themselves are not shared. Pivot moves carry the Pokemon
+	 * they bring in, and that is part of the choice rather than a detail, so it
+	 * belongs in the name.
+	 */
+	function actionKey(action) {
+		if (action.type === "switch") return "s" + action.index;
+		return "m" + action.index +
+			(action.switchTo === undefined ? "" : ">" + action.switchTo);
+	}
+
 	function countFainted(side) {
 		var n = 0;
 		for (var i = 0; i < side.team.length; i++) if (side.team[i].fainted) n++;
@@ -369,7 +384,28 @@ var RRExact = (function () {
 		var beam = Infinity;
 		var passCap = limits.budget;
 
-		function walk(current, turnsLeft) {
+		/**
+		 * Which opening moves this search is responsible for.
+		 *
+		 * Undefined means all of them, which is every ordinary call. A caller
+		 * that hands out subsets is splitting the work between searches -- the
+		 * root's branches are independent, so several can be explored at once.
+		 *
+		 * IT CHANGES WHAT `decided` MEANS, and the caller owns that: a search
+		 * given half the openings and finishing them without a line has shown
+		 * only that ITS half contains none. Concluding that the fight has no
+		 * clean line needs every subset to have finished and come back empty.
+		 * A witness needs no such care, because a line is a line.
+		 */
+		var rootFilter = null;
+		if (opts.rootActions && opts.rootActions.length) {
+			rootFilter = Object.create(null);
+			for (var ra = 0; ra < opts.rootActions.length; ra++) {
+				rootFilter[opts.rootActions[ra]] = true;
+			}
+		}
+
+		function walk(current, turnsLeft, isRoot) {
 			// Once the search has given up, EVERY node must return immediately.
 			// Without this the time limit did not work: it fired on one node in
 			// 1024 and the other 1023 carried on searching, so a 12 second cap
@@ -420,11 +456,19 @@ var RRExact = (function () {
 
 			var before = countFainted(current.me);
 			var actions = ordered(current, key);
+			if (isRoot && rootFilter) {
+				var mine = [];
+				for (var f = 0; f < actions.length; f++) {
+					if (rootFilter[actionKey(actions[f])]) mine.push(actions[f]);
+				}
+				actions = mine;
+			}
 			// The beam. Only the first few ranked actions are tried, which is
 			// what makes a hunt pass cheap enough to reach turn twenty. It can
 			// miss lines, so a pass with a beam is never allowed to conclude
 			// anything -- see the pass loop below.
-			var width = Math.min(actions.length, beam);
+			var width = (isRoot && rootFilter) ? actions.length
+				: Math.min(actions.length, beam);
 			for (var i = 0; i < width; i++) {
 				var next;
 				try {
@@ -532,7 +576,7 @@ var RRExact = (function () {
 			passCap = isLast ? limits.budget
 				: Math.min(limits.budget, limits.nodes + Math.ceil(limits.budget * pass.share));
 
-			found = walk(state, pass.turns);
+			found = walk(state, pass.turns, true);
 			if (found) break;
 			// Only a full-width, full-horizon pass that actually FINISHED is
 			// entitled to say the fight has no clean line.
@@ -599,6 +643,36 @@ var RRExact = (function () {
 		var proof = cleanWin(state, opts);
 
 		if (proof.found) {
+			return routeFromProof(state, proof, opts, started);
+		}
+
+		if (typeof RRSolver === "undefined") {
+			return {
+				steps: [], won: false, losses: 0, lostNames: [], turns: 0,
+				stalled: true,
+				exactness: proof.decided ? "proved-impossible" : "undecided",
+				nodes: proof.nodes, elapsedMs: Date.now() - started
+			};
+		}
+		RRBattle.clearCache();
+		var fallback = RRSolver.planRoute(state, opts);
+		fallback.exactness = proof.decided ? "no-clean-line-exists" : "undecided";
+		fallback.exactNodes = proof.nodes;
+		return fallback;
+	}
+
+	/**
+	 * Turn a found line into the route the app renders.
+	 *
+	 * Pulled out of planRoute so that a search split across several workers can
+	 * build its answer the same way a single one does. The alternative was for
+	 * the worker's entry point to assemble this itself, and logic that only runs
+	 * inside a worker is logic that only breaks inside a worker.
+	 */
+	function routeFromProof(state, proof, options, startedAt) {
+		var opts = options || {};
+		var started = startedAt || Date.now();
+		{
 			var steps = toSteps(proof.line);
 			var end = proof.line.length ? proof.line[proof.line.length - 1].next : state;
 			// "line-found", NOT "proved". This line holds at median damage rolls
@@ -629,19 +703,30 @@ var RRExact = (function () {
 				elapsedMs: Date.now() - started
 			};
 		}
+	}
 
+	/**
+	 * The heuristic answer, for when no clean line was found.
+	 *
+	 * Separated so a parallel caller can ask for it once, after every worker has
+	 * come back empty, rather than each of them producing its own guess.
+	 * `decided` here means every subset of the opening moves finished, which is
+	 * the caller's sum and not something any one search can know.
+	 */
+	function fallbackRoute(state, options, decided, nodes) {
+		var opts = options || {};
 		if (typeof RRSolver === "undefined") {
 			return {
 				steps: [], won: false, losses: 0, lostNames: [], turns: 0,
 				stalled: true,
-				exactness: proof.decided ? "proved-impossible" : "undecided",
-				nodes: proof.nodes, elapsedMs: Date.now() - started
+				exactness: decided ? "proved-impossible" : "undecided",
+				nodes: nodes || 0, elapsedMs: 0
 			};
 		}
 		RRBattle.clearCache();
 		var fallback = RRSolver.planRoute(state, opts);
-		fallback.exactness = proof.decided ? "no-clean-line-exists" : "undecided";
-		fallback.exactNodes = proof.nodes;
+		fallback.exactness = decided ? "no-clean-line-exists" : "undecided";
+		fallback.exactNodes = nodes || 0;
 		return fallback;
 	}
 
@@ -878,8 +963,31 @@ var RRExact = (function () {
 		};
 	}
 
+	/**
+	 * The opening moves, named, in the order the search would try them.
+	 *
+	 * This is what a parallel caller deals out. Ordered rather than raw so that
+	 * dealing round-robin gives every worker a mix of promising and unpromising
+	 * openings instead of one worker getting all the good ones.
+	 */
+	function rootActionKeys(state, options) {
+		var opts = options || {};
+		matchupTable = tableFor(state, opts);
+		singleReplyCache = new Map();
+		orderCache = new Map();
+		passUsesMatchup = opts.matchup !== null;
+		var actions = ordered(state);
+		var keys = [];
+		for (var i = 0; i < actions.length; i++) keys.push(actionKey(actions[i]));
+		return keys;
+	}
+
 	return {
 		cleanWin: cleanWin,
+		actionKey: actionKey,
+		rootActionKeys: rootActionKeys,
+		routeFromProof: routeFromProof,
+		fallbackRoute: fallbackRoute,
 		certify: certify,
 		winChance: winChance,
 		rank: rank,

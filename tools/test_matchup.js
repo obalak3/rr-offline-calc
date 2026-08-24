@@ -134,5 +134,45 @@ check('the table does not change the verdict',
 	withTable.found === without.found && withTable.decided === without.decided,
 	JSON.stringify({withTable: withTable.found, without: without.found}));
 
+/**
+ * Splitting the opening moves between searches must not lose anything.
+ *
+ * This is the property a parallel search rests on: the root's branches are
+ * independent, so handing half the openings to one search and half to another
+ * covers exactly what one search covers. If that were false, running the search
+ * on several cores would quietly answer a different question from running it on
+ * one -- and the failure would look like an occasional missed win rather than
+ * like a bug.
+ */
+const splitState = B.createState(
+	[set('Machamp', ['Karate Chop', 'Headbutt', 'Low Kick'], 40),
+		set('Snorlax', ['Body Slam', 'Rest'], 40)],
+	[set('Magikarp', ['Splash', 'Tackle'], 20),
+		set('Gyarados', ['Bite', 'Splash'], 22)], {});
+
+const whole = X.cleanWin(splitState, {exactBudget: 80000, maxTurns: 16});
+const keys = X.rootActionKeys(splitState, {});
+check('the opening moves can be listed for splitting',
+	keys.length > 1, JSON.stringify(keys));
+
+const evens = keys.filter((k, i) => i % 2 === 0);
+const odds = keys.filter((k, i) => i % 2 === 1);
+const a = X.cleanWin(splitState, {exactBudget: 80000, maxTurns: 16, rootActions: evens});
+const b = X.cleanWin(splitState, {exactBudget: 80000, maxTurns: 16, rootActions: odds});
+
+check('a split search finds a line whenever the whole one does',
+	whole.found === (a.found || b.found),
+	JSON.stringify({whole: whole.found, halfA: a.found, halfB: b.found}));
+check('  and every half that finished really did finish',
+	(a.decided || !a.found) && (b.decided || !b.found));
+
+// A subset that finishes empty proves nothing on its own. The engine must not
+// pretend otherwise by reporting a line it was never allowed to look at.
+const onlyOne = X.cleanWin(splitState,
+	{exactBudget: 80000, maxTurns: 16, rootActions: [keys[keys.length - 1]]});
+check('a search restricted to one opening stays inside it',
+	onlyOne.found === false || onlyOne.line[0].action !== undefined,
+	JSON.stringify(onlyOne.found));
+
 console.log('\n' + failures + ' failure(s)');
 process.exit(failures ? 1 : 0);

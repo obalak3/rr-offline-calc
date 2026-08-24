@@ -81,26 +81,50 @@ const engineFiles = [
  * worker, where it is hardest to see.
  */
 const ENTRY = `
+// Price the risks for any line we actually found, whether or not it certified.
+// A line-found route is exactly the one that NEEDS its risks spelled out, since
+// it is not proof against bad luck.
+function priceRoute(state, route) {
+	if (route.exactness !== "certified" && route.exactness !== "line-found") return null;
+	try {
+		return RRSolver.routeRisks(state, route, {risks: {roll: "median"}});
+	} catch (e) { return null; }
+}
+
 self.onmessage = function (event) {
 	var payload = event.data || {};
-	if (payload.kind !== "solve") return;
+	var state = payload.state;
+	var search = payload.search || {};
 	try {
-		var state = payload.state;
-		var search = payload.search || {};
 		search.onProgress = function (nodes, elapsedMs) {
 			self.postMessage({kind: "progress", nodes: nodes, elapsedMs: elapsedMs});
 		};
-		var route = RRExact.planRoute(state, search);
-		var priced = null;
-		// Price the risks for any line we actually found, whether or not it
-		// certified. A line-found route is exactly the one that NEEDS its risks
-		// spelled out, since it is not proof against bad luck.
-		if (route.exactness === "certified" || route.exactness === "line-found") {
-			try {
-				priced = RRSolver.routeRisks(state, route, {risks: {roll: "median"}});
-			} catch (e) { priced = null; }
+		if (payload.kind === "solve") {
+			var route = RRExact.planRoute(state, search);
+			self.postMessage({ok: true, route: route, priced: priceRoute(state, route)});
+			return;
 		}
-		self.postMessage({ok: true, route: route, priced: priced});
+		// One share of a search split across several workers. Only the openings
+		// in search.rootActions are explored, so "decided" here means this share
+		// finished -- the caller adds them up before concluding anything.
+		if (payload.kind === "hunt") {
+			var proof = RRExact.cleanWin(state, search);
+			if (!proof.found) {
+				self.postMessage({ok: true, kind: "hunt", found: false,
+					decided: proof.decided, nodes: proof.nodes});
+				return;
+			}
+			var won = RRExact.routeFromProof(state, proof, search);
+			self.postMessage({ok: true, kind: "hunt", found: true, nodes: proof.nodes,
+				route: won, priced: priceRoute(state, won)});
+			return;
+		}
+		// Every share came back empty, so this is the guess.
+		if (payload.kind === "fallback") {
+			var guess = RRExact.fallbackRoute(state, search, payload.decided, payload.nodes);
+			self.postMessage({ok: true, route: guess, priced: priceRoute(state, guess)});
+			return;
+		}
 	} catch (err) {
 		self.postMessage({ok: false, error: String((err && err.message) || err)});
 	}

@@ -29,11 +29,58 @@ var RRSearch = (function () {
 	var blobUrl = null;
 	var pending = null;
 	var seq = 0;
+	var crew = [];          // workers sharing one split search
+	var crewState = null;
 
 	function available() {
 		return typeof Worker !== "undefined" &&
 			typeof URL !== "undefined" && !!URL.createObjectURL &&
 			typeof RR_WORKER_SRC === "string" && RR_WORKER_SRC.length > 0;
+	}
+
+	/**
+	 * How many searches to run at once.
+	 *
+	 * The opening moves are independent -- whatever line exists begins with one
+	 * of them -- so they can be dealt out and searched simultaneously. This is
+	 * the only lever here that multiplies the search rather than steering it:
+	 * the engine manages a few thousand positions a second, and the fights that
+	 * do not finish need hundreds of thousands.
+	 *
+	 * One is left for the page, so the browser it is running in stays usable.
+	 */
+	function crewSize() {
+		var cores = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4;
+		return Math.max(1, Math.min(6, cores - 1));
+	}
+
+	function newWorker(onMessage, onError) {
+		var url = URL.createObjectURL(
+			new Blob([RR_WORKER_SRC], {type: "text/javascript"}));
+		var w = new Worker(url);
+		w.__blobUrl = url;
+		w.onmessage = onMessage;
+		w.onerror = onError;
+		return w;
+	}
+
+	function killCrew() {
+		for (var i = 0; i < crew.length; i++) {
+			try { crew[i].terminate(); } catch (e) { /* already gone */ }
+			if (crew[i].__blobUrl && URL.revokeObjectURL) {
+				URL.revokeObjectURL(crew[i].__blobUrl);
+			}
+		}
+		crew = [];
+		crewState = null;
+	}
+
+	/** Deal the openings round robin, so nobody gets only the hopeless ones. */
+	function deal(keys, hands) {
+		var out = [];
+		for (var i = 0; i < hands; i++) out.push([]);
+		for (var k = 0; k < keys.length; k++) out[k % hands].push(keys[k]);
+		return out.filter(function (hand) { return hand.length > 0; });
 	}
 
 	function settle(result, error) {
@@ -99,19 +146,126 @@ var RRSearch = (function () {
 		if (pending) cancel();
 		var id = ++seq;
 		pending = {id: id, onDone: onDone, onError: onError, onProgress: onProgress};
-		try {
-			ensure().postMessage({kind: "solve", state: state, search: search || {}});
-		} catch (e) {
-			settle(null, (e && e.message) || "could not start the search");
-			return null;
+		var opts = search || {};
+
+		var hands = null;
+		if (opts.parallel !== false) {
+			try {
+				var keys = RRBattle.legalActions(state, "me").map(RRExact.actionKey);
+				// Splitting is only worth the extra workers when there is
+				// something to split. One opening means one search.
+				if (keys.length > 1) hands = deal(keys, Math.min(crewSize(), keys.length));
+			} catch (e) { hands = null; }
 		}
+
+		if (!hands || hands.length < 2) {
+			try {
+				ensure().postMessage({kind: "solve", state: state, search: opts});
+			} catch (e) {
+				settle(null, (e && e.message) || "could not start the search");
+				return null;
+			}
+			return id;
+		}
+
+		startCrew(state, opts, hands, id);
 		return id;
+	}
+
+	/**
+	 * Run one search per share of the opening moves.
+	 *
+	 * Two asymmetric endings, and the asymmetry is the whole reason this is
+	 * allowed to be parallel at all:
+	 *
+	 *   A LINE is a line. The first share to produce one has produced the
+	 *   answer, and the rest are stopped where they stand.
+	 *   NO LINE is a claim about the whole tree, so it needs EVERY share to have
+	 *   finished and come back empty. One share running out of budget makes the
+	 *   answer "undecided", exactly as it would for a single search.
+	 */
+	function startCrew(state, opts, hands, id) {
+		crewState = {id: id, done: 0, total: hands.length, decided: true,
+			nodes: [], settled: false, state: state, opts: opts};
+		for (var i = 0; i < hands.length; i++) crewState.nodes.push(0);
+
+		hands.forEach(function (hand, index) {
+			var share = {};
+			for (var key in opts) share[key] = opts[key];
+			share.rootActions = hand;
+			var w;
+			try {
+				w = newWorker(function (event) { crewMessage(index, event); },
+					function (event) { crewError(index, event); });
+			} catch (e) {
+				settle(null, (e && e.message) || "could not start the search");
+				return;
+			}
+			crew.push(w);
+			w.postMessage({kind: "hunt", state: state, search: share});
+		});
+	}
+
+	function crewProgress() {
+		if (!pending || !pending.onProgress || !crewState) return;
+		var total = 0;
+		for (var i = 0; i < crewState.nodes.length; i++) total += crewState.nodes[i];
+		pending.onProgress(total, Date.now() - (crewState.started || Date.now()));
+	}
+
+	function crewMessage(index, event) {
+		var data = event.data || {};
+		if (!crewState || crewState.settled) return;
+		if (data.kind === "progress") {
+			crewState.nodes[index] = data.nodes;
+			crewProgress();
+			return;
+		}
+		if (data.ok === false) { crewError(index, {message: data.error}); return; }
+
+		crewState.nodes[index] = data.nodes || crewState.nodes[index];
+		if (data.found) {
+			crewState.settled = true;
+			var result = {route: data.route, priced: data.priced};
+			killCrew();
+			settle(result, null);
+			return;
+		}
+		if (!data.decided) crewState.decided = false;
+		crewState.done++;
+		if (crewState.done >= crewState.total) finishCrew();
+	}
+
+	function crewError(index, event) {
+		if (!crewState || crewState.settled) return;
+		// A share that died searched nothing, so nothing can be concluded from
+		// its silence. The others still count, and their lines are still real.
+		crewState.decided = false;
+		crewState.done++;
+		if (crewState.done >= crewState.total) finishCrew();
+	}
+
+	/** Nobody found a line. Ask once for the guess, rather than once per share. */
+	function finishCrew() {
+		var total = 0;
+		for (var i = 0; i < crewState.nodes.length; i++) total += crewState.nodes[i];
+		var state = crewState.state, opts = crewState.opts;
+		var decided = crewState.decided;
+		crewState.settled = true;
+		killCrew();
+		try {
+			ensure().postMessage({kind: "fallback", state: state, search: opts,
+				decided: decided, nodes: total});
+		} catch (e) {
+			settle(null, (e && e.message) || "could not finish the search");
+		}
 	}
 
 	/** Abandon the search in flight. The worker is killed, not asked politely. */
 	function cancel() {
 		if (!pending) return;
 		pending = null;
+		killCrew();
 		stop();
 	}
 
