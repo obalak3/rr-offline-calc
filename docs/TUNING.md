@@ -527,3 +527,50 @@ more force -- it needs a bound that boosts can invalidate.
 **Worth remembering as a pattern.** Ordering has been worth 10x to 35x on these
 fights; both prunes proposed have been worth nothing. On this problem, deciding
 what to look at FIRST beats deciding what not to look at.
+
+## The whole game, measured for the first time (2026-08-24)
+
+`tools/bench_game.js 1`, a deliberately small budget (30,000 nodes, 8 s) so the
+shape shows through rather than the budget:
+
+    segment            lvl   clean      won   undecided
+      Kanto Leaders     80      1/7      1/7        4
+      Johto Leaders     12      1/1      1/1        1
+      Rivals            81      4/6      4/6        0
+      Team Rocket       83      1/7      2/7        4
+      Mini Bosses       83      1/5      2/5        3
+      Indigo League     85      0/9      0/9        4
+      Postgame         100      1/1      1/1        0
+
+      overall                  9/36 clean, 16/36 undecided
+
+**The Elite Four is 0 for 9**, and four of those nine are undecided rather than
+lost, which is the same signature the hard early fights have: the search did not
+fail to find a win, it failed to finish.
+
+Read against the 71% clean on the early nine, this is the honest state of the
+project: **the engine is good at the fights it has been measured on and unproven
+everywhere else.** Every tuning decision in this file was taken on nine battles
+out of thirty-six, all of them from the first tenth of the run.
+
+Some of the gap is budget -- 30,000 nodes is a tenth of what the hard early
+fights need, and a level 85 six-on-six is a bigger tree than a level 20 gym.
+Some of it will not be. Re-run at a realistic budget before concluding either.
+
+## Lt. Surge, real team, 56 million nodes: still undecided (2026-08-24)
+
+    7 processes x 8,000,000 nodes = 56,000,007 nodes, 1,565 s
+    UNDECIDED
+
+Nine times the budget of the 6M single-threaded attempt, at 38-63k nodes a
+second against 18.5k, with the pairing table and the portfolio in place. Five of
+the seven shares FINISHED their openings and found nothing; two ran out.
+
+So the answer is genuinely not close to the surface, and one more doubling of
+compute is not obviously the thing that finds it. What the run does establish is
+narrower and still useful: **most of the opening moves are settled.** Five
+sevenths of the root is now known to contain no clean line, and the checkpoint
+records which -- a resumed run searches only what is left.
+
+This is the trigger the plan named for the reserve lever. Proof-number search is
+now the candidate rather than more cores.
