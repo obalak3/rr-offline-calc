@@ -323,5 +323,42 @@ function replay(state, steps) {
 		broke === null, 'lost the line at maxTurns ' + broke);
 }
 
+/**
+ * Blurring positions together may speed the hunt and must never reach a verdict.
+ *
+ * Two positions a point of HP apart really can differ -- one survives the hit
+ * and the other does not -- so a search that treats them as the same can miss a
+ * line. Missing a line is survivable, since the answer is then "undecided".
+ * Reporting that no line EXISTS on the strength of a blurred search is the one
+ * thing this module must never do, which is why bucketing is confined to passes
+ * that are already forbidden from concluding.
+ */
+{
+	const level = 20;
+	const party = [
+		set('Squirtle', ['Water Gun', 'Bite', 'Withdraw', 'Tackle'], level, {item: 'Oran Berry'}),
+		set('Bulbasaur', ['Vine Whip', 'Leech Seed', 'Tackle', 'Growl'], level, {item: 'Oran Berry'})
+	];
+	const enemy = [set('Geodude', ['Tackle', 'Defense Curl'], 12)];
+	const state = B.createState(party, enemy, {});
+
+	const coarse = X.cleanWin(state, {exactBudget: 200000, maxTurns: 16, hpBuckets: 8});
+	const exact = X.cleanWin(state, {exactBudget: 200000, maxTurns: 16});
+	check('a bucketed search finds what the exact one finds here',
+		coarse.found === exact.found,
+		JSON.stringify({coarse: coarse.found, exact: exact.found}));
+	if (coarse.found) {
+		// The blurring is only safe because a returned line is verified by
+		// construction: every step of it was simulated by the real engine.
+		let lost = 0;
+		for (const step of coarse.line) {
+			const n = step.next.me.team.filter(m => m.fainted).length;
+			if (n > lost) lost = n;
+		}
+		check('  and the line it returns really does lose nobody', lost === 0,
+			lost + ' lost');
+	}
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

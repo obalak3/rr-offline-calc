@@ -383,6 +383,8 @@ var RRExact = (function () {
 		var seen = new Map();
 		var beam = Infinity;
 		var passCap = limits.budget;
+		// How coarsely this pass names positions. 0 means exactly.
+		var hpBuckets = 0;
 
 		/**
 		 * Which opening moves this search is responsible for.
@@ -446,10 +448,18 @@ var RRExact = (function () {
 			//
 			// Storing the largest budget already tried keeps nearly all of the
 			// pruning: failing with 18 turns does imply failing with 12.
+			// The exact name is what the AI reply and the ordering are cached on,
+			// since those really are functions of the precise position. The
+			// VISITED set may use a coarser one, which is a different question:
+			// not "is this the same position" but "is this close enough that
+			// trying it again is unlikely to be worth a second search".
 			var key = RRBattle.positionKey(current);
-			var triedWith = seen.get(key);
+			var visitKey = hpBuckets
+				? RRBattle.positionKey(current, {hpBuckets: hpBuckets})
+				: key;
+			var triedWith = seen.get(visitKey);
 			if (triedWith !== undefined && triedWith >= turnsLeft) return false;
-			seen.set(key, turnsLeft);
+			seen.set(visitKey, turnsLeft);
 
 			var theirs = reply(current, opts, key);
 			if (!theirs) return false;
@@ -568,6 +578,10 @@ var RRExact = (function () {
 			seen = new Map();
 			beam = pass.beam;
 			passUsesMatchup = pass.matchup !== false;
+			// Only a pass already forbidden from concluding may blur positions
+			// together. `exhaustive` below is computed from the same facts and
+			// must stay in agreement with this.
+			hpBuckets = (pass.beam < Infinity) ? (opts.hpBuckets || 0) : 0;
 			// Ordering differs per pass, so a cached order from the last one is
 			// the wrong order for this one.
 			orderCache = new Map();

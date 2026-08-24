@@ -620,13 +620,25 @@ All three now scale with level, and **the early game is untouched**: below level
 recorded above keeps its meaning. Verified by generating a level 36 team before
 and after and getting the same six species.
 
-Still wrong, and parked deliberately: sets are built from **level-up moves
-only**. A real late-game team is largely TMs and tutors, and Medicham arriving
-at the Elite Four with Power Trick, Reversal, Recover and Counter is not a team
-anybody would bring. The dex carries `tmMoves` and `tutorMoves`, but the arrays
-are indices into a scheme that does not decode as plain move IDs -- mapping them
-straight gives Medicham Gust and Horn Attack -- so decoding it is its own task.
-**Until that is done, late-game numbers are a floor and not a measurement.**
+**Now fixed too: TM and tutor moves.** Sets were built from level-up moves only,
+so Medicham arrived at the Elite Four with Power Trick, Reversal, Recover and
+Counter. `species.tmMoves` is a list of **TM numbers**, not move ids -- they run
+0 to 125 and sort ascending, which is what gives it away -- and the dex carries
+the lookup at top level as `tmMoves` and `tutorMoves`, 128 entries each. Read
+straight as move ids they decode to nonsense (Medicham learning Gust and Horn
+Attack), which is what made the first attempt call the format undecipherable.
+Through the lookup, Medicham gets Close Combat, Zen Headbutt, Psychic, Brick
+Break and Aura Sphere.
+
+Late-game sets now take two level-up moves and two taught ones, so they keep the
+STAB they grew up with and gain the coverage a player would have added:
+
+    Aggron         Heavy Slam / Metal Burst / Superpower / Earthquake
+    Appletun       Dragon Pulse / Energy Ball / Leaf Storm / Draco Meteor
+    Crabominable   Close Combat / Gigaton Hammer / Protect / Substitute
+
+Early game is untouched at every step -- pool, EVs, item and moves all branch on
+level, and below 40 they are exactly what they were.
 
 ## Every hard fight in the game fails the same way (2026-08-24)
 

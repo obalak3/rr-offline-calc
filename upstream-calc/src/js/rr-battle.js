@@ -1542,13 +1542,34 @@ var RRBattle = (function () {
 	}
 
 	/** Everything that distinguishes one position from another. */
-	function positionKey(state) {
+	/**
+	 * A name for a position, optionally a COARSE one.
+	 *
+	 * `opts.hpBuckets` rounds every HP down to that many bands instead of
+	 * recording it exactly, so positions that differ only by a point or two get
+	 * the same name and the second one is never explored. In a twenty-turn fight
+	 * HP drifts constantly and almost no position is ever revisited exactly, so
+	 * the transposition table has very little to do; bucketing gives it
+	 * something.
+	 *
+	 * IT IS NOT SOUND, and must never be used by a search entitled to conclude.
+	 * Two positions in the same band really can differ -- one survives the hit
+	 * and the other does not -- so a coarse search can miss a line and would be
+	 * lying if it then reported that none exists. It belongs only in a hunt
+	 * pass, where a found line is verified by construction (every step of it was
+	 * simulated by this engine) and a failure concludes nothing.
+	 */
+	function positionKey(state, opts) {
+		var buckets = (opts && opts.hpBuckets) || 0;
 		var parts = [];
 		["me", "foe"].forEach(function (sideKey) {
 			var side = state[sideKey];
 			parts.push(side.active);
 			side.team.forEach(function (mon) {
-				parts.push(mon.curHP, mon.fainted ? 1 : 0, mon.status || "-",
+				var hp = buckets
+					? Math.floor(mon.curHP / Math.max(1, mon.maxHP) * buckets)
+					: mon.curHP;
+				parts.push(hp, mon.fainted ? 1 : 0, mon.status || "-",
 					mon.sleepTurns, mon.toxicCounter, mon.itemGone ? 1 : 0,
 					mon.boosts.atk, mon.boosts.def, mon.boosts.spa, mon.boosts.spd,
 					mon.boosts.spe, mon.boosts.acc, mon.boosts.eva,

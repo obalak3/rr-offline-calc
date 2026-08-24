@@ -186,7 +186,32 @@ function makeGenerator(loaded, dexParts, startSeed) {
 	const IVS = {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31};
 	const NATURES = ['Adamant', 'Modest', 'Jolly', 'Timid', 'Impish', 'Careful'];
 
-	/** A legal set: the four most recent level-up moves it would actually know. */
+	/**
+	 * The TM and tutor pools, which are the real late-game movesets.
+	 *
+	 * `species.tmMoves` is a list of TM NUMBERS, not move ids -- they run 0 to
+	 * 125 and sort ascending, which is what gave it away. The dex carries the
+	 * lookup at top level as `tmMoves` and `tutorMoves`, 128 entries each. Read
+	 * straight as move ids they decode to nonsense, which is why the first pass
+	 * at this concluded the format was undecipherable and parked it: Medicham
+	 * came out knowing Gust and Horn Attack. Through the lookup it comes out
+	 * with Close Combat, Zen Headbutt, Psychic, Brick Break and Aura Sphere,
+	 * which is a Medicham somebody would actually bring.
+	 */
+	function taughtMoves(species) {
+		const out = [];
+		for (const [field, table] of [['tmMoves', dex.tmMoves],
+			['tutorMoves', dex.tutorMoves]]) {
+			for (const index of (species[field] || [])) {
+				const id = table && table[index];
+				const name = id !== undefined ? moveName[id] : null;
+				if (name) out.push(name);
+			}
+		}
+		return out;
+	}
+
+	/** A legal set: what it would actually be carrying at this point in the run. */
 	function build(base, level) {
 		const grown = evolve(base, level);
 		// Moves come from the WHOLE line, not just the final form: a Poliwrath
@@ -202,7 +227,26 @@ function makeGenerator(loaded, dexParts, startSeed) {
 				known.push(name);
 			}
 		}
-		const moves = known.slice(-4);
+		let moves = known.slice(-4);
+		// Past the early game, TMs and tutors are most of what a team knows, and
+		// leaving them out was the last reason late-game numbers were a floor
+		// rather than a measurement. Early game keeps level-up moves only, which
+		// is both what a Nuzlocke actually has before the third gym and what
+		// every number in TUNING.md was measured against.
+		if (level > 40) {
+			const taught = taughtMoves(grown.species).filter(function (n) {
+				return !seen[n];
+			});
+			if (taught.length) {
+				// Two learned and two taught, so a set keeps the STAB it grew up
+				// with and gains the coverage a player would have added.
+				const picked = [];
+				for (let i = 0; i < 2 && taught.length; i++) {
+					picked.push(taught.splice(rand(taught.length), 1)[0]);
+				}
+				moves = known.slice(-2).concat(picked);
+			}
+		}
 		if (!moves.length) return null;
 		const ability = (grown.species.abilities && grown.species.abilities[0] &&
 			dex.abilities && dex.abilities[grown.species.abilities[0][0]]) || null;
