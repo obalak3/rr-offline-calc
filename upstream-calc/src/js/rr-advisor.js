@@ -406,7 +406,55 @@
 	 * fallback always returns a playable route, so waiting longer buys a better
 	 * answer rather than the difference between an answer and none.
 	 */
+	/**
+	 * Plan the fight, off the main thread where possible.
+	 *
+	 * The five second cap this used to run under was never a judgement about how
+	 * much thinking the fight deserved. It was the longest the page could be
+	 * frozen before looking broken, because a search on the main thread blocks
+	 * everything. Lt. Surge needs around thirty seconds and so never got solved
+	 * in the app despite being solvable.
+	 *
+	 * In a worker the search gets a real budget and the page stays alive, so the
+	 * cap goes to a minute and there is a button to stop it. If workers are
+	 * unavailable for any reason this falls straight back to the old inline
+	 * path, five second cap and all -- worse answers, never no answer.
+	 */
 	function runRoute(state) {
+		if (typeof RRSearch !== "undefined" && RRSearch.available()) {
+			$("#rr-adv-out").html(
+				'<div class="rr-adv-note">Looking for a line that loses nobody. ' +
+				'This can take up to a minute on a hard fight; the page stays ' +
+				'usable while it runs. <button type="button" id="rr-adv-stop">' +
+				"Stop and take the quick answer</button></div>");
+			$("#rr-adv-stop").on("click", function () {
+				RRSearch.cancel();
+				runRouteInline(state);
+			});
+			RRSearch.solve(state, {
+				lookahead: 3, budget: 30000,
+				exactBudget: 20000000, timeLimitMs: 60000, maxTurns: 24
+			}, function (result) {
+				var found = {route: result.route, risk: [], stepRisks: result.priced};
+				if (result.priced) { paintRoute(state, found, null, true); return; }
+				paintRoute(state, found, null, false);
+				if (result.route.won) {
+					window.setTimeout(function () { checkRisk(state, 1, found, 2500); }, 30);
+				} else {
+					$("#rr-adv-out").find(".rr-adv-note").eq(1).html(
+						"<b>Risk not priced:</b> there is no winning line to price.");
+				}
+			}, function () {
+				// Whatever went wrong with the worker, the fight still needs an
+				// answer.
+				runRouteInline(state);
+			});
+			return;
+		}
+		runRouteInline(state);
+	}
+
+	function runRouteInline(state) {
 		var route = RRExact.planRoute(state, {
 			lookahead: 3, budget: 30000,
 			exactBudget: 3000000, timeLimitMs: 5000, maxTurns: 24
