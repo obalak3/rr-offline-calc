@@ -433,17 +433,37 @@ var RRSolver = (function () {
 		// pays the planner to pass the problem down the party rather than solve
 		// it. Kept low rather than removed: it still encodes something real,
 		// and at 300 it costs nothing.
-		deathRisk: 300,
+		// Measured at 0. This prices the chance the ACTIVE Pokemon dies, which
+		// switching resets simply by changing who is standing there -- so it
+		// paid for switching without anything actually improving. Zeroing it
+		// cut back-to-back switches from 78 to 55 and switch-backs from 40 to
+		// 24, and RAISED the clean-win rate from 61% to 64%. Kept as a dial
+		// rather than deleted, because the quantity is real even though
+		// rewarding it here was not.
+		deathRisk: 0,
 		// What one of YOUR Pokemon dying costs. In a Nuzlocke it is meant to
 		// dominate, and it does: at 1000 against positional terms capped near
 		// 900, no other weight can flip a decision. That is why sweeping the
 		// others changed nothing -- they are tiebreakers, not levers.
 		lossCost: 1000,
+		// Switching concedes a free hit and a turn, and nothing else in this
+		// evaluator says so. When attacking achieves nothing -- a Fighting move
+		// into a Psychic type -- attacking and switching score the SAME, and the
+		// tie broke toward whichever came first in move ordering. That is how a
+		// route ended up going Mienshao -> Victreebel -> Breloom -> Lilligant,
+		// eating a Psyshock on each hop, to reach a Pokemon it could have gone
+		// to directly. The detour then manufactured its own risk: Breloom
+		// arrived low enough for a Waterfall to threaten it.
+		//
+		// This is a tie-breaker, not a discouragement. It has to be smaller than
+		// any real gain so that genuinely good pivots still happen.
+		switchCost: 60,
 		turnCost: 8
 	};
 	function weights(opts) {
 		var w = (opts && opts.weights) || {};
 		return {
+			switchCost: w.switchCost === undefined ? WEIGHTS.switchCost : w.switchCost,
 			foeDown: w.foeDown === undefined ? WEIGHTS.foeDown : w.foeDown,
 			progress: w.progress === undefined ? WEIGHTS.progress : w.progress,
 			health: w.health === undefined ? WEIGHTS.health : w.health,
@@ -731,8 +751,12 @@ var RRSolver = (function () {
 				}
 				if (worst.value <= alpha) break;   // this action is already beaten
 			}
-			if (worst.value > best.value) {
-				best = {value: worst.value, action: myActions[i], branches: worst.branches};
+			// A switch has to be worth more than staying by at least switchCost,
+			// which is what stops a chain of them when everything ties.
+			var value = worst.value;
+			if (myActions[i].type === "switch") value -= ctx.weights.switchCost;
+			if (value > best.value) {
+				best = {value: value, action: myActions[i], branches: worst.branches};
 			}
 			if (best.value > alpha) alpha = best.value;
 			if (alpha >= beta) break;
@@ -1162,6 +1186,26 @@ var RRSolver = (function () {
 				if (sec.status && sec.status !== "frz") {
 					possible = RRBattle._internal.canTakeStatus(facing, sec.status,
 						view, theirData.type);
+				}
+				// Flinch only costs you something if it stops a move you were
+				// going to make. Two cases where it cannot, and both were being
+				// reported as real risks:
+				//
+				//   - You switched. The switch resolves before either side
+				//     attacks and the Pokemon coming in was never going to move
+				//     this turn, so there is nothing to flinch. "Waterfall can
+				//     cause flinch on Breloom" on a turn Breloom was switched in
+				//     is not a risk, it is noise.
+				//   - You are faster. You have already acted by the time the
+				//     flinch would land, so it changes nothing this turn --
+				//     Mienshao outspeeds Crawdaunt and cannot be flinched by it.
+				if (sec.flinch) {
+					if (step.action.type === "switch") {
+						possible = false;
+					} else {
+						var order = RRBattle.turnOrder(before, step.action, step.theirAction);
+						if (order && order[0] === "me") possible = false;
+					}
 				}
 				if (label && possible) {
 					var impact = sec.flinch ? 0.5 : statusCost(facing, sec.status);

@@ -201,6 +201,7 @@ var RRExact = (function () {
 			truncated: false
 		};
 		var seen = {};
+		var onProgress = opts.onProgress || null;
 		singleReplyCache = {};
 		orderCache = {};
 		var line = [];
@@ -216,9 +217,17 @@ var RRExact = (function () {
 			// accident, because every later node also exceeds the budget.
 			if (limits.exhausted) return false;
 			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return false; }
-			if (deadline && (limits.nodes & 1023) === 0 && Date.now() > deadline) {
-				limits.exhausted = true;
-				return false;
+			if ((limits.nodes & 1023) === 0) {
+				if (deadline && Date.now() > deadline) {
+					limits.exhausted = true;
+					return false;
+				}
+				// Report progress so a long search can show it is alive. Without
+				// this "still working" and "hung" look identical, which is the
+				// real reason a time cap felt necessary in the first place.
+				if (onProgress && (limits.nodes & 65535) === 0) {
+					onProgress(limits.nodes, Date.now() - started);
+				}
 			}
 			if (allDown(current.foe)) return true;
 			if (turnsLeft <= 0) { limits.truncated = true; return false; }
@@ -320,6 +329,21 @@ var RRExact = (function () {
 		if (proof.found) {
 			var steps = toSteps(proof.line);
 			var end = proof.line.length ? proof.line[proof.line.length - 1].next : state;
+			// "line-found", NOT "proved". This line holds at median damage rolls
+			// against the AI's top-scoring move. It says nothing about the
+			// sixteenth roll, a critical hit, or the 7% of positions where the
+			// AI has tied moves it might pick instead. Certification is a
+			// separate and much more expensive question, asked below only when
+			// the caller has the time for it.
+			var certificate = null;
+			if (opts.certify) {
+				certificate = certify(state, {
+					exactBudget: opts.certifyBudget || 400000,
+					timeLimitMs: opts.certifyTimeLimitMs || 15000,
+					maxTurns: opts.maxTurns || 24,
+					forkBudget: 4
+				});
+			}
 			return {
 				steps: steps,
 				won: true,
@@ -327,7 +351,8 @@ var RRExact = (function () {
 				lostNames: [],
 				turns: steps.length,
 				stalled: false,
-				exactness: "proved",
+				certificate: certificate,
+				exactness: (certificate && certificate.proved) ? "certified" : "line-found",
 				nodes: proof.nodes,
 				elapsedMs: Date.now() - started
 			};
@@ -412,7 +437,8 @@ var RRExact = (function () {
 			budget: opts.exactBudget || opts.budget || 200000,
 			maxTurns: opts.maxTurns || 20,
 			forkBudget: opts.forkBudget === undefined ? 2 : opts.forkBudget,
-			exhausted: false
+			exhausted: false,
+			collapsed: false
 		};
 		var memo = {};
 		var started = Date.now();
@@ -465,6 +491,10 @@ var RRExact = (function () {
 					if (!successors) continue;
 					for (var i = 0; i < successors.length; i++) {
 						var next = successors[i].state;
+						// The engine collapses outcomes when its fork budget runs
+						// out. That merges branches, so anything downstream is an
+						// estimate and must never be certified.
+						if (next.collapsed) limits.collapsed = true;
 						var weight = theirs[t].p * successors[i].probability;
 						if (weight <= 0) continue;
 						// Anything of ours dying is worth nothing, so the branch
@@ -496,7 +526,8 @@ var RRExact = (function () {
 		return {
 			chance: chance,
 			ranking: rootRanking,
-			certain: chance >= CERTAIN,
+			collapsed: limits.collapsed,
+			certain: chance >= CERTAIN && !limits.collapsed && !limits.exhausted,
 			nodes: limits.nodes,
 			exhausted: limits.exhausted,
 			elapsedMs: Date.now() - started
@@ -520,8 +551,50 @@ var RRExact = (function () {
 		return winChance(state, options).ranking || [];
 	}
 
+	/**
+	 * Certify that a fight can be won without losing anybody -- properly.
+	 *
+	 * This is the only function here entitled to the word "proof", and it exists
+	 * because the other search is NOT one, despite having been labelled as such.
+	 * cleanWin looks for a line at MEDIAN damage rolls against the AI's single
+	 * top-scoring move. Two things are wrong with calling that proved:
+	 *
+	 *   - Rolls. A line that survives the median roll can still lose to the
+	 *     sixteenth one, or to a critical hit. Nothing about median rolls
+	 *     generalises to "every roll".
+	 *   - Ties. CFRU picks uniformly among all moves tied at the top
+	 *     (ai_master.c:360), and 7% of positions have such a tie, up to four
+	 *     moves wide. Over a 23-turn line that is roughly a four-in-five chance
+	 *     of passing through at least one position where the opponent could
+	 *     legally have done something the search never considered.
+	 *
+	 * A real certificate has to hold under every outcome with nonzero
+	 * probability. That is exactly what winChance already computes: it branches
+	 * over the full tie set and over damage bucketed by whether it kills, and it
+	 * treats any branch where something of ours faints as worth zero. So a
+	 * result of 1 means no reachable branch loses a Pokemon -- a proof, not an
+	 * average.
+	 *
+	 * It is refused if the search ran out of budget, or if the engine collapsed
+	 * any outcome to stay affordable, because both mean branches went unexamined.
+	 */
+	function certify(state, options) {
+		var result = winChance(state, options || {});
+		return {
+			proved: result.certain,
+			chance: result.chance,
+			why: result.certain ? "no reachable branch loses a Pokemon"
+				: result.exhausted ? "the search ran out of budget"
+				: result.collapsed ? "the engine merged some outcomes to stay affordable"
+				: "some branch loses a Pokemon",
+			nodes: result.nodes,
+			elapsedMs: result.elapsedMs
+		};
+	}
+
 	return {
 		cleanWin: cleanWin,
+		certify: certify,
 		winChance: winChance,
 		rank: rank,
 		planRoute: planRoute,

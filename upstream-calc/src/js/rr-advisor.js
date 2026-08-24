@@ -307,22 +307,38 @@
 	 * the first is true would be the worst thing this panel could do.
 	 */
 	function proofNote(route) {
-		if (route.exactness === "proved") {
+		if (route.exactness === "certified") {
 			return '<div class="rr-adv-note"><b>This line is proved.</b> ' +
-				"Every move was checked against every reply the AI can give: at " +
-				"median damage rolls nothing of yours faints.</div>";
+				"Every damage roll, every critical hit and every move the AI " +
+				"could pick were checked: no branch loses a Pokemon.</div>";
+		}
+		if (route.exactness === "line-found") {
+			// The honest description of what the fast search actually did. It
+			// used to say "proved" here, which was wrong twice over: the search
+			// runs at MEDIAN damage rolls, and against the AI's single
+			// top-scoring move when 7% of positions have ties it might pick
+			// from instead. Over a twenty-turn line that is about a four-in-five
+			// chance of passing through a position it never considered.
+			var why = route.certificate && route.certificate.why;
+			return '<div class="rr-adv-note"><b>A clean line exists at normal ' +
+				"rolls.</b> Every move was checked against the AI's best reply " +
+				"at median damage. It is NOT proof against bad luck: unlucky " +
+				"rolls, a critical hit, or the AI picking a different move it " +
+				"rates equally can all break it." +
+				(why ? " Could not be fully certified: " + esc(why) + "." : "") +
+				" The risks below are where it is most fragile.</div>";
 		}
 		if (route.exactness === "no-clean-line-exists") {
 			return '<div class="rr-adv-note"><b>No clean line exists.</b> ' +
-				"The search finished having tried every option: there is no way " +
-				"through this fight without losing something. Below is the best " +
-				"available anyway.</div>";
+				"The search finished having tried every option at median rolls: " +
+				"there is no way through without losing something. Below is the " +
+				"best available anyway.</div>";
 		}
 		if (route.exactness === "undecided") {
-			return '<div class="rr-adv-note">The proof search ran out of time on ' +
-				"this one, so this route is the weighted search's best guess " +
-				"rather than a guarantee. That is not the same as saying the " +
-				"fight cannot be won cleanly.</div>";
+			return '<div class="rr-adv-note">The search ran out of time on this ' +
+				"one, so this route is the weighted search's best guess rather " +
+				"than a guarantee. That is not the same as saying the fight " +
+				"cannot be won cleanly.</div>";
 		}
 		return "";
 	}
@@ -423,17 +439,24 @@
 	function runRoute(state) {
 		if (typeof RRSearch !== "undefined" && RRSearch.available()) {
 			$("#rr-adv-out").html(
-				'<div class="rr-adv-note">Looking for a line that loses nobody. ' +
-				'This can take up to a minute on a hard fight; the page stays ' +
-				'usable while it runs. <button type="button" id="rr-adv-stop">' +
+				'<div class="rr-adv-note" id="rr-adv-progress">Looking for a line ' +
+				"that loses nobody. The page stays usable while it runs, and it " +
+				"keeps going until it has an answer.</div>" +
+				'<div class="rr-adv-note"><button type="button" id="rr-adv-stop">' +
 				"Stop and take the quick answer</button></div>");
 			$("#rr-adv-stop").on("click", function () {
 				RRSearch.cancel();
 				runRouteInline(state);
 			});
+			// No time limit. The cap this used to carry existed because the
+			// search froze the page, and in a worker it does not: the fight is
+			// either worth solving or it is not, and that is the player's call
+			// to make with the Stop button, not a number chosen here. The node
+			// budget stays as a backstop against a genuinely unbounded search.
 			RRSearch.solve(state, {
 				lookahead: 3, budget: 30000,
-				exactBudget: 20000000, timeLimitMs: 60000, maxTurns: 24
+				exactBudget: 60000000, maxTurns: 24,
+				certify: true, certifyBudget: 800000, certifyTimeLimitMs: 30000
 			}, function (result) {
 				var found = {route: result.route, risk: [], stepRisks: result.priced};
 				if (result.priced) { paintRoute(state, found, null, true); return; }
@@ -448,6 +471,14 @@
 				// Whatever went wrong with the worker, the fight still needs an
 				// answer.
 				runRouteInline(state);
+			}, function (nodes, elapsedMs) {
+				// Proof of life. Without it a long search and a hung one look
+				// exactly the same, which is most of why a time cap felt
+				// necessary in the first place.
+				$("#rr-adv-progress").html("Looking for a line that loses nobody: " +
+					(nodes / 1000).toFixed(0) + "k positions checked in " +
+					(elapsedMs / 1000).toFixed(0) + "s. The page stays usable, and " +
+					"it keeps going until it has an answer.");
 			});
 			return;
 		}

@@ -184,11 +184,51 @@ function replay(state, steps) {
 		[set('Blastoise', ['Surf', 'Ice Beam', 'Bite', 'Rapid Spin'], 45)],
 		[set('Geodude', ['Rock Throw'], 13)], {});
 	const route = X.planRoute(state, {budget: 200000});
-	check('planRoute returns a proved route where one exists',
-		route.won === true && route.losses === 0 && route.exactness === 'proved',
+	// "line-found", not "proved". The fast search runs at MEDIAN damage rolls
+	// against the AI's single best move, so it cannot speak for the sixteenth
+	// roll, a critical hit, or the 7% of positions where the AI has tied moves.
+	// It used to claim "proved" here and that claim was false.
+	check('a line at median rolls is NOT called proved',
+		route.won === true && route.losses === 0 && route.exactness === 'line-found',
 		JSON.stringify({won: route.won, losses: route.losses, exactness: route.exactness}));
-	check('  labelled so its trust level is visible',
-		typeof route.exactness === 'string');
+
+	// Certification is the separate, expensive question, and it must survive
+	// every roll and every tied AI move.
+	const certified = X.planRoute(state, {budget: 200000, certify: true,
+		certifyBudget: 300000, certifyTimeLimitMs: 20000});
+	check('  a fight that genuinely cannot be lost certifies (' +
+		certified.exactness + ')', certified.exactness === 'certified',
+		certified.certificate && certified.certificate.why);
+
+	// And the certifier must refuse when it did not get to look properly. The
+	// position has to be one that genuinely cannot be settled cheaply: three
+	// earlier attempts used fights that resolve in a couple of nodes, where no
+	// budget worth naming is ever binding. Misty against a mediocre party is
+	// measured to run past millions of nodes without deciding.
+	const TRAINERS2 = sandbox.RR_TRAINER_DATA;
+	let misty2 = null;
+	for (const segment of TRAINERS2.segments) {
+		for (const b of (segment.battles || [])) {
+			if (/MISTY/.test(b.trainer || '') && !misty2 &&
+				b.team[0].level.type === 'fixed') misty2 = b;
+		}
+	}
+	const mistyFoe = misty2.team.map(m => ({
+		species: m.species, level: m.level.value, nature: m.nature,
+		ability: m.ability, item: m.item || '', moves: m.moves.slice(0, 4),
+		evs: m.evs, ivs: m.ivs
+	}));
+	const hardState = B.createState([
+		set('Poliwrath', ['Body Slam', 'Hypnosis', 'Bubble Beam', 'Double Slap'],
+			misty2.team[0].level.value + 2),
+		set('Weezing', ['Smog', 'Haze', 'Tackle', 'Poison Gas'],
+			misty2.team[0].level.value + 2)
+	], mistyFoe, {});
+	const starved = X.certify(hardState, {exactBudget: 3000, maxTurns: 24});
+	check('  a certifier that ran out of budget refuses to certify',
+		starved.proved === false, starved.why);
+		check('    and says why', typeof starved.why === 'string' && starved.why.length > 0,
+		starved.why);
 }
 
 // ------------------------------------------------------ the time limit binds

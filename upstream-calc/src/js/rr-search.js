@@ -61,6 +61,12 @@ var RRSearch = (function () {
 		worker = new Worker(blobUrl);
 		worker.onmessage = function (event) {
 			var data = event.data || {};
+			if (data.kind === "progress") {
+				if (pending && pending.onProgress) {
+					pending.onProgress(data.nodes, data.elapsedMs);
+				}
+				return;
+			}
 			if (data.ok === false) settle(null, data.error || "the search failed");
 			else settle(data, null);
 		};
@@ -85,14 +91,14 @@ var RRSearch = (function () {
 	 * so a JSON hop would have quietly turned Surge's permanent Electric Terrain
 	 * into something else on the way over.
 	 */
-	function solve(state, search, onDone, onError) {
+	function solve(state, search, onDone, onError, onProgress) {
 		if (!available()) {
 			if (onError) onError("workers are not available here");
 			return null;
 		}
 		if (pending) cancel();
 		var id = ++seq;
-		pending = {id: id, onDone: onDone, onError: onError};
+		pending = {id: id, onDone: onDone, onError: onError, onProgress: onProgress};
 		try {
 			ensure().postMessage({kind: "solve", state: state, search: search || {}});
 		} catch (e) {

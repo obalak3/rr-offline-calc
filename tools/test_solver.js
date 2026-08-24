@@ -240,5 +240,73 @@ for (const [name, party, foe] of provable) {
 		route.steps.map(s2 => s2.label).join(' -> '));
 }
 
+// ------------------------------------------------------- flinch risk is real
+
+// Flinch only costs you something if it stops a move you were going to make.
+// Both of these were being reported as genuine 20% risks:
+//   - a turn you SWITCHED on, where the Pokemon coming in was never going to
+//     move anyway, so there is nothing to flinch;
+//   - a turn where you are FASTER, so you have already acted by the time the
+//     flinch would land.
+{
+	const fast = mine('Mienshao', 34, ['Drain Punch', 'Fake Out']);
+	const slow = mine('Crawdaunt', 34, ['Waterfall']);
+	const state = B.createState([fast, mine('Breloom', 34, ['Mach Punch'])], [slow], {});
+
+	const me = B.active(state.me), foe = B.active(state.foe);
+	const iAmFaster = B.turnOrder(state,
+		{type: 'move', index: 0, move: 'Drain Punch'},
+		{type: 'move', index: 0, move: 'Waterfall'})[0] === 'me';
+	check('the setup is what the test assumes: ' + me.species + ' outspeeds ' +
+		foe.species, iAmFaster);
+
+	function flinchRisks(action) {
+		const theirAction = {type: 'move', index: 0, move: 'Waterfall'};
+		const next = B.step(state, action, theirAction,
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		const route = {steps: [{
+			turn: 1, action: action, theirAction: theirAction,
+			myMon: me.species, theirMon: foe.species,
+			knockedOut: false, lost: 0,
+			myHP: B.active(next.me).curHP, myMaxHP: B.active(next.me).maxHP,
+			theirHP: B.active(next.foe).curHP
+		}]};
+		const priced = S.routeRisks(state, route, {risks: {roll: 'median'}});
+		return priced.risks.filter(r => /flinch/.test(r.what));
+	}
+
+	const attacking = flinchRisks({type: 'move', index: 0, move: 'Drain Punch'});
+	check('no flinch risk when you move first (' + attacking.length + ' reported)',
+		attacking.length === 0, attacking.map(r => r.what).join('; '));
+
+	const switching = flinchRisks({type: 'switch', index: 1});
+	check('no flinch risk on a turn you switched (' + switching.length + ' reported)',
+		switching.length === 0, switching.map(r => r.what).join('; '));
+}
+
+// The guard must not silence flinch where it genuinely applies: something slow
+// that stays in and attacks can be flinched.
+{
+	const slowMon = mine('Munchlax', 20, ['Tackle']);
+	const fastMon = mine('Crawdaunt', 50, ['Waterfall']);
+	const state = B.createState([slowMon], [fastMon], {});
+	const theirAction = {type: 'move', index: 0, move: 'Waterfall'};
+	const action = {type: 'move', index: 0, move: 'Tackle'};
+	const faster = B.turnOrder(state, action, theirAction)[0] === 'foe';
+	const next = B.step(state, action, theirAction,
+		{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+	const route = {steps: [{
+		turn: 1, action: action, theirAction: theirAction,
+		myMon: 'Munchlax', theirMon: 'Crawdaunt', knockedOut: false, lost: 0,
+		myHP: B.active(next.me).curHP, myMaxHP: B.active(next.me).maxHP,
+		theirHP: B.active(next.foe).curHP
+	}]};
+	const flinches = S.routeRisks(state, route, {risks: {roll: 'median'}})
+		.risks.filter(r => /flinch/.test(r.what));
+	check('but a slower attacker IS still warned about flinch',
+		!faster || flinches.length > 0,
+		'foe faster: ' + faster + ', flinch risks: ' + flinches.length);
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

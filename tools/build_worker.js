@@ -83,7 +83,11 @@ self.onmessage = function (event) {
 	if (payload.kind !== "solve") return;
 	try {
 		var state = payload.state;
-		var route = RRExact.planRoute(state, payload.search || {});
+		var search = payload.search || {};
+		search.onProgress = function (nodes, elapsedMs) {
+			self.postMessage({kind: "progress", nodes: nodes, elapsedMs: elapsedMs});
+		};
+		var route = RRExact.planRoute(state, search);
 		var priced = null;
 		if (route.exactness === "proved") {
 			try {
