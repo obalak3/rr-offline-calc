@@ -542,5 +542,29 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		afterAttack('Life Orb') + ' vs ' + afterAttack(''));
 }
 
+{
+	// Weakness Policy: two stages of both attacking stats the moment a super
+	// effective hit lands. The engine believing a Pokemon it just hit for double
+	// is as weak as before flatters the opponent's victim, which is us.
+	function boostAfter(item, ourMove) {
+		const state = B.createState(
+			[set('Machamp', {moves: [ourMove]})],
+			[set('Snorlax', {moves: ['Tackle'], item: item})], {});
+		const next = B.step(state, {type: 'move', index: 0, move: ourMove},
+			{type: 'move', index: 0, move: 'Tackle'},
+			{mode: 'maxroll', risks: {roll: 'median'}})[0].state;
+		return B.active(next.foe).boosts.atk;
+	}
+	check('Weakness Policy fires on a super effective hit',
+		boostAfter('Weakness Policy', 'Karate Chop') === 2,
+		String(boostAfter('Weakness Policy', 'Karate Chop')));
+	check('  and not without the item',
+		boostAfter('', 'Karate Chop') === 0);
+	// Normal on Normal is neutral, so the policy must stay asleep.
+	check('  and not on a neutral hit',
+		boostAfter('Weakness Policy', 'Headbutt') === 0,
+		String(boostAfter('Weakness Policy', 'Headbutt')));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);

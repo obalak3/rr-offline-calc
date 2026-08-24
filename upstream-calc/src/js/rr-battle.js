@@ -597,6 +597,22 @@ var RRBattle = (function () {
 		if (mon.curHP === 0) mon.fainted = true;
 	}
 
+	/**
+	 * How hard `moveType` hits this Pokemon: 2 and 4 are super effective, 0 is
+	 * an immunity. Reads the calculator's chart rather than a second copy of it.
+	 */
+	function typeMultiplier(mon, moveType) {
+		if (!moveType) return 1;
+		var effectiveness = 1;
+		try {
+			var chart = calc.TYPE_CHART[GEN_NUM][moveType];
+			typesOf(mon).forEach(function (type) {
+				if (chart && chart[type] !== undefined) effectiveness *= chart[type];
+			});
+		} catch (e) { effectiveness = 1; }
+		return effectiveness;
+	}
+
 	// --------------------------------------------------------------- hazards
 
 	function applyHazards(state, key) {
@@ -1288,6 +1304,17 @@ var RRBattle = (function () {
 		// side that the search never accounts for -- so a Pokemon it believes
 		// finishes a fight at a sliver of health actually finishes it dead.
 		// Magic Guard blocks it, being indirect damage like recoil.
+		// Weakness Policy: two stages of both attacking stats, the moment a super
+		// effective hit lands. Unmodelled, the search believed a Pokemon it had
+		// just hit for double stayed as weak as before -- which is the direction
+		// that flatters the opponent's victim rather than the opponent, and so
+		// the direction that ends runs.
+		if (rolls && dealt > 0 && !defender.fainted && !defender.itemGone &&
+			defender.set.item === "Weakness Policy" &&
+			typeMultiplier(defender, data.type) > 1) {
+			defender.itemGone = true;
+			applyBoosts(defender, {atk: 2, spa: 2});
+		}
 		if (rolls && rolls.contact && !attacker.fainted &&
 			!NO_RECOIL[attacker.set.ability] &&
 			(SPIKY_SKIN[defender.set.ability] ||
