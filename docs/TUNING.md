@@ -66,6 +66,25 @@ cost grounds, not quality grounds**. The explanation previously recorded here --
 that depth compounds AI-model error -- is not supported and should not be
 repeated.
 
+**Monte Carlo search over the real objective, so far.** rr-mcts.js scores lines
+by playing the battle out and reading how it ended, rather than by a weighted
+sum. On a 45-fight subset, with both engines executing deterministically so
+neither is charged for luck the other avoids:
+
+    solver (proxy, depth 2)     60%
+    mcts   400 iterations       53%    7.8s per fight
+    mcts  1200 iterations       56%   33.7s per fight
+
+Not yet worth switching to. It does have the property the proxy search lacks --
+quality rises with budget (47/49/51/53/56% across 50 to 1200 iterations) where
+depth 2, 3 and 4 are flat -- but it is far more expensive and still behind. Its
+rollout policy only switches below a third HP, so it will systematically
+undervalue switch-heavy lines, which are exactly the ones that win hard fights.
+
+Given that the ceiling work shows this problem is exactly solvable, sampling is
+probably the wrong tool for it: an exhaustive search that finds the line is both
+faster and CORRECT, where MCTS is neither.
+
 **Porting more AI fidelity changed nothing.** 68% of trainer move evaluations
 were getting no adjustment at all, concentrated in `secondary` (559 sites),
 `damaging` (552), `selfSwitch` (503) and `boost` (175, which had **never** been
@@ -91,6 +110,32 @@ below the default. `progress: 250` is clearly worse at 54%.
 **`turnCost` does nothing, by construction.** `depthUsed * turnCost` is constant
 across all leaves at the same depth, so it cannot separate two actions. It only
 bites between terminal and non-terminal leaves.
+
+## The headline number was measured against the wrong denominator
+
+`tools/ceiling.js` answers a question that should have been asked first: how
+many of these fights can be won cleanly AT ALL? It is exactly computable, and
+not by luck -- the benchmark scores routes under DETERMINISTIC dynamics (median
+rolls, the AI's argmax reply) and trainer teams are fully known, so "does a
+clean win exist" is plain reachability in a finite graph. What makes it
+affordable is the Nuzlocke objective itself: the moment one of yours faints the
+branch is dead and gets cut, so only lines where nothing has died are explored.
+
+    a clean win EXISTS            12  (67%)
+    provably IMPOSSIBLE            0  (0%)
+    undecided (budget ran out)     6  (33%)
+
+    the planner won cleanly       11
+    of the fights it COULD win  11/12  (92%)   <- the real score
+
+**Nothing was proven impossible.** Every failure is either a fight known to be
+winnable or one the oracle could not decide within budget, and the undecided
+ones are exactly the fights the planner fails: Misty, Surge and Mt. Moon.
+
+So "62% clean wins", compared against an imagined 100%, understates the planner
+badly. Against what has been shown to be achievable it is at 92%. The remaining
+problem is not judgement, it is compute: making the hard fights decidable.
+Report both numbers, and never the first one alone.
 
 ## Which fights are actually hard
 
