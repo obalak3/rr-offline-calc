@@ -861,3 +861,34 @@ and is not. Selecting a double battle disables the advisor and says why:
 produces no ranking. 27 of 167 battles are doubles, several of them before
 Misty, so this is a real feature gap -- but it is a gap the user can see, which
 is the only acceptable kind.
+
+## Protosynthesis and Quark Drive were applied by nobody (2026-08-24)
+
+Measured, not grepped: a Great Tusk in permanent sun dealt exactly 132 with
+Protosynthesis and 132 without, and an Iron Hands on Electric Terrain dealt 176
+either way. Neither the engine nor the calculator knew them.
+
+22 trainer Pokemon carry one, and the spread is what makes this matter:
+
+    GYM LEADER BROCK        Great Tusk @Booster Energy      <- the FIRST gym
+    GYM LEADER LT. SURGE    Iron Treads, Iron Hands         <- under his own
+                                                               permanent terrain
+    ELITE FOUR BRUNO        four of them
+    plus Sabrina, Koga, Blaine, Clair, Lorelei, Agatha, Lance, both rivals
+
+Booster Energy triggers the ability with no weather or terrain at all, which is
+precisely why trainers hold one, and 14 of them do.
+
+**Modelled as one boost stage, which is deliberately an overestimate.** The real
+ability gives 1.3x on the best stat (1.5x if that stat is Speed) and a boost
+stage is 1.5x, so this hands the opponent slightly more than they really get.
+That is the direction to be wrong in -- a planner that exists to avoid losing a
+Pokemon should overestimate what it is facing -- and the alternative is teaching
+every damage path a multiplier concept it does not have, for one ability.
+
+Now 132 against 198 with sun or a Booster Energy, and the control ability is
+unchanged.
+
+**This one touches the early benchmark.** Brock is one of the nine battles, so
+unlike every other fix today the 71% headline can genuinely move. Re-measured
+below.

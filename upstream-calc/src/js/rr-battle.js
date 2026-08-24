@@ -662,12 +662,60 @@ var RRBattle = (function () {
 		"Drizzle": "Rain", "Drought": "Sun", "Sand Stream": "Sand", "Snow Warning": "Snow"
 	};
 
+	/**
+	 * Protosynthesis and Quark Drive: a third more of the best stat.
+	 *
+	 * Neither the calculator nor the engine applied these -- measured, not
+	 * grepped: a Great Tusk in permanent sun did exactly the same damage with
+	 * the ability as without. They appear on 22 trainer Pokemon starting at
+	 * GYM LEADER BROCK, and Lt. Surge fields two Quark Drive bodies under his
+	 * own permanent Electric Terrain, so the engine was fighting a materially
+	 * weaker opponent than the game does at both ends of the run.
+	 *
+	 * MODELLED AS ONE BOOST STAGE, WHICH IS AN OVERESTIMATE. The real ability is
+	 * 1.3x on the best stat (1.5x if that stat is Speed) and a stage is 1.5x, so
+	 * this hands the opponent slightly more than they get. That is the direction
+	 * to be wrong in: a planner that exists to avoid losing a Pokemon should
+	 * overestimate what it is up against, and the alternative -- inventing a
+	 * multiplier the boost system does not have -- would mean teaching every
+	 * damage path a new concept for one ability.
+	 */
+	var PARADOX = {
+		"Protosynthesis": function (state) { return state.field.weather === "Sun"; },
+		"Quark Drive": function (state) { return state.field.terrain === "Electric"; }
+	};
+
+	function applyParadoxBoost(state, mon) {
+		var rule = PARADOX[mon.set.ability];
+		if (!rule) return;
+		// Booster Energy fires it with no weather or terrain at all, which is
+		// exactly why trainers hold one.
+		var held = !mon.itemGone && mon.set.item === "Booster Energy";
+		if (!rule(state) && !held) return;
+		if (mon.volatiles.paradox) return;   // it only ever fires once
+		var stats;
+		try { stats = toCalcPokemon(mon).stats; } catch (e) { return; }
+		if (!stats) return;
+		var best = null, bestValue = -1;
+		["atk", "def", "spa", "spd", "spe"].forEach(function (stat) {
+			if (stats[stat] > bestValue) { bestValue = stats[stat]; best = stat; }
+		});
+		if (!best) return;
+		mon.volatiles.paradox = best;
+		var boost = {};
+		boost[best] = 1;
+		applyBoosts(mon, boost);
+		if (held) mon.itemGone = true;
+	}
+
 	function applyEntryAbility(state, key) {
 		var side = state[key];
 		var mon = active(side);
 		if (mon.fainted) return;
 		var ability = mon.set.ability;
 		if (!ability) return;
+
+		applyParadoxBoost(state, mon);
 
 		var terrain = TERRAIN_SETTERS[ability];
 		if (terrain) {

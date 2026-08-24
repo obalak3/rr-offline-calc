@@ -612,5 +612,43 @@ for (const [atk, def, move] of [['Garchomp', 'Skarmory', 'Earthquake'],
 		'Poison Heal ' + withHeal + ', ordinary ' + without);
 }
 
+{
+	// Protosynthesis and Quark Drive were applied by nobody -- not the engine,
+	// not the calculator. 22 trainer Pokemon carry one, starting at Brock, and
+	// Lt. Surge fields two under his own permanent Electric Terrain.
+	function tuskDamage(ability, item, field) {
+		const state = B.createState(
+			[set('Snorlax')],
+			[set('Great Tusk', {moves: ['Headlong Rush'], ability: ability,
+				item: item})], field);
+		const rolls = B.damageRolls(state, 'foe', 'Headlong Rush');
+		return rolls ? rolls.noCrit[8] : 0;
+	}
+	const sun = {weather: 'Sun', permanentWeather: true};
+	const base = tuskDamage('Protosynthesis', '', {});
+	check('Protosynthesis fires in sun', tuskDamage('Protosynthesis', '', sun) > base,
+		tuskDamage('Protosynthesis', '', sun) + ' vs ' + base);
+	check('  and off a Booster Energy with no sun at all',
+		tuskDamage('Protosynthesis', 'Booster Energy', {}) > base);
+	check('  and not for an ability that does not have it',
+		tuskDamage('Sand Veil', '', sun) === base);
+
+	// Quark Drive is the same rule on Electric Terrain, which is the field Lt.
+	// Surge sets permanently.
+	function handsDamage(ability, field) {
+		const state = B.createState(
+			[set('Snorlax')],
+			[set('Iron Hands', {moves: ['Drain Punch'], ability: ability})], field);
+		const rolls = B.damageRolls(state, 'foe', 'Drain Punch');
+		return rolls ? rolls.noCrit[8] : 0;
+	}
+	const terrain = {terrain: 'Electric', permanentTerrain: true};
+	check('Quark Drive fires on Electric Terrain',
+		handsDamage('Quark Drive', terrain) > handsDamage('Quark Drive', {}),
+		handsDamage('Quark Drive', terrain) + ' vs ' + handsDamage('Quark Drive', {}));
+	check('  and not for an ability that does not have it',
+		handsDamage('Sand Veil', terrain) === handsDamage('Sand Veil', {}));
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);
