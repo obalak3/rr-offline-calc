@@ -1,3 +1,4 @@
+let hardState;
 /**
  * Checks for the exact clean-win search. Run: node tools/test_exact.js
  *
@@ -227,7 +228,7 @@ function replay(state, steps) {
 		ability: m.ability, item: m.item || '', moves: m.moves.slice(0, 4),
 		evs: m.evs, ivs: m.ivs
 	}));
-	const hardState = B.createState([
+	hardState = B.createState([
 		set('Poliwrath', ['Body Slam', 'Hypnosis', 'Bubble Beam', 'Double Slap'],
 			misty2.team[0].level.value + 2),
 		set('Weezing', ['Smog', 'Haze', 'Tackle', 'Poison Gas'],
@@ -238,6 +239,50 @@ function replay(state, steps) {
 		starved.proved === false, starved.why);
 		check('    and says why', typeof starved.why === 'string' && starved.why.length > 0,
 		starved.why);
+}
+
+// ------------------------------------------- unknown is distinct from lost
+
+// The whole point of splitting `v` from `u` is that "you lose" and "I did not
+// look" stop being the same number. So the guard has to check BOTH directions:
+// a hopeless fight must still report zero unknown, or the fix has merely traded
+// false despair for false doubt, and a starved search must not invent
+// uncertainty about a fight it actually finished.
+{
+	const lv = (species, moves, level) => ({species, level, nature: 'Serious',
+		evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0},
+		ivs: {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31},
+		moves, item: '', ability: undefined});
+	const OPTS = {exactBudget: 500000, maxTurns: 24, timeLimitMs: 20000};
+
+	const easy = B.createState([lv('Blastoise', ['Surf'], 60)],
+		[lv('Rattata', ['Tackle'], 5)], {});
+	const won = X.winChance(easy, OPTS);
+	check('  a fight that cannot be lost is certain, with nothing unknown',
+		won.chance >= 1 - 1e-9 && won.unknown === 0 && !won.exhausted,
+		'chance ' + won.chance + ' unknown ' + won.unknown);
+
+	const hopeless = B.createState([lv('Rattata', ['Tackle'], 5)],
+		[lv('Blastoise', ['Surf'], 60)], {});
+	const lost = X.winChance(hopeless, OPTS);
+	check('    a hopeless fight is zero with zero UNKNOWN, not merely unexamined',
+		lost.chance === 0 && lost.unknown === 0 && !lost.exhausted,
+		'chance ' + lost.chance + ' unknown ' + lost.unknown);
+
+	// The distinction the fix exists for: same zero, different meaning.
+	const starvedHard = X.winChance(hardState, {exactBudget: 3000, maxTurns: 24});
+	check('    but a starved search reports its ignorance instead of a loss',
+		starvedHard.chance === 0 && starvedHard.unknown > 0.5 && starvedHard.exhausted,
+		'chance ' + starvedHard.chance + ' unknown ' + starvedHard.unknown);
+	check('      and its upper bound is above its floor',
+		starvedHard.upper > starvedHard.chance,
+		'upper ' + starvedHard.upper + ' vs chance ' + starvedHard.chance);
+
+	// A completed search must never invent doubt.
+	const finished = X.winChance(easy, {exactBudget: 200, maxTurns: 24});
+	check('    a search that finished early claims no uncertainty',
+		!finished.exhausted && finished.unknown === 0,
+		'unknown ' + finished.unknown);
 }
 
 // ------------------------------------------------------ the time limit binds

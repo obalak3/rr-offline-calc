@@ -1635,7 +1635,12 @@ var RRExact = (function () {
 		rootRanking = [];
 		var root = value(state, limits.maxTurns, true);
 		var chance = root.v;
-		var unknownMass = root.u;
+		// Summing a few dozen branch weights leaves float dust: a search that
+		// examined everything comes back with an unknown of 3e-16 rather than
+		// zero. That is not ignorance, and a caller testing `unknown > 0` would
+		// read it as such, so it is snapped to zero on the same tolerance
+		// `certain` already uses for the other end of the range.
+		var unknownMass = root.u < 1e-9 ? 0 : root.u;
 		rootRanking.sort(function (x, y) { return y.chance - x.chance; });
 		// Multiplying a few dozen branch probabilities together lands a certain
 		// win on 0.999999999999999667 rather than 1, so "certain" needs a

@@ -88,3 +88,20 @@ if (oldSb) {
 		? 'VERIFIED: chance is bit-identical to the pre-fix engine at every budget.'
 		: 'WARNING: chance CHANGED at ' + mismatches + ' budget(s) -- the fix was not additive.');
 }
+
+// A search that FINISHES must report no unknown at all. Without this the change
+// could look right on hard fights while quietly inflating easy ones, which is
+// the failure mode that matters: an advisor that says "I do not know" about a
+// fight it fully understands is as useless as one that says "you lose".
+console.log('\nA COMPLETED search must have zero unknown:');
+const easy = battles.slice(0, 6);
+for (const b of easy) {
+	const st = newSb.RRBattle.createState(mySets, H.foeSets(b), {});
+	const r = newSb.RRExact.winChance(st, {exactBudget: 3000000, maxTurns: 24, timeLimitMs: 20000});
+	const tag = r.exhausted ? 'exhausted' : 'complete';
+	console.log('  ' + H.label(b).slice(0, 34).padEnd(36) +
+		'chance ' + (100 * r.chance).toFixed(1).padStart(6) + '%' +
+		'  unknown ' + (100 * r.unknown).toFixed(1).padStart(6) + '%' +
+		'  ' + tag +
+		((!r.exhausted && r.unknown > 1e-9) ? '   <-- BUG: complete but unknown' : ''));
+}
