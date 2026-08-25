@@ -1445,6 +1445,32 @@ var RRExact = (function () {
 	 *
 	 * Chance nodes are averaged and your own choices maximised, which is exactly
 	 * right here: the dice are indifferent, and you are not.
+	 *
+	 * UNKNOWN IS NOT LOSS
+	 * -------------------
+	 * This search used to return a single number, and every way of giving up
+	 * returned the same value a defeat did -- zero. Running out of node budget,
+	 * hitting the turn horizon, and having no opponent model for a position were
+	 * all indistinguishable from losing a Pokemon. Since exhaustion also
+	 * short-circuits every remaining node, a search that ran out of budget
+	 * reported a chance near zero no matter what it had already found, and the
+	 * root ranking it produced was zeros.
+	 *
+	 * That is the same defect as the reliability floor this file already
+	 * removed once: a lower bound displayed as a percentage reads as a win rate.
+	 * It is worth naming the direction of the error, because it is not
+	 * symmetric. Every one of these collapses biases the answer DOWNWARD, so the
+	 * tool systematically told the player a fight was worse than it is, which is
+	 * exactly the complaint that prompted the fix -- a fight reported as needing
+	 * two losses was then played and won without losing anything.
+	 *
+	 * So a node now answers with two numbers. `v` is mass that provably reaches
+	 * a clean win. `u` is mass we never examined. A real loss contributes to
+	 * neither. The truth is somewhere in [v, v+u], and a caller that shows `v`
+	 * while `u` is large is reporting its own budget as the player's odds.
+	 *
+	 * `u` is itself a LOWER bound, because the alpha cutoff abandons branches
+	 * without counting what it did not look at there.
 	 */
 	function winChance(state, options) {
 		var opts = options || {};
@@ -1468,16 +1494,27 @@ var RRExact = (function () {
 
 		var rootRanking = null;
 
+		// Every node answers with two numbers, not one: `v` is probability mass
+		// that provably reaches a clean win, `u` is mass we simply never looked
+		// at. They are different things and collapsing them was the bug this
+		// search shipped with -- see UNKNOWN IS NOT LOSS above.
+		function won() { return {v: 1, u: 0}; }
+		function lost() { return {v: 0, u: 0}; }
+		function unknown() { return {v: 0, u: 1}; }
+
 		function value(current, turnsLeft, isRoot) {
-			if (allDown(current.foe)) return 1;
-			if (turnsLeft <= 0) return 0;
+			if (allDown(current.foe)) return won();
+			// Running past the horizon is ignorance, not defeat. The fight is
+			// still going; we stopped watching. Scoring it zero is what made a
+			// long stall line indistinguishable from a loss.
+			if (turnsLeft <= 0) return unknown();
 			// Same short-circuit as walk(): giving up has to stop the whole
 			// search, not just the node that noticed.
-			if (limits.exhausted) return 0;
-			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return 0; }
+			if (limits.exhausted) return unknown();
+			if (limits.nodes++ > limits.budget) { limits.exhausted = true; return unknown(); }
 			if (deadline && (limits.nodes & 1023) === 0 && Date.now() > deadline) {
 				limits.exhausted = true;
-				return 0;
+				return unknown();
 			}
 
 			// One positionKey, used three ways. It used to be computed here for
@@ -1490,14 +1527,20 @@ var RRExact = (function () {
 			var key = posKey + "@" + turnsLeft;
 			var cached = memo.get(key);
 			if (cached !== undefined) return cached;
-			memo.set(key, 0);   // guard against revisiting a position mid-descent
+			// Guard against revisiting a position mid-descent. A cycle is scored
+			// as neither won nor unknown: counting it unknown would let a
+			// position inflate its own uncertainty by looping back to itself.
+			memo.set(key, lost());
 
 			var theirs = replies(current, opts, posKey);
-			if (!theirs) return 0;
+			// No opponent model for this position is a hole in OUR model, so it
+			// is unknown. It used to read as a loss, which quietly punished
+			// exactly the positions we understand least.
+			if (!theirs) return unknown();
 
 			var before = countFainted(current.me);
 			var actions = ordered(current, posKey);
-			var best = 0;
+			var best = 0, bestUpper = 0;
 
 			// At the root every action is priced, even once a certain win is
 			// found, because the point there is the ranking rather than the
@@ -1513,7 +1556,7 @@ var RRExact = (function () {
 				// abandoned. This is what makes pricing the whole distribution
 				// affordable: the boolean search could stop at the first line
 				// that worked, and this one has no such luxury without it.
-				var total = 0, remaining = 1;
+				var total = 0, totalU = 0, remaining = 1;
 				for (var t = 0; t < theirs.length &&
 					(isRoot || total + remaining > best); t++) {
 					var successors;
@@ -1533,17 +1576,44 @@ var RRExact = (function () {
 						// Anything of ours dying is worth nothing, so the branch
 						// is cut here rather than followed.
 						if (countFainted(next.me) > before) { remaining -= weight; continue; }
-						total += weight * value(next, turnsLeft - 1);
+						var sub = value(next, turnsLeft - 1);
+						total += weight * sub.v;
+						totalU += weight * sub.u;
 						remaining -= weight;
+						// Pruning here abandons branches whose unknown mass is
+						// therefore never counted, so `u` is a LOWER bound on
+						// our ignorance. It is reported as such and never used
+						// to claim a fight is safer than measured.
 						if (!isRoot && total + remaining <= best) break;
 					}
 				}
-				if (isRoot) rootRanking.push({action: actions[a], chance: total});
+				// Whatever mass is still in `remaining` was never examined:
+				// either the alpha cutoff broke out of the loop, or the engine
+				// could not produce successors. It is not a loss, so it belongs
+				// in this action's unknown. Faints are already out of
+				// `remaining`, having been subtracted where they were cut.
+				var actionUpper = Math.min(1, total + totalU + Math.max(0, remaining));
+				if (isRoot) {
+					rootRanking.push({action: actions[a], chance: total,
+						unknown: actionUpper - total, upper: actionUpper});
+				}
+				// A max node's bounds are the max of its children's bounds --
+				// separately. Ranking by what is PROVED keeps an action whose
+				// only appeal is that we never looked at it from winning, while
+				// tracking the best UPPER bound independently is what stops the
+				// node from claiming certainty it has not earned.
+				//
+				// These have to be two comparisons. Carrying the unknown of
+				// whichever action happened to maximise `v` loses it entirely
+				// when every action is at zero, which is precisely the
+				// exhausted search this change exists to describe.
 				if (total > best) best = total;
+				if (actionUpper > bestUpper) bestUpper = actionUpper;
 			}
 
-			memo.set(key, best);
-			return best;
+			var out = {v: best, u: Math.max(0, bestUpper - best)};
+			memo.set(key, out);
+			return out;
 		}
 
 		replyCache = new Map();
@@ -1563,7 +1633,9 @@ var RRExact = (function () {
 		// it can make one arbitrarily slow, and a stale hit is not debuggable.
 		orderCache = new Map();
 		rootRanking = [];
-		var chance = value(state, limits.maxTurns, true);
+		var root = value(state, limits.maxTurns, true);
+		var chance = root.v;
+		var unknownMass = root.u;
 		rootRanking.sort(function (x, y) { return y.chance - x.chance; });
 		// Multiplying a few dozen branch probabilities together lands a certain
 		// win on 0.999999999999999667 rather than 1, so "certain" needs a
@@ -1573,6 +1645,12 @@ var RRExact = (function () {
 		var CERTAIN = 1 - 1e-9;
 		return {
 			chance: chance,
+			// What the search PROVED, what it never looked at, and the most the
+			// answer could be if every unexamined branch went our way. A caller
+			// showing `chance` alone when `unknown` is large is reporting its
+			// own budget as the player's odds.
+			unknown: unknownMass,
+			upper: Math.min(1, chance + unknownMass),
 			ranking: rootRanking,
 			collapsed: limits.collapsed,
 			certain: chance >= CERTAIN && !limits.collapsed && !limits.exhausted,
@@ -1628,9 +1706,20 @@ var RRExact = (function () {
 	 */
 	function certify(state, options) {
 		var result = winChance(state, options || {});
+		// `chance` is a floor, never an estimate, and the gap up to `upper` is
+		// how much of the fight went unexamined. A caller that renders the floor
+		// as "your odds" when the gap is wide is quoting our search budget at
+		// the player, which is the failure this pair exists to prevent.
 		return {
 			proved: result.certain,
 			chance: result.chance,
+			unknown: result.unknown,
+			upper: result.upper,
+			// True when the search learned too little for the floor to mean
+			// anything. Say "I do not know" on this, not "you will probably
+			// lose" -- they look identical in a single number and they are not
+			// remotely the same claim.
+			uninformative: !result.certain && result.unknown > 0.05,
 			why: result.certain ? "no reachable branch loses a Pokemon"
 				: result.exhausted ? "the search ran out of budget"
 				: result.collapsed ? "the engine merged some outcomes to stay affordable"
