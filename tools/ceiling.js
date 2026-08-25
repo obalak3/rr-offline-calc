@@ -87,15 +87,32 @@ function cleanWinExists(state, limits) {
 	return result.found;
 }
 
+// Level cap, overridable. It was hardcoded at 34, which is the nine early
+// fights this repo has always measured on. That scope is now too narrow:
+// bench_live scores the live advisor over all 36 fixed-level battles, and the
+// fights doing most of the damage to that number are the Elite Four at level
+// 85. A ceiling that excludes them cannot say whether those losses are the
+// advisor's fault or arithmetic.
+const MAX_LEVEL = parseInt(process.env.CEILING_MAX_LEVEL, 10) || 34;
 const early = [];
 for (const segment of TRAINERS.segments) {
 	for (const b of (segment.battles || [])) {
 		if ((b.effects || []).some(e => /DOUBLES/i.test(e))) continue;
 		if (b.team[0].level.type !== 'fixed') continue;
-		if (b.team[0].level.value > 34) continue;
+		if (b.team[0].level.value > MAX_LEVEL) continue;
 		early.push(b);
 	}
 }
+console.log('battles: ' + early.length + '  (level cap ' + MAX_LEVEL + ')');
+// NOTE ON WHAT THIS CEILING IS. The oracle runs cleanWin under deterministic
+// dynamics -- median rolls, the AI's argmax -- and cleanWin steps in maxroll
+// mode, where a secondary fires only if guaranteed or if it belongs to the
+// OPPONENT (rr-battle.js:1558). So the oracle's Scald never burns either. This
+// is therefore a ceiling on LUCK-FREE clean wins, and a lower bound on the real
+// one. James beat Lt. Surge losing nobody and believes a burn was involved,
+// which is exactly the shape of line it cannot see. Do not read a planner score
+// close to this number as "close to optimal".
+
 
 const teamCount = parseInt(process.argv[2], 10) || 5;
 const budget = parseInt(process.argv[3], 10) || 300000;
