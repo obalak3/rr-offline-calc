@@ -183,6 +183,18 @@ if (possible) {
 	console.log('  of the fights it COULD win  ' + wonAmongPossible + '/' + possible +
 		'  (' + Math.round(100 * wonAmongPossible / possible) + '%)   <- the real score');
 	console.log('  winnable but missed         ' + String(missed).padStart(4));
+	// Without this the missed count is uninterpretable. The two searches are
+	// NOT given the same resources -- deliberately, since the question is
+	// "winnable in the time the app spends" rather than "winnable at all" -- so
+	// a miss can simply be the planner being handed less than the oracle
+	// needed, rather than the planner choosing worse. Say so where the number
+	// is read, not only in the source.
+	if (missed) {
+		console.log('    (the oracle had ' + budget.toLocaleString() +
+			' nodes and no clock; the planner had ' +
+			plannerBudget.toLocaleString() + ' and ' + (plannerMs / 1000) +
+			's, so a miss may be budget rather than judgement)');
+	}
 	if (wonUndecided) {
 		console.log('  won where the oracle could not decide  ' +
 			String(wonUndecided).padStart(4) +

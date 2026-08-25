@@ -1674,3 +1674,51 @@ deciding what not to look at.**
 Soundness is enforced rather than assumed: novelty counts as narrowing, so such
 a pass may find and may never conclude, and `tools/test_exact.js` asserts it
 never reports a hard fight impossible however hard it prunes.
+
+## The ceiling, re-measured with restarts (2026-08-24)
+
+`node tools/ceiling.js 3 300000`, the first run since the restart driver landed.
+
+    a clean win EXISTS            20  (74%)
+    provably IMPOSSIBLE            0  (0%)
+    undecided (budget ran out)     7  (26%)
+
+    the planner won cleanly       19  (70% of all fights)
+    of the fights it COULD win  19/20  (95%)   <- the real score
+    winnable but missed            1
+
+    per battle            possible / impossible / undecided | planner won
+      BROCK                  3 / 0 / 0   | 3/3
+      MISTY                  0 / 0 / 3   | 0/3
+      LT. SURGE              0 / 0 / 3   | 0/3
+      PEWTER / FALKNER       3 / 0 / 0   | 2/3
+      ROUTE 22 #1 RIVAL      9 / 0 / 0   | 9/9
+      VIRID. FOREST BRENDAN  3 / 0 / 0   | 3/3
+      MT. MOON ARCHER        2 / 0 / 1   | 2/3
+
+**Do not read this against the recorded 20/20.** ceiling.js uses GENERATED
+teams and the generator changed when restricted-mode filtering landed, so the
+cross-run comparison is not controlled. The number that IS controlled is the
+internal one: of the fights this run proves winnable, the planner wins 19 of 20.
+
+### The one miss, chased rather than assumed
+
+A planner that misses a fight its own oracle proved winnable is worth
+explaining, especially in the run right after a search change. The obvious
+suspect was restarts: they cost node THROUGHPUT (measured elsewhere here --
+Misty explores 172k nodes in 60s with them against 400k in 41s without), and the
+planner runs under a five-second clock where the oracle runs with none.
+
+**Measured, and it is not restarts.** All three FALKNER teams, at the planner's
+own settings of 200,000 nodes and 5s:
+
+    team0   restarts ON  won losing 2 / undecided    OFF  won losing 2 / undecided
+    team1   restarts ON  CLEAN 14T                   OFF  CLEAN 14T
+    team2   restarts ON  CLEAN  9T                   OFF  CLEAN  9T
+
+Identical. The miss is the tool's own asymmetry: the oracle gets 300,000 nodes
+and no clock to declare a fight winnable, and the planner is then graded with
+200,000 and five seconds. That gap is deliberate -- the planner's question is
+"winnable in the time the app spends" -- but it was invisible in the output, so
+"winnable but missed 1" could not be interpreted. ceiling.js now prints both
+budgets whenever it reports a miss.
