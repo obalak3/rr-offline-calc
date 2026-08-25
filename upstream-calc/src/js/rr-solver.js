@@ -1489,6 +1489,13 @@ var RRSolver = (function () {
 		RISK_LADDER: RISK_LADDER,
 		solveProof: solveProof,
 		describe: describe,
-		stateKey: stateKey
+		stateKey: stateKey,
+		// Exposed so the exact search can ORDER by it. This is the weighted
+		// evaluator: it has judgement the exact search lacks, and the exact
+		// search has a completeness the evaluator lacks, and ordering is the one
+		// place the two can be combined without either's weakness mattering --
+		// a wrong order costs time and can never change which lines exist.
+		positionValue: positionValue,
+		WEIGHTS: WEIGHTS
 	};
 })();

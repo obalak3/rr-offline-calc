@@ -64,6 +64,9 @@ var RRExact = (function () {
 	 */
 	var passUsesMatchup = true;
 
+	/** Whether the pass now running orders by the weighted evaluator. */
+	var useValueOrdering = false;
+
 	/**
 	 * Build the pairing table for this fight, unless the caller supplied one or
 	 * asked for none. `matchup: null` disables it, which is what the 1v1 solves
@@ -236,7 +239,54 @@ var RRExact = (function () {
 		return bonus;
 	}
 
+	/**
+	 * EXPERIMENTAL: order by what the weighted evaluator thinks of the position
+	 * each action leads to, rather than by raw damage.
+	 *
+	 * James's idea, and the natural synthesis: the weighted search has judgement
+	 * and no search, this search has search and crude judgement. Ordering is the
+	 * one place they combine safely, because a wrong order costs time and can
+	 * never change which lines exist.
+	 *
+	 * It is not free. Ranking this way means simulating every action to see
+	 * where it leads, where the damage ordering only looks numbers up -- so a
+	 * node costs roughly twice as much. The bet is that the fights this helps
+	 * are ones currently burning millions of nodes for nothing, where twice the
+	 * cost of failing is not a real price.
+	 */
+	function orderedByValue(state, key) {
+		if (key !== undefined) {
+			var hit = orderCache.get(key);
+			if (hit !== undefined) return hit;
+		}
+		var actions = RRBattle.legalActions(state, "me");
+		var theirs = reply(state, {}, key);
+		var ranked = [];
+		for (var i = 0; i < actions.length; i++) {
+			var value;
+			try {
+				var next = RRBattle.step(state, actions[i], theirs,
+					{mode: "maxroll", risks: RISKS})[0].state;
+				// Anything that loses one of ours is worthless here for the same
+				// reason the search cuts it: the objective is losing nobody.
+				value = countFainted(next.me) > countFainted(state.me)
+					? -Infinity
+					: RRSolver.positionValue(next, 1, RRSolver.WEIGHTS);
+			} catch (e) { value = -Infinity; }
+			ranked.push({action: actions[i], rank: value});
+		}
+		ranked.sort(function (a, b) { return b.rank - a.rank; });
+		var out = [];
+		for (var j = 0; j < ranked.length; j++) out.push(ranked[j].action);
+		if (key !== undefined) orderCache.set(key, out);
+		return out;
+	}
+
 	function ordered(state, key) {
+		if (useValueOrdering && typeof RRSolver !== "undefined" &&
+			RRSolver.positionValue) {
+			return orderedByValue(state, key);
+		}
 		if (key !== undefined) {
 			var hit = orderCache.get(key);
 			if (hit !== undefined) return hit;
@@ -617,6 +667,7 @@ var RRExact = (function () {
 			seen = new Map();
 			beam = pass.beam;
 			passUsesMatchup = pass.matchup !== false;
+			useValueOrdering = pass.valueOrder === true;
 			// Only a pass already forbidden from concluding may blur positions
 			// together. `exhaustive` below is computed from the same facts and
 			// must stay in agreement with this.

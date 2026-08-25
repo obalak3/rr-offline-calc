@@ -1330,3 +1330,42 @@ exposed the cost: on a fight that genuinely certifies, the probe returns
 trades a provable answer for an unprovable one to save 200 ms, and it does it
 silently. The idea is sound for the case it was built for; it needs to certify
 the line it borrows before it can be the default.
+
+## Ordering by the weighted evaluator: measured, and parked (2026-08-24)
+
+James's proposal, and the natural synthesis: the weighted search has judgement
+and no search, the exact search has search and crude judgement, and ordering is
+the one place they combine without either's weakness mattering -- a wrong order
+costs time and can never change which lines exist.
+
+Built it (`valueOrder` on a pass, `RRSolver.positionValue` exported) and measured
+it on mirrors, where the team is not a variable. As a REPLACEMENT for damage
+ordering:
+
+    fight            damage ordering       evaluator ordering
+      BROCK          undecided, 200k       undecided, 200k  (43% slower)
+      LT. SURGE      win 23T,  238 nodes   win 14T,  120 nodes   5.6x faster
+      MISTY          win 18T,  358         win 21T,  360        neutral
+      FALKNER        win 11T,   56         win 24T,  115        2x worse
+      BRENDAN        win 11T,   50         win 11T,   50        identical
+      MT. MOON       win 15T,   82         win 15T,   76        marginal
+
+**It did not crack Brock, which was the entire motivation.** Large win on Surge,
+real loss on Falkner, neutral elsewhere -- the same shape as the pairing table,
+where no ordering dominates. The per-node cost came out at about 1.4x rather
+than the 2x predicted, so the estimate was pessimistic.
+
+As an ADDED pass rather than a replacement, which is the safer design: **inert.**
+Identical node counts on five of six fights, because the passes ahead of it
+already find the line. Only Misty moved, slightly better (40,362 against 50,360)
+with a slightly longer line.
+
+**Parked, reachable only behind `valueOrder: true`.** The honest reason is that
+the beam fix got there first: Brock went from undecided-at-4,000,000 to solved in
+23,796 nodes an hour earlier, and with that in place the evaluator pass has
+nothing left to contribute. The idea remains sound and the hook is in the code
+if a future fight wants it.
+
+**Worth keeping either way:** the search now has a second ordering available that
+is cheap to try on any fight that resists, and `RRSolver.positionValue` is
+exported, which is the piece that was missing.
