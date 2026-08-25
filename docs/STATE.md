@@ -4,6 +4,16 @@ Written as a handoff. `TUNING.md` holds the measurements and the traps;
 `RR-AI.md` holds what is known about the game's AI. This file holds the current
 architecture, what is actually fixed, and what is still open.
 
+> **Read `PLAN-RESTARTS.md` first for what to DO next**, and
+> `REVIEW-2026-08-24.md` for the evidence behind it. A measured review late on
+> 2026-08-24 corrected five things in this file; each is marked inline where it
+> occurs, and the "WHAT TO FIX NEXT" worklist below is **superseded**. In short:
+> the cheapWitness probe is on and certifying but worth zero outside mirrors;
+> the Surge-rematch "second Brock" is solved; proof-number search is retracted;
+> three of the five mirror losses were a reporting artifact; and the horizon was
+> ruled out by a test that cannot detect it. The architecture, the correctness
+> history and the settled arguments here all still stand.
+
 ## The goal
 
 Radical Red, singles, Nuzlocke rules: **win without losing a single Pokémon**.
@@ -249,25 +259,40 @@ same tree the same way. Beams are now a fraction of the branching factor:
 **The general lesson, worth more than the fix:** a cap expressed as an absolute
 number silently stops being a cap when the thing it caps is smaller than it.
 
-### An open question this raises, deliberately NOT yet decided
+### This was an open question. It is CLOSED, and then it turned out not to matter.
 
 If the weighted search produces a line that loses nobody, that line **is** a
 witness -- verified by replay -- and there is no reason to make the exact search
-rediscover it. `planRoute` currently asks the exact search first and only falls
-back to the weighted one when it gives up, and it never checks whether that
-fallback line happens to be clean. On Brock it computes a perfectly good clean
-line, labels it "the search ran out of time, here is a guess", and throws the
-important property away.
+rediscover it. On Brock it computed a perfectly good clean line and labelled it
+"the search ran out of time, here is a guess".
 
-A `cheapWitness` probe that runs the weighted search first and keeps its line
-when it is clean is committed but **OFF by default** (`probe: true` to enable).
-Measuring it settled the question, and against making it the default: on a fight
-that genuinely certifies, the probe returns `line-found` with **no certificate**
-where the real search returns `certified`. It trades a provable answer for an
-unprovable one to save 200 ms, and does it silently.
+**Done, in commit 180019d. The `cheapWitness` probe is ON by default**
+(`probe: false` to disable), it runs LAST rather than first, and it certifies.
+The objection recorded here -- that it returns `line-found` where the real
+search returns `certified` -- dissolved on inspection: `certify()` reasons about
+the STATE, not about which line was found, so a borrowed line certifies exactly
+as well as a discovered one. Running it last also stops it short-circuiting
+fights the exact search solves better (on Brock's mirror the probe finds 16
+turns where the exact search finds 13, and a shorter line eats fewer crits).
 
-The idea is still right for the case it was built for. It needs to certify the
-line it borrows before it can be the default, and that is the open work.
+**And then measurement took the shine off it.** `bench_early.js 15` with the
+probe on and off:
+
+    won at all           103/135 (76%)    103/135 (76%)
+    won losing NOTHING    99/135 (73%)     99/135 (73%)
+    hardest fights                    ...identical, fight for fight
+
+**Identical.** The recorded worth of this probe -- "of 31 mirror fights the
+exact search failed, 26 were won by the weighted search" -- is a MIRROR result
+and does not survive contact with real fights. It costs nothing, so it stays on.
+It is not a lever.
+
+**Take the general lesson, because it applies to every mechanism chosen from
+here on.** A mirror is systematically easier in a way that matters for choosing
+mechanisms: both sides field the same team, so a clean line usually exists and
+is often shallow enough for a greedy rollout to trip over. Real fights fail for
+the opposite reason -- no easy clean line exists at all. **Never adopt a
+mechanism on mirror evidence alone.** See `REVIEW-2026-08-24.md`.
 
 ## The switch-churn problem: partly fixed
 
@@ -362,13 +387,22 @@ have none of these abilities, so the obvious test was inert.
        actually LOST           5/139
 
    So with the team removed as a variable the planner beats a one-ply scorer
-   almost everywhere. The five losses are the signal; one is diagnosed above
-   (min-loss) and the other four are unexamined.
+   almost everywhere.
 
-   **Watch for the Brock pattern, which has already recurred.** The Lt. Surge
-   REMATCH mirror comes back undecided at 250,000 nodes while the weighted
-   search wins losing NOBODY. That is a second fight where a clean line exists
-   and the exact search cannot find it, so it is not a Brock-specific oddity.
+   **The five losses are really TWO.** Three of them were the reporting bug
+   fixed in `bench_mirror.js`: a 40-turn cap on the fallback, with anything that
+   had not won by then printed as LOSES THE FIGHT. TREASURE BEACH is a CLEAN WIN
+   in 66 turns, ROUTE 13 / ALMA wins losing 1 in 99, VICTORY ROAD / COLBY wins
+   losing 2 in 135. What is left is NELLE (the genuine min-loss case, diagnosed
+   above) and ELITE FOUR LANCE (a real wipe, and TUNING.md explains why: he
+   two-shots anything however overlevelled). So this is thin evidence for
+   min-loss, not the strong signal it was read as.
+
+   ~~Watch for the Brock pattern, which has already recurred.~~ **Withdrawn.**
+   The Lt. Surge REMATCH mirror was recorded here as undecided at 250,000 nodes.
+   The fractional-beam fix solved it -- re-verified: **FOUND, 24 turns, 15,533
+   nodes**, which is the number TUNING.md's own beam-fix table already reports.
+   There is no second Brock.
 2. **The whole game is unmeasured, and that is now the headline.** Every number
    in `TUNING.md` comes from nine battles out of the thirty-six fixed-level
    singles fights in the dataset, all of them from the first tenth of the run.
@@ -385,9 +419,15 @@ have none of these abilities, so the obvious test was inert.
    **56 million nodes across seven processes** (26 minutes, 2026-08-24). Five of
    the seven shares finished their openings and found nothing; two ran out. The
    answer is not near the surface, so another doubling of cores is not obviously
-   what finds it -- this is the trigger the plan set for proof-number search.
+   what finds it. ~~This is the trigger the plan set for proof-number search.~~
+   **Proof-number search is RETRACTED as the answer here**, and TUNING.md
+   already contains the argument against it: `cleanWin` asks the AI for a single
+   reply, so this is not a game tree at all, it is single-agent pathfinding
+   through a graph where only our choices multiply. PNS exists to manage
+   proof/disproof numbers over AND-OR nodes, and the OR nodes do not exist.
+   The response to this result is the restart driver in `PLAN-RESTARTS.md`.
    `tools/hunt_parallel.js` checkpoints which openings are settled, so a resumed
-   run only searches what is left.
+   run only searches what is left -- re-run it under the new driver.
 5. **What is the real ceiling?** `ceiling.js` now calls the shipped engine
    instead of its own stale copy, so its recorded 67/0/33 split is void and it
    needs re-running. Expect more fights to come back decided.
@@ -486,6 +526,31 @@ forms keep the base name and put the suffix in `key`; and an RNG that was
 deterministic but never uniform, giving three of six natures 0.1% each.
 
 ## WHAT TO FIX NEXT, in order, with the evidence for each
+
+> **SUPERSEDED, 2026-08-24 late. Work from `docs/PLAN-RESTARTS.md` instead**,
+> with `docs/REVIEW-2026-08-24.md` as the evidence. The list below is kept for
+> its reasoning, but its ordering was built on two things that did not survive
+> measurement, and one thing nobody had noticed:
+>
+> - **Item 1's evidence is a third of what it looks like.** Three of the "five
+>   outright losses" were a 40-turn reporting artifact (now fixed). Min-loss
+>   rests on NELLE alone. Still worth building; not the top item.
+> - **The headline benchmark cannot see improvements any more.**
+>   `bench_early` sits at 73% against a MEASURED ceiling of 74%, and wins 20/20
+>   of every fight anything here has shown to be winnable. The remainder is
+>   undecided by the oracle too -- and the oracle is the same search -- so a
+>   better search moves both and prints an unchanged 73%. That is the structural
+>   half of the explanation for "three separate fixes each landed on exactly
+>   81/135". Use the mirror sweep and `bench_game` from here on.
+> - **The real lever is budget ALLOCATION, and it has a name.** Every failure
+>   this project has ever recorded is "undecided", never "impossible", and the
+>   runtimes are heavy-tailed in the textbook sense: Brock's 6v6 mirror is 74
+>   nodes down one opening and over 250,000 down another. Everything that has
+>   ever paid here -- ordering, the pairing table, the fractional beam, the
+>   portfolio, the parallel root split, hpBuckets -- is a restart strategy, and
+>   every judgement-side change measured zero. A Luby-scheduled restart loop
+>   over the root openings measured ~10x median across 40 real fights, best
+>   1,193x, with rescues at both ends of the game.
 
 Written as a worklist rather than a description. Everything here is measured;
 nothing is speculative.
@@ -695,7 +760,36 @@ Two things follow, and the second is the one that surprised me:
 1. `cleanWin` will extend the horizon UPWARD, to `maxTurnsCeiling`, but only
    when a full-width pass finished everything inside the horizon and stopped
    because lines ran past it. The app asks for 40. It is inert on Surge and
-   Misty, correctly.
+   Misty, ~~correctly~~ **-- and it is inert everywhere else too, including
+   where it was needed. See the correction below.**
 2. **Starting shallow and climbing is eight times WORSE**, not better. See
    `TUNING.md`. Do not re-propose iterative deepening here without re-reading
    that measurement first.
+
+### CORRECTION (2026-08-24 late): the test above cannot detect what it rules out
+
+"Both are budget-bound" was concluded from the search running out of budget
+rather than hitting `blockedByHorizon`. But `blockedByHorizon` is only set when
+a full-width pass **finishes its tree**. A search whose horizon is too short
+never finishes: it thrashes the whole budget inside a space that contains no
+solution, and is then classified budget-bound. **So the test reports "budget"
+for a horizon problem, and the diagnosis cannot distinguish the two cases.**
+
+Measured counterexample, TREASURE BEA. / SWIMMER mirror:
+
+    maxTurns 24    undecided, 250,001 nodes, 12s, blockedByHorizon = FALSE
+    maxTurns 40    FOUND, a 38-turn line, in 5,990 nodes, under a second
+
+A shorter horizon cost **42x more nodes** and still found nothing. And the
+upward extension could not save it: with `maxTurnsCeiling` at 40 and at 60 the
+fight still returns undecided at 250,001, because the extension is gated on
+`!limits.exhausted`. **It can never fire on any fight large enough to need it**
+-- the same shape as the beam of 8 that never narrowed anything.
+
+Keep this in proportion: the conclusion for Misty and Surge still holds. Both
+are unmoved at horizons 40 and 60 (400,000 nodes, two generated teams each),
+and only one of 60 clean lines the weighted search finds across the mirrors runs
+past 24 turns. This is worth **one rung in the restart schedule**, not a
+crusade -- but the horizon must stop being ruled out by a test that cannot see
+it. Note also that an opening proved empty at 24 turns is **not** proved empty
+at 40, so `decided` has to be tracked per (opening, horizon).
