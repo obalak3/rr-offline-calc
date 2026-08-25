@@ -1369,3 +1369,27 @@ if a future fight wants it.
 **Worth keeping either way:** the search now has a second ordering available that
 is cheap to try on any fight that resists, and `RRSolver.positionValue` is
 exported, which is the piece that was missing.
+
+## The full mirror sweep: 139 fights, every non-doubles battle (2026-08-24)
+
+`tools/bench_mirror.js "" 250000 --all`, our team IS their team plus one level.
+Run with the OLD absolute beam, so it predates the fix that solved Brock:
+
+    clean wins    108/139  (78%)
+    no clean line     3/139
+    undecided        28/139
+
+    won the fight at all   134/139
+    actually LOST            5/139
+
+**The two lines answer different questions and only the second is a verdict on
+the planner.** A clean win is the Nuzlocke objective and some fights fail it on
+merit -- Blaine and Clair come back "wins, losing 2", which is the fight won and
+the objective missed. Losing outright, with the same team and a level in hand
+against a one-ply scorer with no lookahead, is the planner and nothing else.
+
+Five outright losses in 139 is the number to attack, and 28 undecided is the
+number most likely to move: every one of them was measured with the beam that
+did not narrow, and Brock -- which was in that category -- went from undecided at
+four million nodes to a clean 13-turn win in 23,796 once the beam became a
+fraction of the branching factor.
