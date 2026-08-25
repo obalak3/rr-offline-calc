@@ -35,11 +35,17 @@
   a table -- moves to play, the AI's predicted reply, your HP after -- with a
   blank column. It needs James, not code. This is still the highest-value undone
   thing in the project: every number here is the engine agreeing with itself.
-- **Real-team Lt. Surge: UNDECIDED at 28,000,007 nodes** across 7 processes,
-  589s. Re-running at 8M/process to match the historical 56M run, because the
-  first attempt used 4M/process and so its "0 openings settled" cannot be
-  compared with the old run's "5 of 7 settled". Note the checkpoint MERGES from
-  the saved set rather than overwriting, so nothing was lost.
+- **Real-team Lt. Surge: UNDECIDED at 84,000,014 cumulative nodes** (9e0ed2e),
+  the last run being 7 x 8,000,000 to match the historical 56M attempt. No
+  witness, no proof. It settled 0 openings against the old record's 5 of 7, which
+  looked like restarts breaking the engine's ability to prove things -- measured,
+  and it is not: five of the seven shares hold a SINGLE opening, the driver skips
+  those, and head to head on one they are identical node for node. The likely
+  cause is that the engine got more accurate in between and nearly every fix made
+  the opponent stronger. Left as a claim to check against an older engine.
+- **ALL PHASES NOW DONE OR PARKED.** What remains is Phase 2 (novelty), still
+  gated, and Phase 4, which needs James. See below for what would justify
+  starting Phase 2.
 
 The one-paragraph summary of the analysis: every failure of every engine in
 this project's history is "undecided", never "impossible", and the search's
@@ -163,6 +169,21 @@ Definition of done / measurement (narrowest first, per James's test cadence):
    checkpoints (5/7 openings already settled). Re-run under the new driver.
 
 ## Phase 2 (only if Phase 1 saturates): novelty pruning
+
+**Has Phase 1 saturated? Not on the benchmarks -- restarts took 12 of the 23
+undecided mirrors and put the Indigo League on the board for the first time.
+But it HAS saturated on the one fight that matters to the actual run:** the real
+team against Lt. Surge is undecided at 84 million nodes with restarts, ordering,
+beams and seven cores, and no configuration tried has produced either a line or
+a verdict. That fight is the honest trigger for this phase.
+
+Before building anything, note what the diagnosis says the target is: the
+transposition table does nothing here because HP drifts every turn and PP is in
+the position key, so almost no position ever repeats. Novelty attacks exactly
+that. Measure it on real-team Surge and on Misty, not on the mirrors -- mirrors
+are the easy side of a mechanism question and have already fooled this project
+once, when the cheapWitness probe scored 26 of 31 there and exactly zero on real
+fights.
 
 Width-based search (Lipovetzky & Geffner IW/BFWS) is the principled version of
 hpBuckets (which measured 19%): prune states containing no novel small feature
