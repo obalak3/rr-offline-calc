@@ -1443,3 +1443,63 @@ Radical Red" are different claims and only the first has evidence.
 The single highest-value experiment available is to play one line in the real
 game and compare it turn by turn. If the AI deviates on turn four, that is worth
 more than any benchmark in this file.
+
+## The mirror sweep, re-run with the fractional beam (2026-08-24, final)
+
+All 139 non-doubles fights, our team IS their team plus one level:
+
+                        old beam    fractional beam
+    clean wins           108/139        113/139   (78% -> 81%)
+    no clean line          3/139          3/139
+    undecided             28/139         23/139
+    won the fight at all 134/139        134/139
+    actually LOST          5/139          5/139
+
+Fight by fight: **6 rescued, 1 regressed.**
+
+    GYM LEADER BROCK          undecided -> CLEAN WIN, 13 turns (26,296 nodes)
+    GYM LEADER LT. SURGE      undecided -> CLEAN WIN, 24 turns (15,533)
+    ROUTE 25 / LEADER BUGSY   undecided -> CLEAN WIN, 11 turns (13,981)
+    CINNABAR LAB / LEADER JA  undecided -> CLEAN WIN, 22 turns (12,856)
+    ROUTE 23 BRENDAN          undecided -> CLEAN WIN, 24 turns (51,843)
+    ROUTE 8 / ACE TRAINER CO  undecided -> CLEAN WIN, 24 turns (12,718)
+
+    GYM LEADER BROCK (the other one)  CLEAN WIN 19T -> undecided
+
+The regression is the honest cost of a beam: narrowing to 40% of the actions can
+miss a line a wider search found, and the exhaustive pass behind it did not
+recover this one within budget. Four rescues per regression is a good trade and
+not a free one.
+
+**The five outright losses did not move**, which is expected -- they are cases
+where even the greedy weighted search cannot win, so no amount of search
+ordering touches them.
+
+## Why one of the five losses happens, and what it says (2026-08-24)
+
+VIRID. FOREST / ACE TRAINER NELLE, a 2v2 mirror, is small enough to understand
+completely. Both sides: Charcadet (Night Shade, Will-O-Wisp) and Gulpin (Belch,
+Sludge). Almost no offence anywhere.
+
+The exact search reports **no clean line exists** and it is right -- it exhausted
+the tree in 1,051 nodes. The fallback then plays this:
+
+    T1-3  Charcadet trades Night Shade, kills theirs, survives at 40 HP
+    T4    SWITCHES to Gulpin, conceding a free Belch -- arrives 164/207
+    T5-8  loses the Gulpin mirror by almost exactly that margin
+    T9    dead, their last Pokemon standing at 21 HP
+
+Play it without the switch -- let Charcadet stay in, land one more Night Shade,
+and die -- and Gulpin arrives **fresh at 207**:
+
+    WON on turn 10, losing 1
+
+**So the fight is winnable and the planner loses it 0-2.** The failure is not
+judgement about winning. It is that once a clean win is proven impossible,
+nothing in the system searches for the CHEAPEST loss: the fallback is a weighted
+search still trying to preserve everything, and preserving everything is exactly
+what is unavailable.
+
+This is the min-loss feature, parked since early on, and this is the first
+measured case showing what its absence costs. Worth checking whether the other
+four losses have the same shape before treating them as search failures.
