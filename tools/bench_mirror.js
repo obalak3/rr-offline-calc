@@ -56,7 +56,7 @@ console.log('Mirror matches: our team IS their team, +' + offset +
 	' level.  budget ' + budget.toLocaleString() + ' nodes\n');
 console.log('  fight                     size  verdict                 nodes      s');
 
-let found = 0, impossible = 0, undecided = 0, wonAnyway = 0, lost = 0;
+let found = 0, impossible = 0, undecided = 0, wonAnyway = 0, lost = 0, stalled = 0;
 for (const battle of battles) {
 	// The mirror. foeSets already produces the shape createState wants, so both
 	// sides are built from the identical description.
@@ -89,10 +89,29 @@ for (const battle of battles) {
 	if (!result.found) {
 		B.clearCache();
 		try {
+			// 160 turns, not 40. At 40 this tool reported three fights as
+			// "LOSES THE FIGHT" that it simply had not finished watching, and
+			// one of them -- TREASURE BEA. / SWIMMER AMARA -- is a CLEAN WIN in
+			// 66 turns, i.e. the best possible outcome printed as the worst.
+			// ROUTE 13 / ALMA needs 99 turns and VICTORY ROAD / COLBY needs 135.
+			// Measured: at a fixed cap the budget makes no difference to any of
+			// them, so the cap alone was the artifact.
 			const route = S.planRoute(B.createState(ours, theirs, {}),
-				{lookahead: 2, budget: 30000, maxTurns: 40, risks: {roll: 'median'}});
-			plain = route.won ? 'wins, losing ' + route.losses : 'LOSES THE FIGHT';
-			if (route.won) wonAnyway++; else lost++;
+				{lookahead: 2, budget: 60000, maxTurns: 160, risks: {roll: 'median'}});
+			// A fight that ended with Pokemon still standing did not end. Only a
+			// party that is entirely down has actually LOST, and that is the one
+			// line here that is a verdict on the planner -- so it must not be
+			// inflated by fights that merely ran long.
+			//
+			// `route.stalled` cannot make this distinction and must not be used:
+			// rr-solver sets `stalled || (!wonIt && steps.length < maxTurns)`, and
+			// a genuine wipe also ends early, so a wipe reads as stalled too.
+			// Losses against party size is the test that separates them.
+			const wiped = route.losses >= ours.length;
+			plain = route.won ? 'wins, losing ' + route.losses
+				: (wiped ? 'LOSES THE FIGHT'
+					: 'stalled at ' + route.turns + 'T, no verdict');
+			if (route.won) wonAnyway++; else if (wiped) lost++; else stalled++;
 		} catch (e) { plain = 'error'; }
 	} else { wonAnyway++; }
 
@@ -116,6 +135,7 @@ console.log('  no line      ' + impossible + '/' + total);
 console.log('  undecided    ' + undecided + '/' + total);
 console.log('\n  won the fight at all      ' + wonAnyway + '/' + total);
 console.log('  actually LOST            ' + lost + '/' + total);
+console.log('  stalled, no verdict      ' + stalled + '/' + total);
 console.log('\nThe two lines mean different things. A clean win is the Nuzlocke');
 console.log('objective and some fights fail it on merit. Losing outright, with the');
 console.log('same team and a level in hand against a one-ply scorer, is the planner.');
