@@ -137,6 +137,45 @@ probability is not affordable live at all. That is independent support for the
 screen reader's one-turn-deep re-planning, where the budget is ample and the
 floor is meaningful.
 
+## THE MISSING PIECE: the odds search has no leaf evaluation (found 2026-08-25)
+
+Measured on the real Lt. Surge fight, and it explains every uninformative result
+this project has had from `winChance`:
+
+    whole fight, 301s     0.0% proved, 100% unexamined, 196,608 nodes (653/sec)
+    horizon 2,3,4         0.0% proved, 100% unexamined
+    horizon 6,8,12        0.0% proved, 100% unexamined
+
+**Why shallow cannot work as written.** `value()` returns won() only when
+`allDown(current.foe)` -- every one of their Pokemon down -- and returns
+unknown() at `turnsLeft <= 0`. You cannot knock out five Pokemon in four turns,
+so at a short horizon EVERY branch reaches the horizon and the answer is
+necessarily "nothing proved, everything unexamined". The shallow configuration
+is not slow, it is impossible.
+
+**Why deep cannot work either.** Odds mode branches on every damage bucket and
+every secondary instead of collapsing them, so it runs at ~653 nodes/sec against
+the clean search's ~20,000. The whole fight needs millions.
+
+**So the gap is not compute, it is a missing component.** This is a search with
+no evaluation function. A chess engine searches a few ply and then EVALUATES the
+leaf position; ours searches and then discards the leaf as unknown. That is why
+it can only answer when it sees all the way to the end of the fight.
+
+**The fix, and it connects work already done.** Run the odds search a few turns
+deep -- where it correctly prices a 30% Scald burn as 30% and the AI's ties as
+coin flips -- and evaluate the leaves instead of throwing them away.
+`RRMatchup.valueOf` is the obvious candidate: it was built as a MOVE RANKER and
+demoted when a null test showed a simpler rule ranked just as well, but ranking
+was arguably the wrong job for it. Both halves exist in this repo and have never
+been connected.
+
+Note what this also means for the CLEAN search: `cleanWin` steps in maxroll
+mode, where a secondary fires only if guaranteed or if it belongs to the
+OPPONENT (`rr-battle.js:1558`). Our Scald never burns, theirs can. James won this
+fight losing nobody and remembers a burn. A clean line running through a 30%
+burn is invisible to that search by construction, at any node count.
+
 ## The metric this all points at
 
 **The best plan is the one that wins while asking the fewest questions.**
