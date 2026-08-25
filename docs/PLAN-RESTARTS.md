@@ -4,39 +4,27 @@
 
 - **Phase 0a DONE** (4a1718e). bench_mirror no longer calls a timeout a loss.
 - **Phase 0b DONE** (9092939). STATE.md's five stale claims corrected inline.
-- **Phase 1 core DONE** (ed335ac). Luby restart driver in `cleanWin`, ADDED to
-  the portfolio rather than replacing it. Brock 6v6 mirror: undecided at
-  250,001 nodes / 93s -> FOUND 18T in 19,613 nodes / 11s. All 13 test files
-  green; worker bundle rebuilds and passes (dist/ is gitignored, so rebuilding
-  is a local step, not a commit).
-- **Phase 1 remaining**: horizon rungs (below), and the payoff sweeps.
-  A full mirror sweep with restarts was started
-  (`bench_mirror.js "" 250000 --all`) to compare against the recorded
-  113 clean / 3 no-line / 23 undecided. Mirror numbers use trainer data, not
-  the generator, so they ARE directly comparable to that record. bench_game is
-  NOT comparable to its recorded 42%: the generator changed since.
-- Next: Phase 1 horizon rungs, then Phase 3 (min-loss) or Phase 2 (novelty).
+- **Phase 1 DONE** (ed335ac, eaa7941, 94103cb). Luby restart driver in
+  `cleanWin`, ADDED to the portfolio rather than replacing it; absolute caps so
+  a huge budget cannot starve it; and a deeper horizon rung gated on having
+  actually seen lines run past the horizon.
 
-**A trap learned the hard way this session:** do not benchmark against numbers
-recorded in TUNING.md for anything that uses the GENERATED teams. The restricted
--mode filter moved the early fingerprint from `ec3d71803436a23f` to
-`02727428303d05a6`, so bench_hunt/bench_early numbers from before that are not
-a baseline. Compare against the same code with `restarts: false` instead. Doing
-this wrong cost a false "Lt. Surge regressed" alarm and an unnecessary rewrite.
+      all 139 mirrors, 250k nodes    before      after
+        clean wins                  113/139     125/139
+        undecided                    23/139      11/139
+        no clean line                 3/139       3/139
+        actually LOST                 5/139       2/139
 
-**Also:** write git commit messages via `git commit -F -` with a quoted
-heredoc. Backticks in a `-m` string get run by the shell and silently eat the
-text between them.
-
-The reviewed analysis behind this plan is `REVIEW-2026-08-24.md` (measured
-findings, raw numbers, sources). Read that first. This file is the execution
-plan: what to build, in what order, with the traps and the definition of done
-for each phase. James approved the direction; implementation had not started
-when this was written.
-
-**STATE.md is stale in four load-bearing places** (listed in Phase 0b) and must
-not be treated as authoritative until Phase 0b lands. Everything else in
-STATE.md/TUNING.md remains good.
+  Brock 6v6 mirror: undecided at 250,001 nodes / 93s -> FOUND 18T in 19,613 / 11s.
+  Treasure Beach, with the rung: undecided at 250,001 -> FOUND 38T in 168,563.
+  All 13 test files green; worker bundle rebuilt and passing.
+- **NEXT: Phase 3 (min-loss).** Phase 2 (novelty) is explicitly gated on Phase 1
+  saturating, and it has not -- restarts just took 12 of the 23 undecided
+  mirrors, so there is more to get from allocation before reaching for novelty.
+- **Still owed**: `bench_game.js` re-run ALONE (the instrument with the most
+  headroom, 57% undecided when last measured). NOT comparable to its recorded
+  42%: the generator changed since. Run it uncontended and treat it as a new
+  baseline. Also the real-team Lt. Surge question via `hunt_parallel.js`.
 
 The one-paragraph summary of the analysis: every failure of every engine in
 this project's history is "undecided", never "impossible", and the search's
