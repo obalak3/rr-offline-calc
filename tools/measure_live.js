@@ -69,6 +69,7 @@ for (const battle of battles) {
 		const advice = live.advise(believed, obs,
 			{lookahead: 2, budget: 20000,
 				chargeSwitchTempo: process.env.NO_TEMPO ? false : true,
+				matchupRank: !!process.env.MATCHUP,
 				searchRank: !!process.env.SEARCH,
 				searchTurns: parseInt(process.env.SEARCH_TURNS, 10) || 6,
 				searchBudget: parseInt(process.env.SEARCH_BUDGET, 10) || 20000,

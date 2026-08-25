@@ -235,6 +235,60 @@ function searchRank(state, opts, engine) {
 	});
 }
 
+/**
+ * Rank this turn's actions by the matchup-table value of where they lead.
+ *
+ * This is the third form (docs/PLAN-MATCHUP-VALUE.md). The race heuristic
+ * scores each option against a differently-chosen worst-case reply, so options
+ * are not compared on commensurable futures and its preferences came out
+ * circular. The live deep search is commensurable but proves nothing within a
+ * live budget on the fights that matter. This values the POSITION each action
+ * leads to, against one shared table, which is commensurable and cheap.
+ *
+ * The table is built once per battle rather than per turn: `dealFrac` and
+ * `takeFrac` are per-hit fractions of max HP and do not go stale as HP drains,
+ * and a full rebuild measured 33ms anyway if that ever stops being true.
+ */
+function matchupRank(state, opts, engine, session) {
+	const B = engine.B, MU = engine.MU, RRPlan = engine.sandbox.RRPlan;
+	if (!MU) return null;
+	if (session && !session.table) {
+		session.table = MU.build(state, {perPairBudget: opts.perPairBudget || 400});
+	}
+	const table = (session && session.table) ||
+		MU.build(state, {perPairBudget: opts.perPairBudget || 400});
+	const foeActions = RRPlan.plausibleFoeActions(state, opts);
+	if (!foeActions || !foeActions.length) return null;
+	const actions = B.legalActions(state, 'me');
+	const out = [];
+	for (const a of actions) {
+		// Worst case over their plausible replies, same convention the race
+		// heuristic used, so the comparison against it is like for like.
+		let worst = null;
+		for (const fa of foeActions) {
+			let next;
+			try { next = B.step(state, a, fa, {mode: 'expected'})[0].state; }
+			catch (e) { continue; }
+			if (!next) continue;
+			const v = MU.valueOf(next, table, opts);
+			if (worst === null || v.margin < worst.margin) worst = v;
+		}
+		if (!worst) continue;
+		out.push({
+			action: a,
+			label: labelAction(state, a, B),
+			margin: worst.margin,
+			afford: worst.afford,
+			walls: worst.walls,
+			verdict: 'margin ' + worst.margin.toFixed(2) +
+				(worst.walls ? ' (' + worst.walls + ' unanswerable)' : '')
+		});
+	}
+	if (!out.length) return null;
+	out.sort(function (x, y) { return y.margin - x.margin; });
+	return out;
+}
+
 function advise(state, obs, opts, engine, session) {
 	const B = engine.B, RRPlan = engine.sandbox.RRPlan;
 	const range = foeRange(obs, opts && opts.candidates);
@@ -244,6 +298,23 @@ function advise(state, obs, opts, engine, session) {
 	// cannot get you killed by an over-optimistic "this kills" call.
 	const pessimistic = sync(state, obs, range.hi, B);
 	if (!pessimistic) return null;
+
+	if (opts && opts.matchupRank) {
+		const ranked = matchupRank(pessimistic, opts, engine, session);
+		if (ranked && ranked.length) {
+			let best = ranked[0], repeats = 0;
+			if (session) {
+				const sig = signature(obs);
+				repeats = session.seen.get(sig) || 0;
+				session.seen.set(sig, repeats + 1);
+				if (repeats > 0) best = ranked[Math.min(repeats, ranked.length - 1)];
+			}
+			return {best: best, alternative: null, ambiguous: false, forced: repeats > 0,
+				repeats: repeats, range: range, exact: range.lo === range.hi,
+				plan: ranked, threats: null, assumption: 'matchup value',
+				state: pessimistic};
+		}
+	}
 
 	// Search mode replaces the ranking wholesale; everything below it -- the
 	// both-ends check, the cycle guard -- is unchanged, because those are about
@@ -313,4 +384,5 @@ function advise(state, obs, opts, engine, session) {
 	};
 }
 
-module.exports = {observe, foeRange, sync, advise, findBySpecies, signature, createSession};
+module.exports = {observe, foeRange, sync, advise, findBySpecies, signature,
+	createSession, matchupRank};

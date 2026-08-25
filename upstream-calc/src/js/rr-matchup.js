@@ -212,7 +212,151 @@ var RRMatchup = (function () {
 		return false;
 	}
 
-	return {build: build, versus: versus, anyCoverageGap: anyCoverageGap};
+	/**
+	 * How much of my team it costs to remove what is left of theirs.
+	 *
+	 * WHY NOT COVERAGE. The obvious value function is "is every surviving foe
+	 * beaten by something still standing", and it is useless on the fight this
+	 * was built for. Measured on the real Lt. Surge team: of thirty pairings
+	 * only nine are clean 1v1 wins, and NOTHING beats Bellibolt or Pawmot. A
+	 * coverage test calls that position lost on turn one and returns the same
+	 * verdict for every legal move, which is no gradient at all -- the exact
+	 * failure the live deep search already had. James then played that fight and
+	 * won it without losing anybody, so "no pairing wins" plainly does not mean
+	 * "the fight is lost": several Pokemon take turns at a foe, and chip adds up.
+	 *
+	 * So this prices the fight as an EXCHANGE instead of a covering. For each
+	 * surviving foe, find the cheapest way to remove it measured in my own HP,
+	 * and compare the total against the HP I actually have. That is defined for
+	 * every cell, including the ones no search could win, which is what gives it
+	 * a gradient where coverage has none.
+	 *
+	 * The two rates it runs on, `dealFrac` and `takeFrac`, are per-hit fractions
+	 * of the TARGET'S MAX HP, so they do not go stale as HP drains. Only the
+	 * current HP fractions change, and those are read from the live state. That
+	 * is why the table can be built once per battle rather than per turn.
+	 *
+	 * A switch needs no explicit tax here. This is evaluated on the position
+	 * AFTER the exchange, so the free hit a switch concedes is already spent
+	 * from the incoming Pokemon's HP.
+	 *
+	 * KNOWN AND DELIBERATE in this first version, so none of it is mistaken for
+	 * an oversight later:
+	 *   - Rates are MAX rolls on both sides, which reads as "everybody rolls
+	 *     high" rather than as a worst case for us specifically.
+	 *   - Foes are priced independently, so one Pokemon sweeping two of theirs
+	 *     is not modelled; its HP gets charged twice.
+	 *   - A denied turn is priced at zero rather than positive. This stops
+	 *     PUNISHING Fake Out, which the race heuristic did; it does not yet
+	 *     reward it.
+	 *   - Status and stall wins appear only where cleanWin found them inside a
+	 *     1v1, never through `dealFrac`, which is direct damage only.
+	 *
+	 * HOW MUCH OF THIS IS THE TABLE, MEASURED AGAINST A NULL. Ranking by this
+	 * wins 9/9 level-appropriate fights including Lt. Surge, which nothing else
+	 * had won. But replacing the whole table with `my health minus twice
+	 * theirs`, no pairings at all, ALSO wins 9/9 and also wins Surge, losing 5
+	 * where this loses 4. So the credit belongs almost entirely to charging for
+	 * their remaining health, and the table is worth about one Pokemon across
+	 * nine fights -- which at n=9 is not a result. The old heuristic's real
+	 * defect was that it undervalued attacking; anything that rewards progress
+	 * repairs it. Do not claim the pairing table earned this until it beats the
+	 * null by something a sample this size can see.
+	 */
+	function valueOf(state, table, options) {
+		var opts = options || {};
+		// What a Pokemon that cannot hurt a foe at all is worth against it.
+		// Not Infinity: an unanswerable foe should dominate the score without
+		// making every position containing one compare equal to every other.
+		var WALL = opts.wallCost === undefined ? 4 : opts.wallCost;
+
+		var myHP = 0, i, j;
+		for (i = 0; i < state.me.team.length; i++) {
+			var mon = state.me.team[i];
+			if (mon.fainted) continue;
+			myHP += mon.curHP / Math.max(1, mon.maxHP);
+		}
+
+		// Their remaining health, counted plainly. This is the PROGRESS term and
+		// the value function does not work without it.
+		//
+		// `needed` alone is a cost-to-go, and a cost-to-go is flat along the
+		// path that wins: Breloom beats Pincurchin without dropping a point, so
+		// Pincurchin costs zero whether it is untouched or nearly dead, and
+		// removing it earns nothing. Measured, the whole ranking then collapsed
+		// into "do not spend HP" and Detect and Fake Out tied for first at
+		// exactly the value of doing nothing, with every attack scoring below
+		// them. Charging for the health they still have makes damage always
+		// worth something and stalling never worth anything.
+		var theirHP = 0;
+		for (j = 0; j < state.foe.team.length; j++) {
+			if (state.foe.team[j].fainted) continue;
+			theirHP += state.foe.team[j].curHP / Math.max(1, state.foe.team[j].maxHP);
+		}
+		// 2, and the value is MEASURED rather than reasoned. Swept on the real
+		// Lt. Surge fight: at 1.5 and below the fight is lost, at 2 it is won,
+		// and 2 through 50 give byte-identical play (won 9/9, 4 lost, 24 turns).
+		// A plateau that wide is worth reading honestly -- at the top of it the
+		// cost term is negligible, so the ranking is very nearly "reduce their
+		// health", and see the note on valueOf about how little the table itself
+		// turned out to be worth.
+		var progress = opts.progressWeight === undefined ? 2 : opts.progressWeight;
+
+		var needed = 0, walls = 0;
+		for (j = 0; j < state.foe.team.length; j++) {
+			var foe = state.foe.team[j];
+			if (foe.fainted) continue;
+			var left = foe.curHP / Math.max(1, foe.maxHP);
+			var cheapest = null;
+			for (i = 0; i < state.me.team.length; i++) {
+				var me = state.me.team[i];
+				if (me.fainted) continue;
+				var cell = versus(table, i, j);
+				if (!cell || !cell.dealFrac) continue;      // cannot scratch it
+				// Hits to finish what is left of them, and what each hit costs
+				// me. Charged as whole hits because a turn is not divisible.
+				var hits = Math.ceil(left / cell.dealFrac);
+				var cost = hits * cell.takeFrac;
+				// A clean 1v1 win is priced by what the SEARCH measured rather
+				// than by the rate model, because it is a real line: it accounts
+				// for the healing, the immunities and the order of moves that a
+				// two-number exchange rate cannot see.
+				//
+				// Scaled by how much of the foe is LEFT, which is not a detail.
+				// Priced flat, a won pairing costs the same whether the foe is
+				// untouched or on its last point of HP, so chipping it earns no
+				// credit while the hit taken in return still costs. Every attack
+				// then looks like a losing trade and the top of the ranking
+				// fills with Detect and Fake Out: doing nothing preserved the
+				// score exactly. Measured, before this line existed.
+				if (cell.beats) cost = Math.min(cost, (1 - cell.endHPFrac) * left);
+				if (cheapest === null || cost < cheapest) cheapest = cost;
+			}
+			if (cheapest === null) { walls++; needed += WALL; }
+			else needed += cheapest;
+		}
+
+		return {
+			// Positive means the team I have left can still pay for the team
+			// they have left. This is the number to rank by.
+			margin: myHP - needed - progress * theirHP,
+			// The same figure without the progress term: what the position is
+			// worth rather than how far along it is. Kept separate so a caller
+			// can show "you can afford this fight" without the steering term
+			// muddying it.
+			afford: myHP - needed,
+			myHP: myHP,
+			theirHP: theirHP,
+			needed: needed,
+			// Foes nothing left of mine can damage at all. Reported separately
+			// because it is a different kind of problem from being expensive,
+			// and it is the one worth telling a player about.
+			walls: walls
+		};
+	}
+
+	return {build: build, versus: versus, anyCoverageGap: anyCoverageGap,
+		valueOf: valueOf};
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = RRMatchup;
