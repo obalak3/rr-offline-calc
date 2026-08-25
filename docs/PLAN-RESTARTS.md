@@ -18,13 +18,21 @@
   Brock 6v6 mirror: undecided at 250,001 nodes / 93s -> FOUND 18T in 19,613 / 11s.
   Treasure Beach, with the rung: undecided at 250,001 -> FOUND 38T in 168,563.
   All 13 test files green; worker bundle rebuilt and passing.
-- **NEXT: Phase 3 (min-loss).** Phase 2 (novelty) is explicitly gated on Phase 1
-  saturating, and it has not -- restarts just took 12 of the 23 undecided
-  mirrors, so there is more to get from allocation before reaching for novelty.
-- **Still owed**: `bench_game.js` re-run ALONE (the instrument with the most
-  headroom, 57% undecided when last measured). NOT comparable to its recorded
-  42%: the generator changed since. Run it uncontended and treat it as a new
-  baseline. Also the real-team Lt. Surge question via `hunt_parallel.js`.
+- **Phase 3 DONE** (bdeb21c, 979932b). `cheapestWin` climbs the loss budget
+  0,1,2 and stops at the first answer, and `fallbackRoute` now calls it whenever
+  a clean line is PROVED impossible. VIRID. FOREST / NELLE, the one genuine
+  min-loss case in the dataset: the planner went from losing 0-2 to WINNING it
+  losing 1. Tree blowup is mild (1,051 / 1,959 / 5,531 nodes at k=0/1/2), and
+  k=0 reproduces the clean search node for node, which the tests assert.
+- **Phase 2 (novelty) still NOT started, deliberately.** It was always gated on
+  restarts saturating and they have not: they took 12 of the 23 undecided
+  mirrors. Get the rest out of allocation first.
+- **NEXT**: the real-team Lt. Surge question via `hunt_parallel.js`, which
+  checkpoints and can resume (5 of 7 openings were already settled). That is the
+  fight the actual save is sitting on, so it is the one that matters to the run
+  rather than to the benchmark.
+- **Running**: `bench_game.js 2` alone. Treat its output as a NEW baseline, not
+  a comparison against the recorded 42% -- the generator changed since.
 
 The one-paragraph summary of the analysis: every failure of every engine in
 this project's history is "undecided", never "impossible", and the search's
