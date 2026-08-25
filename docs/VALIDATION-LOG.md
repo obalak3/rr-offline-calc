@@ -47,3 +47,78 @@ itself, and this log is the only place where it meets the actual game.
 ## Battles
 
     (one entry per battle, newest last)
+
+---
+
+## Old save, GYM LEADER LT. SURGE — the searched win-losing-2
+
+The first line for this fight that is a searched result rather than a guess.
+`cleanWin` with `lossBudget: 2`, 4,514,755 nodes, 194s. Clean (k=0) is undecided
+at 84M nodes and k=1 undecided at 4M, so the bracket is "costs at most 2".
+
+    you   Mienshao L34, Diggersby L34, Lanturn L34, Lilligant L34, Breloom L34, Victreebel L34
+    them  Pincurchin L32, Vikavolt L33, Bellibolt L33, Pawmot L33, Manectric-Mega L34
+
+      #   YOU          DO                    THEY            THEY DO           your HP   lost
+      ------------------------------------------------------------------------------------------
+       1  Mienshao     switch to Lanturn     Pincurchin      Discharge         139/139
+       2  Lanturn      switch to Victreebel  Pincurchin      Scald              90/108
+       3  Victreebel   Leaf Storm            Pincurchin      Hidden Power Ice   90/108
+       4  Victreebel   Sludge                Vikavolt        Bug Buzz           53/108
+       5  Victreebel   Sludge                Vikavolt        Bug Buzz          139/139   << LOST
+       6  Lanturn      Scald                 Vikavolt        Bug Buzz           76/139
+       7  Lanturn      Scald                 Vikavolt        Bug Buzz           76/139
+       8  Lanturn      Scald                 Bellibolt       Hidden Power Gras  66/139
+       9  Lanturn      Scald                 Bellibolt       Hidden Power Gras  22/139
+      10  Lanturn      Scald                 Bellibolt       Hidden Power Gras 102/102   << LOST
+      11  Lilligant    Mega Drain            Bellibolt       Parabolic Charge  102/102
+      12  Lilligant    Mega Drain            Manectric-Mega  Flame Burst        79/102
+      13  Lilligant    switch to Diggersby   Manectric-Mega  Flame Burst        80/112
+      14  Diggersby    Bulldoze              Manectric-Mega  Hidden Power Gras  54/112
+      15  Diggersby    switch to Mienshao    Manectric-Mega  Hidden Power Gras  65/98
+      16  Mienshao     switch to Lilligant   Manectric-Mega  Volt Switch        48/102
+      17  Lilligant    Baby-Doll Eyes        Pawmot          Drain Punch         9/102
+      18  Lilligant    switch to Breloom     Pawmot          Drain Punch        58/95
+      19  Breloom      switch to Mienshao    Pawmot          Ice Punch          67/98
+      20  Mienshao     Drain Punch           Pawmot          Thunder Punch      62/98
+      21  Mienshao     Drain Punch           Pawmot          Thunder Punch      33/98
+      22  Mienshao     switch to Breloom     Manectric-Mega  Charge Beam        54/95
+      23  Breloom      Mach Punch            Manectric-Mega  Flame Burst        54/95
+
+HP is the ACTIVE Pokemon after the turn, so a jump to a full bar is the
+replacement arriving -- which is what marks the losses. Victreebel dies turn 5,
+Lanturn turn 10. Turn 17 is the dangerous one: Lilligant at 9/102.
+
+### DEVIATION OBSERVED (James, from play): the wrong Pokemon comes in
+
+**After Victreebel killed Pincurchin the game sent BELLIBOLT. We predict
+VIKAVOLT.** Everything from turn 4 onward assumes Vikavolt, so the line is void
+from that point.
+
+This is a DIFFERENT AND MORE SERIOUS CLASS than the Mud Shot near-tie. Choosing
+a replacement after a faint is a separate decision from choosing a move, it
+happens after every faint (several times a fight), and it is not the kind of
+thing that should be a coin flip.
+
+**Root cause found, and it is not subtle.** `chooseReplacement` in
+`rr-battle.js` is OUR OWN heuristic, applied to BOTH sides:
+
+    score = (curHP - worst incoming hit) * 2 + our best hit
+
+with a comment reading "Room to survive matters more than damage: this is a
+Nuzlocke." That is sound reasoning for OUR side and simply wrong for the
+opponent, who is not playing a Nuzlocke and who has real switch-in logic in
+CFRU that has never been ported. So the opponent's replacement choice is
+invented, not modelled.
+
+**Why this is worth fixing before any move-scoring rule.** It is almost
+certainly deterministic (so repeatable and testable), it fires several times per
+battle, and getting it wrong invalidates an entire plan from that point --
+unlike a move near-tie, which usually costs a few HP. It also means our
+predictions were always going to break at the first faint, which is most of why
+the Surge sheets have been so fragile in play.
+
+**Next step when picked up:** port CFRU's switch-in selection (the party-menu /
+`GetMostSuitableMonToSwitchInto` logic in `ai_master.c` and friends), keep the
+Nuzlocke heuristic for OUR side only, and re-check against this exact position:
+Pincurchin down to Leaf Storm, does the model send Bellibolt?
