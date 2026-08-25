@@ -1722,3 +1722,22 @@ and no clock to declare a fight winnable, and the planner is then graded with
 "winnable in the time the app spends" -- but it was invisible in the output, so
 "winnable but missed 1" could not be interpreted. ceiling.js now prints both
 budgets whenever it reports a miss.
+
+## Real-team Surge: the first searched answer it has ever given (2026-08-25)
+
+The min-loss ladder, asked directly (`lossBudget` on `cleanWin`, 4M nodes / 8
+min cap per rung):
+
+    lossBudget 0   undecided at 84,000,014 cumulative nodes (recorded above)
+    lossBudget 1   undecided at 4,000,001 nodes
+    lossBudget 2   FOUND: a 23-turn win losing exactly 2, in 3,214,755 nodes
+
+So the fight that has resisted every clean-win attempt this project has thrown
+at it yields to the relaxed question in three million nodes. The bracket on the
+old save's Surge is now: costs at most 2 (proved by witness), with 0 and 1 not
+ruled out at the budgets tried.
+
+The line's shape is worth noting: it opens with a double pivot (Mienshao ->
+Lanturn -> Victreebel) to absorb Pincurchin, deliberately spends Victreebel and
+Lanturn, and cleans up with Mienshao and Breloom. It disagrees with the weighted
+guess from turn 1 -- consistent with everything else measured about that guess.
