@@ -43,9 +43,15 @@
   those, and head to head on one they are identical node for node. The likely
   cause is that the engine got more accurate in between and nearly every fix made
   the opponent stronger. Left as a claim to check against an older engine.
-- **ALL PHASES NOW DONE OR PARKED.** What remains is Phase 2 (novelty), still
-  gated, and Phase 4, which needs James. See below for what would justify
-  starting Phase 2.
+- **Phase 2 DONE, and the answer is no** (36cd410). Novelty pruning was built,
+  measured and PARKED. It cuts 99.8% of the tree -- real-team Surge exhausts in
+  3,272 nodes and one second against 1.9M and two minutes -- and finds 10 lines
+  where the plain search finds 11, sometimes far cheaper. But it cracks none of
+  the hard fights, which was the whole reason for it. Not in the default
+  portfolio; reachable via `passes: [{novelty: 1}]`.
+- **ALL FIVE PHASES ARE NOW DONE OR PARKED.** What remains is Phase 4, which
+  needs James and not code, and which is now the highest-value item in the
+  project by a wide margin.
 
 The one-paragraph summary of the analysis: every failure of every engine in
 this project's history is "undecided", never "impossible", and the search's
