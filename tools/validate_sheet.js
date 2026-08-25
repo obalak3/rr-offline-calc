@@ -138,6 +138,30 @@ for (const s of route.steps) {
 		String(hp).padEnd(16) + '__________');
 }
 console.log('');
+// The warning belongs where it is READ. It was in this file's header comment,
+// which is exactly the place a person about to play a fight will not look.
+const willLose = route.steps.some(s => s.lost > 0);
+if (willLose || route.exactness === 'undecided' || route.minLoss) {
+	console.log('!! SAVE FIRST. This is a PROBE, not a strategy.' +
+		(willLose ? ' This line LOSES Pokemon.' : '') +
+		(route.exactness === 'undecided'
+			? ' The search never finished, so it is a guess.' : ''));
+	console.log('   Do not play it on a Nuzlocke save you care about. It exists');
+	console.log('   to test the AI predictions, and a lost Pokemon is a real');
+	console.log('   cost for an experiment that does not need one.\n');
+}
+// Where the HP column jumps to a different maximum, something of yours fainted
+// and the number is the replacement's. Say so rather than let it read as a bug.
+if (willLose) {
+	const lost = route.steps.filter((s, i) =>
+		i > 0 && s.lost > route.steps[i - 1].lost).map(s => s.turn);
+	if (lost.length) {
+		console.log('NOTE: you lose a Pokemon on turn ' + lost.join(', turn ') +
+			'. From there the HP column is whoever came in next, which is why');
+		console.log('      the maximum changes.\n');
+	}
+}
+
 console.log('STOP at the first turn where they do something else, and write down:');
 console.log('  the turn number, what was predicted, what they actually did,');
 console.log('  and the HP of both Pokemon at that moment.');
