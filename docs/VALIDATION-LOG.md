@@ -40,7 +40,9 @@ itself, and this log is the only place where it meets the actual game.
 
 ## Run settings
 
-    (to fill in when the run starts: difficulty, mode toggles, starter)
+    Same rules as the previous run (Restricted / Minimal Grinding), same
+    difficulty, and the same starter. Confirmed from the save when the first
+    battle is read rather than from memory.
 
 ## Battles
 
