@@ -69,6 +69,43 @@ Verified fine, so nobody re-checks them: Guts, burn halving, Eviolite, resist
 berries, type-boost items, Choice items, Assault Vest, and mega forms (the
 trainer data already names the mega SPECIES, so the stones are decoration).
 
+## The search options, and which are load-bearing
+
+Added over 2026-08-24 and easy to miss, since several exist only so a
+measurement can turn a thing OFF and compare against the same code.
+
+    restarts: false        disable the Luby restart driver. This is how you get
+                           a real baseline: never compare against numbers in
+                           TUNING.md for anything using GENERATED teams, because
+                           the generator has changed under them.
+    restartUnit  (150)     floor on the Luby unit
+    restartUnitMax (4000)  CAP on it, and load-bearing. Scaling the unit to the
+                           budget put it at 833,000 for the app's 60,000,000
+                           and the first opening swallowed the search.
+    lossBudget   (0)       how many of ours may fall, counted from the START of
+                           the fight. 0 is the Nuzlocke objective and the old
+                           behaviour node for node.
+    maxLosses    (2)       how far cheapestWin climbs
+    minLoss: false         stop fallbackRoute reaching for the cheapest win when
+                           a clean one is PROVED impossible
+    minLossBudget (200000) / minLossTimeLimitMs (10000)
+
+And on a pass, for callers supplying their own `passes`:
+
+    driver: true           this pass is a restart schedule, not a walk
+    capNodes               an ABSOLUTE ceiling on the pass, as well as `share`.
+                           Without it a share of a huge budget starves whatever
+                           runs behind it.
+    needsHorizon: true     skip this pass unless lines were seen running past
+                           the horizon
+
+**The standing question for anything added here: what does it do at the budget
+the APP passes?** It asks for 60,000,000 nodes with no clock, and the benchmarks
+ask for 200,000 to 400,000. Three separate limits in this engine have quietly
+stopped limiting at the larger size -- the beam of 8 that never narrowed a 4v4,
+the horizon extension that cannot fire on a budget-bound fight, and the restart
+unit above. Measure at both.
+
 ## Three engines exist. Know which one produced an answer.
 
 | Engine | File | What it does | Trust |
