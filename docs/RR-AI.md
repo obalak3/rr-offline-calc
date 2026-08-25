@@ -128,3 +128,44 @@ wherever these matter.
    no mechanics in it. Web summaries claiming to describe RR's AI switch-function
    order appear to be blended from other games' documentation. Do not trust them;
    they are not a source.
+
+## FIRST REAL-GAME CHECK (2026-08-25) — one confirmed AI-model gap
+
+The first time any line from this project was played in Radical Red. James ran
+the Lt. Surge sheet from `tools/validate_sheet.js` on the real save.
+
+**Turns 1-2 matched.** Pincurchin used Discharge as predicted, and Leaf Storm
+one-shot it exactly as the engine says it should (our rolls: 134-158 against
+95 HP, a guaranteed OHKO). The sheet LOOKED wrong here because it printed
+"Pincurchin Hidden Power Ice" for turn 2 -- the AI's selected move, which it
+never got to use because it fainted first. That was a display bug in the sheet,
+now fixed with a `*` marker; the prediction itself was right.
+
+**Turn 3 is a real deviation.** Vikavolt, facing Victreebel at 85/108:
+
+    our AI scores      Bug Buzz 103   Volt Switch 100   Mud Shot 100
+    the game chose     Mud Shot
+
+**It is not a damage-model error, checked.** Both moves are NEUTRAL into
+Grass/Poison -- Ground is 0.5x on Grass and 2x on Poison, Bug is 2x on Grass and
+0.5x on Poison -- so Bug Buzz wins on STAB alone, 90 x 1.5 = 135 against Mud
+Shot's 55. That predicts a 2.45x damage ratio and the engine computes 2.46x
+(64 against 26). The damage layer agrees with itself and with the type chart.
+
+So the real AI preferred a move that does **a quarter of the damage** of the one
+we predicted. The most likely explanation is a scoring rule we have not ported
+that rewards Mud Shot's guaranteed Speed drop; `ai_advanced.c` (SEMI_SMART) is
+where stat-lowering secondaries are scored and none of those ~880 sites have
+been transcribed. Whatever it is, it must be worth at least +4 to Mud Shot or
+-4 to Bug Buzz.
+
+**Do not over-read one observation.** The gap is 3 points, and this file records
+that bonuses cluster between 3 and 17 with the dominant penalty being 10, so a
+3-point error is the smallest kind there is. It is also possible the real scores
+were tied and CFRU picked randomly (`AIRandom() % numOfBestMoves`). Repeating
+the same turn a few times from a save would separate those two: a tie re-rolls,
+a scoring gap does not.
+
+**The method worked.** One fight, three turns, and it produced a specific
+falsifiable defect in the layer every "proved" line in this project depends on.
+That is a better return than any benchmark run here.

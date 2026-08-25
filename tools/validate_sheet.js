@@ -130,11 +130,16 @@ console.log('  #   YOU               DO                     THEY SHOULD' +
 console.log('  ' + '-'.repeat(112));
 for (const s of route.steps) {
 	const hp = s.myHP + '/' + s.myMaxHP;
+	// The AI's CHOSEN move, which it does not always get to use: if it faints
+	// first the move never happens, and printing it plainly made a correct
+	// prediction look like a deviation in the first real playthrough. Say so.
+	const died = s.knockedOut;
 	console.log('  ' + String(s.turn).padStart(2) + '  ' +
 		String(s.myMon).slice(0, 16).padEnd(18) +
 		String(s.label).slice(0, 21).padEnd(23) +
-		(String(s.theirMon).slice(0, 12) + ' ' +
-			String(s.theirLabel).replace(/^they use /, '')).slice(0, 28).padEnd(29) +
+		((String(s.theirMon).slice(0, 12) + ' ' +
+			String(s.theirLabel).replace(/^they use /, '')).slice(0, 26) +
+			(died ? ' *' : '')).padEnd(29) +
 		String(hp).padEnd(16) + '__________');
 }
 console.log('');
@@ -160,6 +165,12 @@ if (willLose) {
 			'. From there the HP column is whoever came in next, which is why');
 		console.log('      the maximum changes.\n');
 	}
+}
+
+if (route.steps.some(s => s.knockedOut)) {
+	console.log('* they FAINT this turn. If you move first they never use that');
+	console.log('  move, so seeing nothing happen is the prediction COMING TRUE,');
+	console.log('  not a deviation. Your HP not moving on that row is the tell.\n');
 }
 
 console.log('STOP at the first turn where they do something else, and write down:');
