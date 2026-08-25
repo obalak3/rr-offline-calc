@@ -1539,3 +1539,43 @@ cheapWitness probe scored 26 of 31 here and exactly zero on real fights. What
 makes restarts different is that they were also measured on ~40 real fights
 before being built: median 9.5x fewer nodes, best 1,193x, two rescues against
 one regression. See `REVIEW-2026-08-24.md`.
+
+## The whole game, after restarts and min-loss (2026-08-24, late)
+
+`tools/bench_game.js 2`, run alone at 979932b.
+
+**Read this as a NEW BASELINE, not as a comparison.** Two things changed
+underneath the recorded 42%: the generator (restricted-mode filtering moved the
+early fingerprint, so it no longer produces those teams) and the budget here
+(200,000 nodes / 20s against the old 120,000 / 12s). The shape is worth
+something; the delta is not a controlled measurement.
+
+    won at all           42/72  (58%)        was 33/72 (46%)
+    won losing NOTHING   35/72  (49%)        was 30/72 (42%)
+    Pokemon lost         157  (2.18/fight)
+    search undecided     35/72                was 41/72 (57%)
+    11.26s per fight
+
+    segment            lvl   clean      won   undecided   s/fight
+      Kanto Leaders     80     4/14     4/14        9      15.1
+      Johto Leaders     12      2/2      2/2        0       0.1
+      Rivals            81     8/12    11/12        3       5.5
+      Team Rocket       83     9/14     9/14        5       9.4
+      Mini Bosses       83     9/10     9/10        1       4.3
+      Indigo League     85     1/18     5/18       17      20.0
+      Postgame         100      2/2      2/2        0       0.3
+
+**The Indigo League is off zero for the first time.** Every previous whole-game
+run had it at 0 for 18 with every fight undecided, which was the single result
+that made the late game look like a capability problem rather than a compute
+one. It now wins five and cleanly wins one. Seventeen are still undecided, so
+this is a crack rather than a solution -- but the segment is no longer a wall,
+and nothing there has ever been proved impossible.
+
+Mini Bosses at 9/10 clean and Team Rocket at 9/14 are the other movers.
+
+**Still the honest caveat on this instrument:** 20 seconds and 200,000 nodes per
+fight is a deliberately starved configuration next to the app, which gives 60
+million nodes, no clock, and one worker per core. The number to read here is the
+SHAPE -- 35 of 72 undecided says the search is still running out of time rather
+than reaching wrong answers, everywhere.
