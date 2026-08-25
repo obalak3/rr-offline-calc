@@ -85,13 +85,39 @@ Pokemon's HP as digits at a fixed place in the status box. Ten digit templates,
 fixed positions, exact number. This alone pins the damage we took, which is the
 whole damage model checked every turn for free.
 
-**2. The foe's HP -- exact, by inference, and this is the neat part.** The game
-shows the foe only as a bar. But we know the foe's MAX HP exactly from trainer
-data, and we know our own move's damage roll is one of sixteen discrete values.
-The bar's filled pixel width gives a fraction to about 1/48 resolution; intersect
-that interval with the sixteen candidate values and the answer is usually
-UNIQUE. So "a bar" plus "known max HP" plus "known discrete rolls" yields the
-exact HP, without ever reading a number the game does not print.
+**2. The foe's HP -- to within a point or two, by inference. MEASURED 2026-08-25,
+and the original claim here was wrong.** The game shows the foe only as a bar,
+but we know its MAX HP from trainer data and our own damage roll is one of
+sixteen discrete values, so intersecting the bar's filled width with those
+sixteen candidates narrows it sharply.
+
+This file used to claim the answer is "usually UNIQUE". `tools/hp_from_bar.js`
+measures it over real trainer teams with the real party read off the save, using
+the ROM's own bar model (`filled = floor(cur * 48 / max)`, never 0 while alive):
+
+    party level 34 (now)      exact 57.5%    mean spread 0.49 HP    worst 2 HP
+    foes up to level 60       exact 38.4%    mean spread 1.01 HP    worst 4 HP
+    foes up to level 100      exact 25.3%    mean spread 1.46 HP    worst 6 HP
+
+So exactness is a minority outcome and it DEGRADES over the game, because a
+bigger HP pool makes each bar pixel worth more. The design survives anyway, for
+a reason worth stating precisely: **the bar alone bounds the error to about
+max/48 regardless of history**, so the foe's HP never drifts -- it is re-pinned
+to a couple of points every single frame, and tracking error cannot accumulate.
+
+And the imprecision is nearly invisible to decisions. Taking each end of the
+interval and asking how many of our sixteen rolls kill:
+
+    party level 34     72 of  8,617 decisions differ   0.84%
+    up to level 100    86 of 112,307 decisions differ  0.08%
+    worst disagreement 5 of 16 rolls
+
+**The runtime rule this hands us:** compute the kill count at both ends of the
+interval. If they agree -- over 99% of the time -- the uncertainty cannot change
+what to do, so say nothing. If they differ, that is exactly and only when the
+foe's HP is worth a question, and it is rare enough to afford asking. That is
+the interaction contract from `DESIGN-UNCERTAINTY.md` falling out of a
+measurement rather than a guess.
 
 **3. Whose turn it is / turn boundaries.** The message box changing is the clock.
 
