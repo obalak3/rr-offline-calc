@@ -266,10 +266,27 @@ var RRAISwitching = (function () {
 	 * three times.
 	 */
 	function statOf(mon, stat, withBoosts) {
-		var probe;
-		try { probe = RRBattle._internal.toCalcPokemon(mon); }
-		catch (e) { return 0; }
-		var base = (probe.rawStats && probe.rawStats[stat]) || 0;
+		// Base stats are a function of the SET -- species, level, nature, EVs,
+		// IVs -- and nothing that changes during a battle, so they are computed
+		// once per Pokemon and kept.
+		//
+		// Measured, and this was the real cost of the port: toCalcPokemon runs
+		// 3.3us, which is eleven times a damage roll at 0.3us, and the walling
+		// check called it four times for every candidate. The port ran 37us a
+		// call against the old heuristic's 15.7us. Note the first thing blamed
+		// was cloning, which was tidied for its own sake and recovered nothing;
+		// this is what the profile actually pointed at.
+		var cache = mon.set.__rawStats;
+		if (cache === undefined) {
+			try {
+				var probe = RRBattle._internal.toCalcPokemon(mon);
+				cache = probe.rawStats || null;
+			} catch (e) { cache = null; }
+			// Cached on the set rather than the battle mon: clone() copies mons
+			// per node, and a cache that died with each copy would never be hit.
+			mon.set.__rawStats = cache;
+		}
+		var base = (cache && cache[stat]) || 0;
 		if (!withBoosts) return base;
 		var stage = (mon.boosts && mon.boosts[stat]) || 0;
 		var mult = stage >= 0 ? (2 + stage) / 2 : 2 / (2 - stage);
