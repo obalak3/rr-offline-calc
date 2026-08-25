@@ -4,6 +4,13 @@ Written 2026-08-25 from James's account of eight recorded Lt. Surge attempts.
 This is his domain knowledge, not an inference from the code, and it changes
 what the advisor should be optimising.
 
+A caveat he asked for and which applies to this whole file: take the CONCEPTS,
+not his play. "I am not the best pokemon player. I made mistakes in the clean
+win run too. I am no person to be modeled after. The end goal is to get
+something better than me, not simulate me." Tie-collapsing is a real mechanic
+worth building on. The particular switches he made are not ground truth, and his
+win rate is a floor to beat rather than a target to match.
+
 ## What he does, and why it works
 
 > "I brought in Hatterene, because I know that Thunder Punch is Pawmot's
