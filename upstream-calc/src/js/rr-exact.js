@@ -647,8 +647,18 @@ var RRExact = (function () {
 			// Small enough that the first sweep is cheap on every opening, so a
 			// fight whose answer sits one node down a late opening pays almost
 			// nothing to reach it.
-			var unit = Math.max(opts.restartUnit || 150,
-				Math.floor(limits.budget / (Math.max(1, live.length) * 8)));
+			// CAPPED, and the cap is the whole point. Scaling the unit to the
+			// budget looks reasonable and quietly destroys the schedule on the
+			// caller that matters most: the app asks for 60,000,000 nodes, which
+			// makes a proportional unit 833,000 -- so the first opening would
+			// swallow most of the search before the rotation ever came round,
+			// which is the behaviour restarts exist to prevent. Luby escalates
+			// on its own; the unit only has to be small enough that the first
+			// sweep across every opening is cheap. Measured good range on the
+			// fights this was tuned against was roughly 1,400 to 3,500.
+			var unit = Math.min(opts.restartUnitMax || 4000,
+				Math.max(opts.restartUnit || 150,
+					Math.floor(limits.budget / (Math.max(1, live.length) * 8))));
 			var savedFilter = rootFilter;
 			var couldNotProve = false, horizonBlocked = false;
 			var hit = false, i = 1;
@@ -690,6 +700,28 @@ var RRExact = (function () {
 			};
 		}
 
+		/**
+		 * What one pass is allowed to spend.
+		 *
+		 * A share of the budget, but ALSO an absolute ceiling, and the ceiling is
+		 * the part that matters. The app asks for 60,000,000 nodes, so a 5% share
+		 * is three million and a 20% share is twelve million -- and at a few
+		 * thousand positions a second, the pass behind them starts something like
+		 * two hours in. The hunt passes are lottery tickets that pay off in
+		 * thousands of nodes (Mt. Moon in 4,279, Lt. Surge in 7,423, Brock's 6v6
+		 * in 19,613) or not at all, so letting them scale with a huge budget
+		 * starves whatever follows without ever helping them.
+		 *
+		 * This is the same failure the portfolio already had once, when one flag
+		 * meant both "may conclude" and "gets the rest of the budget" and the
+		 * beam pass never ran. A share that grows without limit is that bug with
+		 * a different shape.
+		 */
+		function passShare(pass) {
+			var byShare = Math.ceil(limits.budget * (pass.share || 1));
+			return Math.min(byShare, pass.capNodes || Infinity);
+		}
+
 		var passes = [];
 		// A portfolio is three restarts, so it pays for the same easy tree
 		// three times: a fight the plain search settles in 10 nodes costs 73
@@ -720,11 +752,11 @@ var RRExact = (function () {
 			// search under a different order cannot change which lines exist,
 			// which is what makes a portfolio legitimate here at all.
 			passes.push({beam: Infinity, turns: limits.maxTurns, share: 0.05,
-				matchup: true});
+				capNodes: 300000, matchup: true});
 			// Two fifths of the available actions, so it narrows in a 4v4 as
 			// well as a 6v6, with a floor of two so it is always a real choice.
 			passes.push({beam: 0.4, turns: limits.maxTurns, share: 0.20,
-				matchup: false});
+				capNodes: 600000, matchup: false});
 			// Restarts. ADDED to the portfolio rather than replacing anything:
 			// dropping the beam for them cost Lt. Surge, whose line the beam
 			// finds in 7,423 nodes and which full-width restarts do not reach.
@@ -733,7 +765,7 @@ var RRExact = (function () {
 			// project has now measured twice that no single such trick
 			// dominates. Unlike a beam, a finished restart may still conclude.
 			if (opts.restarts !== false) {
-				passes.push({driver: true, turns: limits.maxTurns, share: 0.40});
+				passes.push({driver: true, turns: limits.maxTurns, share: 0.60});
 			}
 			// The decider. Full width, full horizon, no pairing prior -- the
 			// search exactly as it was before any of this, and the only pass
@@ -830,7 +862,7 @@ var RRExact = (function () {
 			// slice each, so a hunt that finds nothing cannot starve the pass
 			// that is allowed to conclude.
 			passCap = isLast ? limits.budget
-				: Math.min(limits.budget, limits.nodes + Math.ceil(limits.budget * pass.share));
+				: Math.min(limits.budget, limits.nodes + passShare(pass));
 
 			found = walk(state, pass.turns, true);
 			if (found) break;
