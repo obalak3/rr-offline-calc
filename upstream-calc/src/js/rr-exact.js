@@ -642,7 +642,7 @@ var RRExact = (function () {
 		 * it leaves the rotation (re-searching it would repeat identical work)
 		 * while permanently forbidding a verdict of "no clean line exists".
 		 */
-		function restartDriver(rootKeys, cap) {
+		function restartDriver(rootKeys, cap, turns) {
 			var live = rootKeys.slice();
 			// Small enough that the first sweep is cheap on every opening, so a
 			// fight whose answer sits one node down a late opening pays almost
@@ -682,11 +682,21 @@ var RRExact = (function () {
 				limits.passOver = false;
 				passCap = Math.min(limits.budget, cap,
 					limits.nodes + luby(i) * unit);
-				if (walk(state, limits.maxTurns, true)) { hit = true; break; }
+				if (walk(state, turns, true)) { hit = true; break; }
+				// Lines ran past the horizon somewhere in this restart. Worth
+				// recording even when the restart did not finish, because that
+				// is the ONLY evidence available that a longer horizon might
+				// help: on a fight big enough to matter no opening ever finishes
+				// inside its cutoff, so waiting for a finished-and-truncated
+				// restart means waiting for something that does not happen.
+				if (limits.truncated) horizonBlocked = true;
 				if (!limits.passOver && !limits.exhausted) {
 					// This restart ran out of tree, not out of cutoff.
 					live.splice(at, 1);
-					if (limits.truncated) { horizonBlocked = true; couldNotProve = true; }
+					// Finished, but only because lines ran off the end of the
+					// horizon -- so this opening is done at THIS depth without
+					// being empty, and nothing here may be called impossible.
+					if (limits.truncated) couldNotProve = true;
 					if (limits.gaveUp) couldNotProve = true;
 					continue;   // do not advance i; the rotation just got shorter
 				}
@@ -766,6 +776,26 @@ var RRExact = (function () {
 			// dominates. Unlike a beam, a finished restart may still conclude.
 			if (opts.restarts !== false) {
 				passes.push({driver: true, turns: limits.maxTurns, share: 0.60});
+				// A DEEPER RUNG, and the reason it is here rather than left to
+				// the upward extension below is that the extension cannot fire
+				// on the fights that need it. That test wants a full-width pass
+				// to FINISH its tree and stop only at the horizon -- but a search
+				// whose horizon is too short does not finish, it thrashes the
+				// budget inside a space that holds no solution and then looks
+				// budget-bound. Measured on the TREASURE BEA. mirror: undecided
+				// at 250,001 nodes with 24 turns, FOUND in 5,990 with 40, and
+				// asking for a ceiling of 40 or 60 changed nothing because the
+				// extension never ran.
+				//
+				// The driver can tell the difference, because it sees truncation
+				// per OPENING rather than for the search as a whole, so this rung
+				// runs only when some opening really did run out of turns. Note
+				// an opening proved empty at 24 turns is NOT proved empty at 40:
+				// the rung starts its own rotation from scratch.
+				if (opts.maxTurnsCeiling > limits.maxTurns) {
+					passes.push({driver: true, turns: opts.maxTurnsCeiling,
+						share: 0.20, capNodes: 400000, needsHorizon: true});
+				}
 			}
 			// The decider. Full width, full horizon, no pairing prior -- the
 			// search exactly as it was before any of this, and the only pass
@@ -805,9 +835,13 @@ var RRExact = (function () {
 			// cutoffs inside it.
 			if (pass.driver) {
 				if (!rootKeys || rootKeys.length < 2) continue;
+				// Only pay for a deeper horizon when the horizon is what stopped
+				// us. Nothing else earns it: a search that ran out of budget
+				// inside 24 turns will only drown faster inside 40.
+				if (pass.needsHorizon && !blockedByHorizon) continue;
 				var driverCap = Math.min(limits.budget,
 					limits.nodes + Math.ceil(limits.budget * pass.share));
-				var driven = restartDriver(rootKeys, driverCap);
+				var driven = restartDriver(rootKeys, driverCap, pass.turns);
 				if (driven.blockedByHorizon) blockedByHorizon = true;
 				if (driven.found) { found = true; break; }
 				if (driven.decided) { decidedHere = true; break; }
