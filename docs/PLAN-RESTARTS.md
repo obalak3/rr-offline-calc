@@ -27,12 +27,19 @@
 - **Phase 2 (novelty) still NOT started, deliberately.** It was always gated on
   restarts saturating and they have not: they took 12 of the 23 undecided
   mirrors. Get the rest out of allocation first.
-- **NEXT**: the real-team Lt. Surge question via `hunt_parallel.js`, which
-  checkpoints and can resume (5 of 7 openings were already settled). That is the
-  fight the actual save is sitting on, so it is the one that matters to the run
-  rather than to the benchmark.
-- **Running**: `bench_game.js 2` alone. Treat its output as a NEW baseline, not
-  a comparison against the recorded 42% -- the generator changed since.
+- **bench_game re-run DONE** (f0d0810), as a NEW baseline: 42/72 won at all,
+  35/72 clean, 35 undecided, and the **Indigo League is off zero for the first
+  time** (0/18 clean and 0/18 won, all undecided -> 1/18 clean, 5/18 won). Not a
+  controlled delta: both the generator and the budget moved.
+- **Phase 4 PREPARED** (f1a11c4). `tools/validate_sheet.js` prints the fight as
+  a table -- moves to play, the AI's predicted reply, your HP after -- with a
+  blank column. It needs James, not code. This is still the highest-value undone
+  thing in the project: every number here is the engine agreeing with itself.
+- **Real-team Lt. Surge: UNDECIDED at 28,000,007 nodes** across 7 processes,
+  589s. Re-running at 8M/process to match the historical 56M run, because the
+  first attempt used 4M/process and so its "0 openings settled" cannot be
+  compared with the old run's "5 of 7 settled". Note the checkpoint MERGES from
+  the saved set rather than overwriting, so nothing was lost.
 
 The one-paragraph summary of the analysis: every failure of every engine in
 this project's history is "undecided", never "impossible", and the search's
