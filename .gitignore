@@ -11,3 +11,5 @@ data/*.ods
 # macOS
 .DS_Store
 .checkpoints/
+__pycache__/
+*.pyc
