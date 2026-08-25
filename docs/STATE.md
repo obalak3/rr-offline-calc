@@ -4,7 +4,16 @@ Written as a handoff. `TUNING.md` holds the measurements and the traps;
 `RR-AI.md` holds what is known about the game's AI. This file holds the current
 architecture, what is actually fixed, and what is still open.
 
-> **Read `PLAN-RESTARTS.md` first for what to DO next**, and
+> **2026-08-25: the project's target changed. Read `DESIGN-UNCERTAINTY.md`
+> first**, then `PLAN-SCREEN-READER.md` for what is being built now. In short:
+> the first real-game validation showed every turn of the Surge line sits within
+> 3 AI-points of a different opponent move (29% are exact ties), so a 24-turn
+> scripted line is not a plan, it is a guess repeated 24 times. The answer is to
+> stop predicting far ahead -- read the true state off the screen each turn and
+> re-plan one turn deep. `PLAN-RESTARTS.md` below is COMPLETE and its history is
+> still worth reading.
+>
+> **Read `PLAN-RESTARTS.md` for the search work that landed**, and
 > `REVIEW-2026-08-24.md` for the evidence behind it. A measured review late on
 > 2026-08-24 corrected five things in this file; each is marked inline where it
 > occurs, and the "WHAT TO FIX NEXT" worklist below is **superseded**. In short:
