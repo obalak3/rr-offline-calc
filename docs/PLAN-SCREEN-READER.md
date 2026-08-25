@@ -41,6 +41,13 @@ learn new strings instead of guessing, and it is bounded by construction.
     pyobjc / Quartz       NOT installed
     tesseract             NOT installed  -- and NOT needed, see below
     node                  v22.23.2
+    Screen Recording      GRANTED and CONFIRMED WORKING 2026-08-25:
+                          a full-screen capture returns 2880x1800 with real
+                          content (mean pixel 190, not black). Note 2880x1800
+                          is RETINA/physical pixels on a 1440x900 logical
+                          screen, so everything downstream must work from the
+                          captured image's own dimensions, never from logical
+                          window coordinates.
 
 **Use `/usr/local/bin/python3`, never the conda base.** `~/opt/anaconda3` is
 Intel/Rosetta and Striim's build depends on its PATH ordering; leave it alone.
