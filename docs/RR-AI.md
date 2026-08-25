@@ -169,3 +169,50 @@ a scoring gap does not.
 **The method worked.** One fight, three turns, and it produced a specific
 falsifiable defect in the layer every "proved" line in this project depends on.
 That is a better return than any benchmark run here.
+
+## How fragile a predicted line really is (2026-08-25, measured)
+
+Prompted by James re-playing the Vikavolt turn and getting Bug Buzz twice after
+one Mud Shot. That is what a COIN FLIP looks like, not a missing rule, so the
+question changed from "which scoring site did we fail to port" to "how much of a
+line rests on decisions this close".
+
+Measured on the real team's Lt. Surge route, scoring the AI at each of the 24
+positions and taking the gap between its top move and the runner-up:
+
+    positions on the line   24
+    exact ties (gap 0)       7   (29%)
+    runner-up within 3      24   (100%)
+    runner-up within 10     24   (100%)
+
+**Every decision on the line is within three points of another one.** And three
+points is the smallest adjustment this AI makes -- a single
+`INCREASE_VIABILITY(3)`, the most common positive site in the whole table.
+
+This file previously recorded ties at about 7% of positions. On this fight exact
+ties alone are 29%, so that figure is optimistic at least here.
+
+### What follows, and what does NOT
+
+**Do not port scoring rules off a single observed deviation.** With every
+position this close, one mismatch is the expected outcome of correct code, not
+evidence of a defect. The bar for a rule being wrong is a REPEATABLE deviation:
+the same position, replayed several times from a save, giving the same move we
+did not predict. A move that varies between replays is a tie, and the fix for a
+tie is not a rule.
+
+**A wide margin is not the answer either, tempting as it looks.** The design
+note above suggests branching over every move within `M` of the top. With 100%
+of positions within 3, an M of 3 branches at every single turn -- 2^24 lines on
+this fight. The margin is a sound idea and it is unaffordable here.
+
+**The affordable answer is to stop needing a 24-turn prediction.** Re-plan from
+the ACTUAL position after every turn. Then no plan ever depends on more than one
+prediction, a deviation costs a re-plan rather than the line, and the search gets
+cheaper as the fight shrinks. This is also the honest reading of what these
+numbers mean: a 24-turn script through 24 near-ties is not a plan, it is a
+guess repeated 24 times.
+
+**And prefer short lines.** Between two clean lines, the shorter one passes
+through fewer of these. That is a real selection criterion and nothing currently
+uses it.
