@@ -1174,19 +1174,15 @@ var RRExact = (function () {
 			}
 		}
 
-		if (typeof RRSolver === "undefined") {
-			return {
-				steps: [], won: false, losses: 0, lostNames: [], turns: 0,
-				stalled: true,
-				exactness: proof.decided ? "proved-impossible" : "undecided",
-				nodes: proof.nodes, elapsedMs: Date.now() - started
-			};
-		}
-		RRBattle.clearCache();
-		var fallback = RRSolver.planRoute(state, opts);
-		fallback.exactness = proof.decided ? "no-clean-line-exists" : "undecided";
-		fallback.exactNodes = proof.nodes;
-		return fallback;
+		// Deliberately fallbackRoute() rather than a copy of it. These two were
+		// the same eleven lines written twice, and the parallel caller in
+		// rr-search.js used one while the page used the other -- so a change to
+		// the shared behaviour reached half the app. This repo has been bitten
+		// by exactly that three times in one day (ceiling.js and bench_early
+		// each carrying private copies of the generator and the search).
+		var route = fallbackRoute(state, opts, proof.decided, proof.nodes);
+		route.elapsedMs = Date.now() - started;
+		return route;
 	}
 
 	/**
@@ -1251,6 +1247,50 @@ var RRExact = (function () {
 				nodes: nodes || 0, elapsedMs: 0
 			};
 		}
+		// A PROVED "no clean line" is the one situation where we know exactly
+		// what to do instead: stop trying to preserve everything and search for
+		// the cheapest loss. The weighted search underneath is still optimising
+		// for a goal that has just been ruled out, and on NELLE that costs the
+		// whole fight -- it loses 0-2 where the fight is winnable losing 1.
+		//
+		// Only on `decided`. When the search merely ran out of budget a clean
+		// line may still exist, and spending the remaining time conceding one of
+		// yours would be answering a question nobody asked.
+		if (decided && opts.minLoss !== false) {
+			RRBattle.clearCache();
+			var cheap = cheapestWin(state, {
+				exactBudget: opts.minLossBudget || 200000,
+				timeLimitMs: opts.minLossTimeLimitMs || 10000,
+				maxTurns: opts.maxTurns || 24,
+				maxLosses: opts.maxLosses === undefined ? 2 : opts.maxLosses,
+				flagSets: opts.flagSets
+			});
+			if (cheap.found && cheap.losses > 0) {
+				var cheapSteps = toSteps(cheap.line);
+				var endState = cheap.line[cheap.line.length - 1].next;
+				return {
+					steps: cheapSteps,
+					won: true,
+					losses: countFainted(endState.me),
+					lostNames: endState.me.team.filter(function (m) {
+						return m.fainted;
+					}).map(function (m) { return m.species; }),
+					turns: cheapSteps.length,
+					stalled: false,
+					certificate: null,
+					// The proof stands and is what the panel must keep saying:
+					// there is NO clean line. What is new is that the line
+					// offered alongside it is now the cheapest known win rather
+					// than a guess, so the cost is a searched result too.
+					exactness: "no-clean-line-exists",
+					minLoss: true,
+					nodes: (nodes || 0) + cheap.nodes,
+					exactNodes: nodes || 0,
+					elapsedMs: 0
+				};
+			}
+		}
+
 		RRBattle.clearCache();
 		var fallback = RRSolver.planRoute(state, opts);
 		fallback.exactness = decided ? "no-clean-line-exists" : "undecided";

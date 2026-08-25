@@ -410,6 +410,19 @@ function replay(state, steps) {
 			check('  and it really does finish the opponent', beaten);
 		}
 
+		// The whole point is that the PLANNER acts on it, not just that the
+		// search can find it. Before this, planRoute proved no clean line
+		// existed and then handed the fight to a weighted search still trying
+		// to preserve everything, which loses 0-2 here.
+		loaded.B.clearCache();
+		const planned = loaded.X.planRoute(mk(), {exactBudget: 400000,
+			maxTurns: 24, lookahead: 2, budget: 30000, risks: {roll: 'median'}});
+		check('  the planner now WINS the fight it used to lose',
+			planned.won === true && planned.losses === 1,
+			JSON.stringify({won: planned.won, losses: planned.losses}));
+		check('  and still says plainly that no clean line exists',
+			planned.exactness === 'no-clean-line-exists', planned.exactness);
+
 		// The default must be untouched: lossBudget 0 is the old cut exactly.
 		loaded.B.clearCache();
 		const zero = loaded.X.cleanWin(mk(),
