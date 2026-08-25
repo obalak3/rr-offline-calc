@@ -201,7 +201,7 @@ var RRPlan = (function () {
 	 * scored against whatever resists it. That ranked Bite above Water Gun into
 	 * a Rock/Ground lead, which is not advice.
 	 */
-	function rankKey(worst, race, stable) {
+	function rankKey(worst, race, stable, isSwitch, chargeTempo) {
 		var damage = stable || worst;
 		if (race && race.knockedOut) return [
 			worst.iFainted ? 0 : 1,
@@ -216,6 +216,14 @@ var RRPlan = (function () {
 		// cannot get there", which is as good as a large lead.
 		var mineTurns = (race && race.mine !== null) ? race.mine : 6;
 		var foeTurns = (race && race.foe !== null) ? race.foe : 6;
+		// A switch spends this turn without advancing our own clock, so the
+		// incoming Pokemon needs one MORE turn than the race says it does.
+		// Without this charge, switching always looks like it wins the race:
+		// arriving fresh resets how long the opponent needs to kill us, while
+		// nothing resets how long we need to kill it. Measured on Lt. Surge, the
+		// advisor took that deal 21 times in one fight and refusing to switch at
+		// all beat it by two knockouts.
+		if (isSwitch && chargeTempo) mineTurns += 1;
 		var turnLead = foeTurns - mineTurns;
 
 		// The SIGN of the lead, not its size. Magnitude rewarded stalling:
@@ -323,7 +331,8 @@ var RRPlan = (function () {
 			label: labelFor(state, myAction),
 			worst: worst,
 			worstReply: worst.foeAction,
-			key: rankKey(worst, race, damageAgainst),
+			key: rankKey(worst, race, damageAgainst,
+				myAction.type === "switch", opts.chargeSwitchTempo !== false),
 			ko: myKO,
 			race: race,
 			verdict: verdictFor(worst, race, damageAgainst),

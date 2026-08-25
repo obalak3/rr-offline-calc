@@ -23,7 +23,11 @@ const MAX_TURNS = 60;
 
 const party = H.realTeam();
 const limit = parseInt(process.argv[2], 10) || 12;
-const battles = H.earlyBattles(engine, {maxLevel: 100, relativeBase: 75}).slice(0, limit);
+// Default to fights near the party's own level. Scaling late-game leaders down
+// to a level-34 team produces hopeless matchups, and a win rate over those
+// measures the level gap rather than the advisor.
+const MAXLEVEL = parseInt(process.env.MAXLEVEL, 10) || 40;
+const battles = H.earlyBattles(engine, {maxLevel: MAXLEVEL}).slice(0, limit);
 
 function foeArgmax(st) {
 	const scored = RRAI.scoreAll(st, 'foe', FLAGS, {});
@@ -62,7 +66,10 @@ for (const battle of battles) {
 		if (n >= 4) loop = true;
 
 		const t0 = Date.now();
-		const advice = live.advise(believed, obs, {lookahead: 2, budget: 20000}, engine, session);
+		const advice = live.advise(believed, obs,
+			{lookahead: 2, budget: 20000,
+				chargeSwitchTempo: process.env.NO_TEMPO ? false : true},
+			engine, session);
 		ms += Date.now() - t0;
 		if (!advice || !advice.best) break;
 		if (advice.ambiguous) ambig++;

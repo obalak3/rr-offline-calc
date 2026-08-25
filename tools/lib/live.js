@@ -190,6 +190,9 @@ function advise(state, obs, opts, engine, session) {
 		ambiguous: !agreed,
 		range: range,
 		exact: range.lo === range.hi,
+		// The full ranking, so a caller can apply its own constraint without
+		// re-running the planner.
+		plan: planHi.entries,
 		threats: planHi.threats,
 		assumption: planHi.assumption,
 		state: pessimistic
