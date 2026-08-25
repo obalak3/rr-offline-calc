@@ -1625,3 +1625,52 @@ has done.
 unreachable by construction on any fight where some plausible line runs past the
 horizon, and this is such a fight. So this is not evidence the fight cannot be
 won cleanly -- it is the absence of evidence either way, at 84 million nodes.
+
+## Novelty pruning: built, measured, parked (2026-08-24)
+
+Phase 2 of `PLAN-RESTARTS.md`, and the first thing tried against the fights
+restarts could not settle. The diagnosis it targets is real and well
+established: the transposition table does nothing here, because HP drifts every
+turn and PP is part of a position's identity, so in a long grind essentially no
+position is ever reached twice. hpBuckets was a first swing at that. Novelty is
+the principled version, from width-based planning -- do not ask "have I seen
+this exact position", ask "does this position assert any fact I have never
+seen", and drop it if not. Facts here are per-Pokemon HP bands, statuses, the
+active pair, boost vectors and hazards.
+
+**It prunes astonishingly hard.** On the real team against Lt. Surge, one pass
+with a 2,000,000 node budget and two minutes:
+
+    plain           undecided   1,901,568 nodes   120s
+    beam 0.4        undecided   1,711,104 nodes   120s
+    novelty-1       undecided       3,272 nodes     1s
+    novelty + beam  undecided       3,046 nodes     0s
+
+It EXHAUSTS its tree in a second where the plain search is still going after two
+minutes, which is a 99.8% cut. And it finds nothing.
+
+**Across 18 real fights** (generated teams, +2 levels, 200,000 nodes):
+
+    plain search found   11/18
+    novelty-1 found      10/18
+
+It finds nearly everything the plain search finds, sometimes far cheaper
+(PEWTER / FALKNER: 2,098 nodes -> 190), costs almost nothing when it fails
+(hundreds of nodes against 200,000), and loses one fight the plain search wins.
+
+**But it does not crack a single hard fight**, which was the entire reason for
+building it. Misty, Lt. Surge and Mt. Moon Archer come back undecided in
+hundreds to a few thousand nodes rather than in hundreds of thousands. The tree
+it keeps simply does not contain those lines.
+
+**So: parked, not shipped.** It is NOT in the default portfolio. Reach it with
+`passes: [{novelty: 1, ...}]`. The bar for adding it would be a fight it settles
+that nothing else does, and there is not one yet. This is the third prune this
+project has proposed and the third that has not paid -- the coverage prune never
+fired, the turns bound was never built, and this one fires constantly and finds
+nothing new. **On this problem, deciding what to look at FIRST keeps beating
+deciding what not to look at.**
+
+Soundness is enforced rather than assumed: novelty counts as narrowing, so such
+a pass may find and may never conclude, and `tools/test_exact.js` asserts it
+never reports a hard fight impossible however hard it prunes.

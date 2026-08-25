@@ -361,6 +361,39 @@ function replay(state, steps) {
 }
 
 // ---------------------------------------------------------------------------
+// Novelty pruning may find, and may NEVER conclude.
+//
+// It drops a position all of whose facts have been seen before, which can
+// obviously throw away the only way through -- so a pass using it must be
+// treated exactly like a beam. On a fight where it prunes almost everything and
+// exhausts in a few thousand nodes, the one thing it must not say is that the
+// fight has no clean line.
+{
+	const H = require('./lib/harness.js');
+	const loaded = H.loadEngine();
+	const dexParts = H.loadDex();
+	const gen = H.makeGenerator(loaded, dexParts);
+	const battles = H.earlyBattles(loaded);
+	const hard = battles.filter(b => /MISTY|SURGE/.test(H.label(b)));
+	let ran = 0, concluded = 0;
+	for (const battle of hard) {
+		const party = gen.team(battle.team[0].level.value + 2, 6);
+		if (party.length < 6) continue;
+		loaded.B.clearCache();
+		const r = loaded.X.cleanWin(
+			loaded.B.createState(party, H.foeSets(battle), {}),
+			{exactBudget: 200000, maxTurns: 24, timeLimitMs: 20000,
+			 passes: [{novelty: 1, beam: Infinity, turns: 24, share: 1,
+			           matchup: false}]});
+		ran++;
+		if (r.decided && !r.found) concluded++;
+	}
+	check('a novelty-pruned search never claims a fight is impossible (' +
+		ran + ' runs)', ran > 0 && concluded === 0,
+		concluded + ' concluded');
+}
+
+// ---------------------------------------------------------------------------
 // The cheapest win, when a clean one does not exist.
 //
 // The fight to test this on has to be one where no clean line exists AND the

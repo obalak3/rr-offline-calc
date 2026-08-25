@@ -437,6 +437,56 @@ var RRExact = (function () {
 		var seen = new Map();
 		var beam = Infinity;
 		var passCap = limits.budget;
+		// 0 = off. 1 = keep a position only if some single fact about it is new.
+		var noveltyLevel = 0;
+		var noveltySeen = null;
+
+		/**
+		 * The facts a position is made of.
+		 *
+		 * Deliberately COARSE and per-Pokemon rather than one string for the
+		 * whole state: the point is to notice "this Pokemon has reached a new
+		 * band of health" or "something is asleep that was not", not to
+		 * rediscover that the exact position is unique, which it almost always
+		 * is. HP goes into eighths for the same reason hpBuckets did.
+		 *
+		 * Costs a little per node, which is why it runs on one pass rather than
+		 * everywhere.
+		 */
+		function atomsOf(st) {
+			var out = [];
+			var sides = ["me", "foe"];
+			for (var s = 0; s < 2; s++) {
+				var side = st[sides[s]];
+				var tag = sides[s].charAt(0);
+				var act = RRBattle.active(side);
+				out.push(tag + "@" + (act && act.species));
+				for (var i = 0; i < side.team.length; i++) {
+					var m = side.team[i];
+					var band = m.fainted ? "x"
+						: Math.round((m.curHP / m.maxHP) * 8);
+					out.push(tag + i + "h" + band);
+					if (m.status) out.push(tag + i + "s" + m.status);
+				}
+				if (act && act.boosts) {
+					// The whole boost vector as one fact: a setup line's point
+					// is the combination, not any single stage.
+					out.push(tag + "b" + JSON.stringify(act.boosts));
+				}
+				if (side.hazards) out.push(tag + "z" + JSON.stringify(side.hazards));
+			}
+			return out;
+		}
+
+		/** IW(1): novel if it asserts anything never asserted before. */
+		function isNovel(st) {
+			var atoms = atomsOf(st);
+			var novel = false;
+			for (var i = 0; i < atoms.length; i++) {
+				if (!noveltySeen.has(atoms[i])) { noveltySeen.add(atoms[i]); novel = true; }
+			}
+			return novel;
+		}
 		// How many of ours may fall. Zero is the Nuzlocke objective and the
 		// default; anything higher is cheapestWin asking a different question.
 		// Measured from the state we were handed, since a fight can be planned
@@ -517,6 +567,25 @@ var RRExact = (function () {
 			var visitKey = hpBuckets
 				? RRBattle.positionKey(current, {hpBuckets: hpBuckets})
 				: key;
+			// NOVELTY. The transposition table has almost nothing to do on this
+			// problem -- HP drifts a point or two every turn and PP is part of a
+			// position's identity, so in a twenty-turn grind essentially no
+			// position is ever reached twice. hpBuckets was a first swing at
+			// that, blurring HP into bands, and measured 19% on one fight.
+			//
+			// This is the principled version, from width-based planning: do not
+			// ask "have I seen this exact position", ask "does this position
+			// contain any FACT I have never seen". A position all of whose facts
+			// are old is one the search has effectively already been around, and
+			// is dropped. That prunes hard in a wide shallow tree, which is the
+			// shape this one has.
+			//
+			// It can obviously miss lines -- a position can be entirely
+			// unsurprising and still be the only way through -- so like the beam
+			// it is allowed only on passes that may never conclude, and the
+			// `narrows` test below enforces that.
+			if (noveltyLevel > 0 && !isNovel(current)) return false;
+
 			var triedWith = seen.get(visitKey);
 			if (triedWith !== undefined && triedWith >= turnsLeft) return false;
 			seen.set(visitKey, turnsLeft);
@@ -681,6 +750,9 @@ var RRExact = (function () {
 				rootFilter[key] = true;
 				beam = Infinity;
 				hpBuckets = 0;
+				// Never for the driver: a restart is entitled to prove its
+				// opening empty, and novelty would make that a lie.
+				noveltyLevel = 0;
 				passUsesMatchup = true;
 				useValueOrdering = false;
 				// Never shared between restarts: a position failed under a small
@@ -882,7 +954,10 @@ var RRExact = (function () {
 			if (typeof pass.beam !== "number") pass.beam = Infinity;
 			// A fraction below 1 narrows, so it counts as a beam for the
 			// entitlement test below exactly as an absolute width does.
-			var narrows = pass.beam < Infinity;
+			// Novelty hides lines exactly as a beam does, so it counts as
+			// narrowing for the entitlement test: such a pass may find, and may
+			// never conclude.
+			var narrows = pass.beam < Infinity || (pass.novelty || 0) > 0;
 			if (typeof pass.turns !== "number") pass.turns = limits.maxTurns;
 			var exhaustive = !narrows && pass.turns >= limits.maxTurns;
 			// Being ENTITLED TO CONCLUDE and being given the whole budget are two
@@ -904,6 +979,8 @@ var RRExact = (function () {
 			// must stay in agreement with this.
 			hpBuckets = narrows
 				? (opts.hpBuckets === undefined ? 8 : opts.hpBuckets) : 0;
+			noveltyLevel = pass.novelty || 0;
+			noveltySeen = noveltyLevel ? new Set() : null;
 			// Ordering differs per pass, so a cached order from the last one is
 			// the wrong order for this one.
 			orderCache = new Map();
