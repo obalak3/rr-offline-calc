@@ -42,10 +42,11 @@ function foeArgmax(st) {
 
 console.log('party: ' + party.map(p => p.species + ' L' + p.level).join(', '));
 console.log('battles: ' + battles.length + '\n');
-console.log('battle                              turns  result      switches  loop  forced  ms/turn');
-console.log('--------------------------------------------------------------------------------------');
+console.log('battle                              turns  result   LOST  switches  loop  forced  ms/turn');
+console.log('---------------------------------------------------------------------------------------');
 
 let stalled = 0, won = 0, looped = 0, totalTurns = 0, totalMs = 0, totalAmbig = 0;
+let totalLost = 0;
 
 for (const battle of battles) {
 	let real = B.createState(party, H.foeSets(battle), {});
@@ -71,7 +72,7 @@ for (const battle of battles) {
 				chargeSwitchTempo: process.env.NO_TEMPO ? false : true,
 				matchupRank: !!process.env.MATCHUP,
 				searchRank: !!process.env.SEARCH,
-				searchTurns: parseInt(process.env.SEARCH_TURNS, 10) || 6,
+				searchTurns: parseInt(process.env.SEARCH_TURNS, 10) || undefined,
 				searchBudget: parseInt(process.env.SEARCH_BUDGET, 10) || 20000,
 				searchTimeLimitMs: parseInt(process.env.SEARCH_MS, 10) || 400},
 			engine, session);
@@ -97,13 +98,18 @@ for (const battle of battles) {
 
 	const finished = real.foe.team.every(m => m.fainted);
 	const lostAll = real.me.team.every(m => m.fainted);
+	// The objective is a NUZLOCKE win, so what matters is not whether the fight
+	// was won but how many of ours are permanently dead at the end of it.
+	const lost = real.me.team.filter(m => m.fainted).length;
+	totalLost += lost;
 	const result = finished ? 'WON' : lostAll ? 'lost' : 'STALLED';
 	if (finished) won++; else if (!lostAll) stalled++;
 	if (loop) looped++;
 	totalTurns += turns; totalMs += ms; totalAmbig += ambig;
 
 	console.log(H.label(battle).slice(0, 34).padEnd(36) +
-		String(turns).padStart(5) + '  ' + result.padEnd(10) +
+		String(turns).padStart(5) + '  ' + result.padEnd(8) +
+		String(lost).padStart(5) +
 		String(switches).padStart(8) + '  ' + (loop ? 'YES ' : '  . ').padStart(5) +
 		String(forced).padStart(7) +
 		String(Math.round(ms / Math.max(1, turns))).padStart(8));
@@ -111,6 +117,7 @@ for (const battle of battles) {
 
 console.log('');
 console.log('won      ' + won + '/' + battles.length);
+console.log('POKEMON LOST across all fights: ' + totalLost + '   <-- the actual objective');
 console.log('STALLED  ' + stalled + '/' + battles.length + '   (ran out of turns without finishing)');
 console.log('LOOPED   ' + looped + '/' + battles.length + '   (same position seen 4+ times)');
 console.log('mean     ' + Math.round(totalMs / Math.max(1, totalTurns)) + ' ms per decision');

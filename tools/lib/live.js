@@ -188,12 +188,33 @@ function labelAction(state, action, B) {
  * screen reader re-plans every turn from a true position, so nothing has to be
  * predicted far ahead.
  */
-function searchRank(state, opts, engine) {
-	const X = engine.X, B = engine.B;
+function searchRank(state, opts, engine, session) {
+	const X = engine.X, B = engine.B, MU = engine.MU;
+	// A leaf evaluator, without which this search cannot answer at a short
+	// horizon at all: a win means every one of theirs is down, which does not
+	// fit in a few turns, so every branch used to reach the horizon and come
+	// back "unknown". Measured on Surge: 0% at every depth from 2 to 12 without
+	// one, 96.8% with nothing unknown at depths 2-4 with one.
+	//
+	// The table is built once per battle and kept on the session. Its rates are
+	// per-hit fractions of max HP, so they do not go stale as health drains.
+	let leafValue;
+	if (MU && opts.leafEval !== false) {
+		if (session && !session.table) {
+			session.table = MU.build(state, {perPairBudget: opts.perPairBudget || 400});
+		}
+		const table = (session && session.table) ||
+			MU.build(state, {perPairBudget: opts.perPairBudget || 400});
+		leafValue = MU.leafValue(table, opts);
+	}
 	const entries = X.rank(state, {
-		maxTurns: opts.searchTurns || 6,
+		// Four turns by default, chosen by measurement rather than taste: on
+		// Surge, horizons 2-4 come back fully determined in 1-5s, 6 needs a
+		// minute and still leaves 4% unexamined, and 8 and beyond are useless.
+		maxTurns: opts.searchTurns || 4,
 		exactBudget: opts.searchBudget || 20000,
 		timeLimitMs: opts.searchTimeLimitMs || 150,
+		leafValue: leafValue,
 		margin: opts.margin,
 		flagSets: opts.flagSets
 	});
@@ -320,7 +341,7 @@ function advise(state, obs, opts, engine, session) {
 	// both-ends check, the cycle guard -- is unchanged, because those are about
 	// the observation rather than about how actions are scored.
 	if (opts && opts.searchRank) {
-		const ranked = searchRank(pessimistic, opts, engine);
+		const ranked = searchRank(pessimistic, opts, engine, session);
 		if (ranked && ranked.length) {
 			let best = ranked[0], repeats = 0;
 			if (session) {
