@@ -1393,3 +1393,53 @@ number most likely to move: every one of them was measured with the beam that
 did not narrow, and Brock -- which was in that category -- went from undecided at
 four million nodes to a clean 13-turn win in 23,796 once the beam became a
 fraction of the branching factor.
+
+## The beam fix, measured across the mirrors (2026-08-24)
+
+Partial comparison at 77 fight-instances, old absolute beam against the
+fractional one, everything else identical:
+
+    unchanged        71
+    NEWLY SOLVED      5
+    regressed         1
+
+    GYM LEADER BROCK          undecided  ->  CLEAN WIN, 13 turns  (26,296 nodes)
+    GYM LEADER LT. SURGE      undecided  ->  CLEAN WIN, 24 turns  (15,533)
+    ROUTE 25 / LEADER BUGSY   undecided  ->  CLEAN WIN, 11 turns  (13,981)
+    CINNABAR LAB / LEADER JA  undecided  ->  CLEAN WIN, 22 turns  (12,856)
+    ROUTE 23 BRENDAN          undecided  ->  CLEAN WIN, 24 turns  (51,843)
+
+**The regression is honest and expected.** The other Brock battle -- there are
+two, the gym and the rematch -- went from a 19-turn clean win to undecided.
+Narrowing to 40% of the actions can miss a line a wider search found, and the
+exhaustive pass behind it did not catch this one within budget. A beam is a
+gamble that pays four times in five here.
+
+Net so far: +4 fights, with the rescues concentrated exactly where the diagnosis
+predicted -- stally fights where nothing dies quickly, so the Nuzlocke cut has
+nothing to cut.
+
+## How much should a "clean win" be trusted (2026-08-24)
+
+Worth stating plainly, because the word invites more confidence than it earns.
+
+**Verified:** the line is built by stepping the real engine, and
+`tools/test_invariants.js` independently replays found lines and asserts nobody
+faints and every opponent falls. The line is internally consistent.
+
+**Assumed:** median damage rolls, and the AI playing its single top-scoring
+move. About 7% of positions have AI ties, so over a thirteen-turn line there is
+roughly a one-in-three chance of passing through a position where the opponent
+could legally do something the search never considered. `certify` is the claim
+that survives both; `cleanWin`, which every benchmark here uses, is not it.
+
+**Unverified, and this is the real gap: no line this project has produced has
+ever been played in the actual game and checked.** Every validation is the
+engine agreeing with itself. Today alone found about twenty-five mechanics it
+was simulating wrong, each silently wrong for the project's whole life, each
+capable of producing confident wrong lines. "Our tests pass" and "this matches
+Radical Red" are different claims and only the first has evidence.
+
+The single highest-value experiment available is to play one line in the real
+game and compare it turn by turn. If the AI deviates on turn four, that is worth
+more than any benchmark in this file.
