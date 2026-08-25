@@ -52,6 +52,15 @@ FRAME_PATH = os.path.join(SCRATCH, "frame.png")
 BLOCK_ERROR_MAX = 0.02
 
 
+class Occluded(Exception):
+    """We captured real pixels, but they are not the game.
+
+    Region capture reads the screen, so anything sitting on top of mGBA gets
+    photographed instead. Distinct from NotVisible: there the window was not
+    composited at all, here something is simply in the way.
+    """
+
+
 class NotVisible(Exception):
     """The window exists but macOS handed us an empty frame.
 
@@ -61,13 +70,43 @@ class NotVisible(Exception):
     """
 
 
-def grab_window(win_id, path=FRAME_PATH):
-    """The window's own pixels, PHYSICAL resolution, title bar included."""
-    subprocess.run(
-        ["/usr/sbin/screencapture", "-x", "-o", f"-l{win_id}", "-t", "png", path],
-        check=True,
-    )
-    return Image.open(path).convert("RGB")
+def grab_window(win_id, path=FRAME_PATH, rect=None):
+    """The window's pixels, PHYSICAL resolution, title bar included.
+
+    Tries capture-by-window-id first, then falls back to capturing the SCREEN
+    REGION the window occupies.
+
+    The fallback is not belt-and-braces, it is the path that actually works
+    here. `screencapture -l` reads the window's own backing store, and mGBA
+    renders through OpenGL, so that comes back blank even while the window is
+    plainly visible and being played. Window-id capture was chosen for its one
+    real advantage -- a window that moves cannot invalidate a stored rectangle
+    -- and that advantage is kept by taking the rect from CoreGraphics fresh
+    each time rather than storing it. Region capture then reads what is
+    actually on the glass, which is renderer-independent.
+
+    The cost of the fallback is that the window must be UNOCCLUDED, since a
+    screen region captures whatever is on top. That is acceptable: the player is
+    looking at the game.
+    """
+    def shot(args):
+        subprocess.run(["/usr/sbin/screencapture", "-x", "-o"] + args +
+                       ["-t", "png", path], check=True)
+        return Image.open(path).convert("RGB")
+
+    img = shot([f"-l{win_id}"])
+    if not looks_blank(img) or rect is None:
+        return img, False
+    # Capture the GAME AREA directly rather than the window and then cropping.
+    # The window's title bar can sit above the top of the screen -- mGBA here
+    # reports y=-28, so its chrome is off-display -- and a region capture of the
+    # whole window rect gets clamped, which shifts everything down by the height
+    # of the part that was clipped and lands the crop on the wrong pixels. The
+    # block-alignment check catches it (0.08 against a 0.02 threshold), but the
+    # right answer is not to ask for the chrome at all.
+    x, y, w, h = rect
+    gh = round(w * GBA_H / GBA_W)
+    return shot(["-R", f"{x},{y + (h - gh)},{w},{gh}"]), True
 
 
 def game_area(img):
@@ -115,8 +154,9 @@ def raw_frame():
     win = winmod.emulator_window()
     if win is None:
         raise SystemExit("mGBA is not running (no window found)")
-    img = grab_window(win["id"])
-    game = game_area(img)
+    img, is_game_area = grab_window(
+        win["id"], rect=(win["x"], win["y"], win["w"], win["h"]))
+    game = img if is_game_area else game_area(img)
     if game is None:
         raise SystemExit(f"captured {img.size}, too short to contain a 3:2 game area")
     if looks_blank(game):
@@ -133,9 +173,11 @@ def raw_frame():
         )
     err = block_error(game, scale)
     if err > BLOCK_ERROR_MAX:
-        raise SystemExit(
-            f"block error {err:.4f} exceeds {BLOCK_ERROR_MAX}: the capture is not a "
-            f"clean integer upscale, so the crop is wrong. Refusing to emit a frame."
+        raise Occluded(
+            f"block error {err:.4f} exceeds {BLOCK_ERROR_MAX}: these pixels are not a "
+            f"clean integer upscale of a GBA frame, so we are not looking at the game. "
+            f"The usual cause is another window covering mGBA -- region capture reads "
+            f"whatever is on top. Bring mGBA to the front."
         )
     return game, scale, win
 
@@ -160,6 +202,9 @@ def check():
         game, scale, _ = raw_frame()
     except NotVisible as e:
         print(f"BLANK: {e}", file=sys.stderr)
+        return False
+    except Occluded as e:
+        print(f"OCCLUDED: {e}", file=sys.stderr)
         return False
     err = block_error(game, scale)
     print(f"game area {game.size[0]}x{game.size[1]} physical -> integer scale {scale}x")
@@ -202,4 +247,7 @@ if __name__ == "__main__":
             raise SystemExit(__doc__)
     except NotVisible as e:
         print(f"BLANK: {e}", file=sys.stderr)
+        sys.exit(2)
+    except Occluded as e:
+        print(f"OCCLUDED: {e}", file=sys.stderr)
         sys.exit(2)

@@ -134,15 +134,29 @@ def windows(owner=None, on_screen_only=False):
 
 
 def emulator_window(owner="mGBA"):
-    """The emulator's main window: its largest on-screen window.
+    """The emulator's main window: the largest one that is actually ON SCREEN.
 
-    Largest rather than first because the app also owns small transient windows
-    (the settings sheet, dialogs) that must never be mistaken for the game.
+    On-screen first, and this matters more than it sounds. mGBA owns about
+    eleven windows, most of them stale or never displayed, and picking the
+    largest across ALL of them returned one reporting (0,-28) while the window
+    the user was looking at sat at x=405. Capture then photographed the wrong
+    part of the screen and every frame failed its alignment check, which looked
+    like an occlusion problem for a while and was not.
+
+    Falling back to every window keeps the case this list was widened for: with
+    a fullscreen app in front, the emulator is on another Space and drops off
+    the on-screen list entirely. A rect from that fallback cannot be trusted for
+    a region capture, but the window id is still right, and capture verifies the
+    pixels it gets regardless.
+
+    Largest rather than first, because the app also owns small transient windows
+    -- the settings sheet, dialogs -- that must never be mistaken for the game.
     """
-    cands = [w for w in windows(owner) if w["w"] > 100 and w["h"] > 100]
-    if not cands:
-        return None
-    return max(cands, key=lambda w: w["w"] * w["h"])
+    def biggest(ws):
+        cands = [w for w in ws if w["w"] > 100 and w["h"] > 100]
+        return max(cands, key=lambda w: w["w"] * w["h"]) if cands else None
+
+    return biggest(windows(owner, on_screen_only=True)) or biggest(windows(owner))
 
 
 if __name__ == "__main__":

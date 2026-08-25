@@ -58,11 +58,12 @@ def main():
         while kept < args.max:
             try:
                 img = capture.frame()
-            except capture.NotVisible:
+            except (capture.NotVisible, capture.Occluded):
                 # Expected whenever the emulator is not the visible Space. Say so
                 # once rather than every 80 ms, and keep waiting.
                 if not blank_notice:
-                    print("waiting: mGBA is not visible (bring its window to the front)")
+                    print("waiting: mGBA is not visible or is covered by another "
+                          "window (bring it to the front)")
                     blank_notice = 1
                 time.sleep(0.5)
                 continue
