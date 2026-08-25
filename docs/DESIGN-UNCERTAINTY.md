@@ -97,6 +97,46 @@ them. They want a precomputed contingency: most turns "a crit here changes
 nothing, continue"; a few turns "a crit here kills, and here is the response".
 Those few are exactly the "7% of the time your X dies" spots from the spec.
 
+## UNKNOWN IS NOT LOSS (fixed 2026-08-25, and why it was the priority)
+
+James beat Lt. Surge with the real team and lost NOBODY, in a fight this project
+had left clean-undecided at 84M nodes and only won at lossBudget 2. His point:
+"don't tell me runs aren't possible." Retrying a run many times is how a PLAYER
+learns what the AI does; the app already knows, so it should be finding winning
+lines in most cases, sometimes losing Pokemon and sometimes not.
+
+That is partly an objective problem -- item 3 below, promoted -- and partly a
+plain defect, found in `winChance` and now fixed.
+
+**The defect.** Every way the search gave up returned the value a defeat
+returns. Node budget exhausted, turn horizon reached, and no opponent model for
+a position all returned 0, exactly like losing a Pokemon. Because exhaustion
+also short-circuits every remaining node, a search that ran out of budget
+reported a chance near zero regardless of what it had already proved.
+
+**Why it matters more than an ordinary bug.** The errors are not symmetric.
+Every one of those collapses biases the answer DOWNWARD, so the tool
+systematically described fights as worse than they are -- which is precisely
+the complaint. It is also the same shape as the reliability floor this project
+already removed once: a lower bound rendered as a percentage reads as a win
+rate, and that misreading is the design's fault, not the reader's.
+
+**The fix.** A node answers with two numbers: `v`, mass that provably reaches a
+clean win, and `u`, mass never examined. A real loss contributes to neither, and
+the truth lies in `[v, v+u]`. `certify` exposes `unknown`, `upper` and
+`uninformative`. `chance` itself is unchanged, verified bit-identical against
+the pre-fix engine by `tools/measure_unknown.js`, because quietly moving a
+number the solver proves things with would be worse than the bug.
+
+Measured on the real Surge fight: it now says 0% proved / 100% UNKNOWN at every
+budget up to 400k, instead of a bare 0% that reads as "you lose".
+
+**The other thing that measurement showed:** that fight runs about 800 nodes per
+second, so twenty seconds buys ~16k nodes where millions are needed. Whole-fight
+probability is not affordable live at all. That is independent support for the
+screen reader's one-turn-deep re-planning, where the budget is ample and the
+floor is meaningful.
+
 ## The metric this all points at
 
 **The best plan is the one that wins while asking the fewest questions.**
