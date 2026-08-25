@@ -1579,3 +1579,49 @@ fight is a deliberately starved configuration next to the app, which gives 60
 million nodes, no clock, and one worker per core. The number to read here is the
 SHAPE -- 35 of 72 undecided says the search is still running out of time rather
 than reaching wrong answers, everywhere.
+
+## The real team against Lt. Surge: still undecided at 84 million nodes (2026-08-24)
+
+`tools/hunt_parallel.js SURGE --save 8000000 7`, i.e. 7 x 8,000,000 = 56,000,000
+in this run, with the restart driver in place. Cumulative with the earlier
+28,000,000-node attempt the same night: **84,000,014 nodes, UNDECIDED.**
+
+    party  Mienshao, Diggersby, Lanturn, Lilligant, Breloom, Victreebel, all L34
+    foe    Pincurchin L32, Vikavolt L33, Bellibolt L33, Pawmot L33,
+           Manectric-Mega L34
+
+So restarts did not crack this fight, and it remains the hardest thing in the
+project by a distance: nothing has ever been proved impossible about it, and no
+witness has ever been found.
+
+### The one result here that needed chasing: 0 openings settled, against 5 of 7
+
+The earlier record for this fight says five of seven shares FINISHED their
+openings and came back empty. This run settled **none**, which looks exactly
+like restarts having damaged the engine's ability to PROVE things -- a serious
+charge, since a restart works by stopping before it finishes.
+
+**Measured, and restarts are not the cause.** Nine root openings dealt over
+seven processes gives five shares exactly ONE opening each, and the driver skips
+any share with fewer than two openings, because there is nothing to deal out.
+Run head to head on one of those single-opening shares:
+
+    opening m0, 1,500,000 nodes    restarts ON   undecided, 1,500,001 nodes, 102s
+                                   restarts OFF  undecided, 1,500,001 nodes, 101s
+
+Identical, node for node. Whatever moved between the old run and this one, it is
+not the search change.
+
+**What it probably IS, left as a claim to check rather than a conclusion:** the
+engine got materially more accurate in between, and nearly every fix made the
+opponent STRONGER -- Lum Berry curing status instantly, Life Orb, Protosynthesis
+and Quark Drive, Electromorphosis doubling Bellibolt's Discharge, Flame Orb into
+Guts. An opening that was provably empty against a weaker simulated opponent
+need not be provable against the real one, and the fights are longer now.
+Confirming that means checking out an older engine and re-running, which nobody
+has done.
+
+**The honest reading of "undecided" here has not changed.** `decided` is
+unreachable by construction on any fight where some plausible line runs past the
+horizon, and this is such a fight. So this is not evidence the fight cannot be
+won cleanly -- it is the absence of evidence either way, at 84 million nodes.
