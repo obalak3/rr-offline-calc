@@ -68,7 +68,11 @@ for (const battle of battles) {
 		const t0 = Date.now();
 		const advice = live.advise(believed, obs,
 			{lookahead: 2, budget: 20000,
-				chargeSwitchTempo: process.env.NO_TEMPO ? false : true},
+				chargeSwitchTempo: process.env.NO_TEMPO ? false : true,
+				searchRank: !!process.env.SEARCH,
+				searchTurns: parseInt(process.env.SEARCH_TURNS, 10) || 6,
+				searchBudget: parseInt(process.env.SEARCH_BUDGET, 10) || 20000,
+				searchTimeLimitMs: parseInt(process.env.SEARCH_MS, 10) || 400},
 			engine, session);
 		ms += Date.now() - t0;
 		if (!advice || !advice.best) break;

@@ -146,6 +146,95 @@ function createSession() {
  * the ONLY circumstance in which the foe's exact HP is worth asking about, and
  * it is rare by measurement rather than by hope.
  */
+/**
+ * A readable name for an action, without reaching into rr-plan's private
+ * labelFor. Switches name the Pokemon because that is what a player reads off
+ * the party screen.
+ */
+function labelAction(state, action, B) {
+	if (!action) return '(none)';
+	if (action.type === 'switch') {
+		const mon = state.me.team[action.index];
+		return 'Switch to ' + (mon ? mon.species : ('#' + action.index));
+	}
+	return action.move;
+}
+
+/**
+ * Rank this turn's actions by a SEARCH rather than by the one-turn heuristic.
+ *
+ * OPT-IN, AND OFF BY DEFAULT, BECAUSE IT IS MEASURABLY NOT BETTER YET.
+ * Measured 2026-08-25 over level-appropriate fights:
+ *
+ *     heuristic   Brock  5 turns, 0 switches,   13 ms/turn
+ *                 Misty  9 turns, 1 switch,     12 ms/turn
+ *     search      Brock 10 turns, 4 switches,  666 ms/turn
+ *                 Misty 11 turns, 2 switches, 1288 ms/turn
+ *
+ * Slightly worse play and roughly a hundred times the cost. It is kept because
+ * the idea is right and the measurement is the useful part -- see the two
+ * failure modes below, which are what any second attempt has to beat.
+ *
+ * The heuristic ranks on a race between the two active Pokemon, scored against
+ * a worst-case reply chosen separately for each action. Those futures are not
+ * commensurable, which is why its preferences came out intransitive and why
+ * refusing to switch at all beat it on Lt. Surge.
+ *
+ * `winChance` is commensurable by construction: every action is priced by the
+ * probability the same continuation reaches a clean win. It was unusable for
+ * this before, because a search that ran out of budget scored everything zero
+ * and the ranking came back flat -- which is exactly what separating unknown
+ * from loss fixed. A shallow horizon is affordable here precisely because the
+ * screen reader re-plans every turn from a true position, so nothing has to be
+ * predicted far ahead.
+ */
+function searchRank(state, opts, engine) {
+	const X = engine.X, B = engine.B;
+	const entries = X.rank(state, {
+		maxTurns: opts.searchTurns || 6,
+		exactBudget: opts.searchBudget || 20000,
+		timeLimitMs: opts.searchTimeLimitMs || 150,
+		margin: opts.margin,
+		flagSets: opts.flagSets
+	});
+	if (!entries || !entries.length) return null;
+
+	// Only trust the search when it actually distinguished the actions.
+	//
+	// Measured: on Brock this search resolves the fight completely -- 100%
+	// clean, nothing unknown, and the gap between the best and worst action is
+	// the full 100 points. On Lt. Surge, at every depth from 4 to 10, it comes
+	// back 0% with 100% unknown and a spread of EXACTLY ZERO: it could not
+	// prove anything about any action, so every option scores the same and the
+	// order is arbitrary. Ranking by that is worse than the heuristic, and
+	// measurably was.
+	//
+	// This check is only possible because unknown is now separate from loss.
+	// Before that, the flat ranking was a column of zeros indistinguishable
+	// from "every option loses", and there was no way to tell an informative
+	// search from an uninformed one.
+	let best = -Infinity, worst = Infinity;
+	for (const e of entries) {
+		if (e.chance > best) best = e.chance;
+		if (e.chance < worst) worst = e.chance;
+	}
+	if (best - worst < (opts.searchMinSpread === undefined ? 0.01 : opts.searchMinSpread)) {
+		return null;   // uninformative: let the heuristic answer
+	}
+	return entries.map(function (e) {
+		return {
+			action: e.action,
+			label: labelAction(state, e.action, B),
+			chance: e.chance,
+			unknown: e.unknown,
+			upper: e.upper,
+			// Kept so callers that expect the heuristic's shape still work.
+			verdict: (100 * e.chance).toFixed(0) + '% clean' +
+				(e.unknown > 0.05 ? ' (+' + (100 * e.unknown).toFixed(0) + '% unexamined)' : '')
+		};
+	});
+}
+
 function advise(state, obs, opts, engine, session) {
 	const B = engine.B, RRPlan = engine.sandbox.RRPlan;
 	const range = foeRange(obs, opts && opts.candidates);
@@ -155,6 +244,31 @@ function advise(state, obs, opts, engine, session) {
 	// cannot get you killed by an over-optimistic "this kills" call.
 	const pessimistic = sync(state, obs, range.hi, B);
 	if (!pessimistic) return null;
+
+	// Search mode replaces the ranking wholesale; everything below it -- the
+	// both-ends check, the cycle guard -- is unchanged, because those are about
+	// the observation rather than about how actions are scored.
+	if (opts && opts.searchRank) {
+		const ranked = searchRank(pessimistic, opts, engine);
+		if (ranked && ranked.length) {
+			let best = ranked[0], repeats = 0;
+			if (session) {
+				const sig = signature(obs);
+				repeats = session.seen.get(sig) || 0;
+				session.seen.set(sig, repeats + 1);
+				if (repeats > 0) best = ranked[Math.min(repeats, ranked.length - 1)];
+			}
+			return {best: best, alternative: null, ambiguous: false, forced: repeats > 0,
+				repeats: repeats, range: range, exact: range.lo === range.hi,
+				plan: ranked, threats: null, assumption: 'search, ' +
+					(opts.searchTurns || 6) + ' turns deep', state: pessimistic};
+		}
+		// Falls through to the heuristic when the search returned nothing, or
+		// returned a ranking too flat to mean anything. The advisor is then
+		// using whichever method can actually tell the actions apart, which is
+		// the whole point of being able to measure ignorance.
+	}
+
 	const planHi = RRPlan.advise(pessimistic, opts || {});
 	let planLo = planHi, agreed = true;
 	if (range.lo !== range.hi) {
