@@ -42,11 +42,15 @@ var RRMatchup = (function () {
 	 * A 1v1 position, taken from the real one so the field comes with it.
 	 *
 	 * Built by cloning rather than by createState because the things that decide
-	 * these fights live outside the two Pokemon: Lt. Surge's permanent Electric
-	 * Terrain is the reason both Sleep Powders in the party are dead weight
-	 * against everything of his that stands on the ground. A fresh state would
+	 * these fights live outside the two Pokemon: Lt. Surge's Electric Terrain
+	 * blocks sleep for anything of his that stands on the ground, so both Sleep
+	 * Powders in the party are dead weight WHILE IT IS UP. A fresh state would
 	 * have quietly dropped it and the table would have promised sleep wins that
 	 * do not exist.
+	 *
+	 * Corrected 2026-08-25: that terrain is not permanent, it runs the normal
+	 * five turns from Pincurchin's Electric Surge. The engine used to model it
+	 * as never expiring, which made the sleep moves look permanently dead.
 	 *
 	 * Both sides start clean -- full HP, no boosts, no status -- because this is
 	 * a prior about pairings, not a snapshot of the fight in progress. Entry

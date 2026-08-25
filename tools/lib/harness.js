@@ -35,6 +35,7 @@ function loadEngine() {
 	const files = [
 		'src/js/data/rr-trainers-data.js', 'src/js/data/rr-move-effects.js',
 		'src/js/rr-critko.js', 'src/js/rr-battle.js', 'src/js/rr-ai.js',
+		'src/js/rr-ai-switching.js',
 		'src/js/rr-plan.js', 'src/js/rr-solver.js', 'src/js/rr-mcts.js',
 		'src/js/rr-exact.js'
 	];
@@ -57,6 +58,7 @@ function loadEngine() {
 		M: sandbox.RRMCTS,
 		X: sandbox.RRExact,
 		AI: sandbox.RRAI,
+		AISW: sandbox.RRAISwitching,
 		MU: sandbox.RRMatchup || null,
 		TRAINERS: sandbox.RR_TRAINER_DATA
 	};
@@ -206,9 +208,13 @@ function makeGenerator(loaded, dexParts, startSeed) {
 	 *
 	 * This save is on Restricted / Minimal Grinding, which is not a difficulty
 	 * setting but a rules change, and it is asymmetric: the player loses these,
-	 * the trainers keep everything. That asymmetry is why the AI's weather and
-	 * terrain are permanent -- Pincurchin still has Electric Surge, and the
-	 * engine is right to model Lt. Surge's terrain as never expiring.
+	 * the trainers keep everything.
+	 *
+	 * NOTE, corrected 2026-08-25: this used to go on to say the AI's weather and
+	 * terrain are PERMANENT. They are not. Pincurchin has Electric Surge and
+	 * sets the terrain on entry like anywhere else, and it expires on the normal
+	 * five-turn clock. Restricted/Minimal Grinding is a rule about how the
+	 * player may prepare, not a battle mechanic.
 	 *
 	 * The generator was building teams with moves the player cannot legally
 	 * have: 20 of 240 generated Pokemon carried one, including Electric Terrain,

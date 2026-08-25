@@ -19,7 +19,7 @@
  * No DOM. Loads in Node under vm for the tests and in the worker for the
  * search, following the same pattern as rr-critko.js.
  */
-/* global calc, RRCritKO, RR_MOVE_EFFECTS */
+/* global calc, RRCritKO, RR_MOVE_EFFECTS, RRAISwitching */
 var RRBattle = (function () {
 	"use strict";
 
@@ -718,6 +718,12 @@ var RRBattle = (function () {
 		if (held) mon.itemGone = true;
 	}
 
+	// Weather-extending held items, five turns to eight.
+	var WEATHER_ROCKS = {
+		"Sun": "Heat Rock", "Rain": "Damp Rock",
+		"Sand": "Smooth Rock", "Hail": "Icy Rock", "Snow": "Icy Rock"
+	};
+
 	function applyEntryAbility(state, key) {
 		var side = state[key];
 		var mon = active(side);
@@ -730,17 +736,34 @@ var RRBattle = (function () {
 		var terrain = TERRAIN_SETTERS[ability];
 		if (terrain) {
 			state.field.terrain = terrain;
-			// Terrain Extender takes it from five turns to eight. Restricted
-			// mode makes terrain the AI sets permanent anyway.
-			state.field.terrainTurns = (key === "foe" && state.rules === "restricted")
-				? Infinity
-				: (!mon.itemGone && mon.set.item === "Terrain Extender" ? 8 : 5);
+			// Five turns, eight with Terrain Extender. Standard mechanics.
+			//
+			// This used to set Infinity for anything the AI put down, on the
+			// grounds that "Restricted mode makes terrain the AI sets
+			// permanent". That is not a mechanic. Restricted/Minimal Grinding
+			// is a rule about how the PLAYER is allowed to prepare -- items and
+			// grinding -- and it has nothing to do with how long a terrain
+			// lasts. James, who plays this game, corrected it: Pincurchin has
+			// Electric Surge and sets the terrain on entry like anywhere else,
+			// and it expires.
+			//
+			// The error was not harmless and it ran everywhere, because
+			// `rules` defaults to "restricted" in createState. Every fight
+			// whose lead sets terrain or weather was simulated with it up for
+			// the whole battle, which inflates their damage for the whole
+			// battle and, for Electric Terrain, made grounded sleep moves look
+			// permanently dead. Both push the same way the rest of this
+			// engine's old mistakes did: they make fights look worse than they
+			// are.
+			state.field.terrainTurns =
+				(!mon.itemGone && mon.set.item === "Terrain Extender" ? 8 : 5);
 		}
 		var weather = WEATHER_SETTERS[ability];
 		if (weather) {
 			state.field.weather = weather;
-			state.field.weatherTurns = (key === "foe" && state.rules === "restricted")
-				? Infinity : 5;
+			// Five turns, or eight with the matching rock, same as terrain.
+			state.field.weatherTurns =
+				(!mon.itemGone && WEATHER_ROCKS[weather] === mon.set.item) ? 8 : 5;
 		}
 		if (ability === "Intimidate") {
 			var foe = active(state[other(key)]);
@@ -783,6 +806,34 @@ var RRBattle = (function () {
 	 */
 	function chooseReplacement(state, key) {
 		var side = state[key];
+
+		// The OPPONENT does not play a Nuzlocke, and until now this heuristic
+		// was applied to both sides, which meant their replacement was invented
+		// rather than modelled. That produced the one confirmed real-game miss
+		// this project has: Pincurchin fainted and the game sent Bellibolt where
+		// we predicted Vikavolt, voiding every turn of the plan after it.
+		//
+		// rr-ai-switching.js is a transcription of the real routine
+		// (CalcMostSuitableMonToSwitchInto), so use it for their side. Its top
+		// pick is taken here because `step` needs one concrete successor; the
+		// full distribution, including the coin flips, is available to callers
+		// through RRAISwitching.predict.
+		//
+		// Honest status: the port does NOT yet reproduce the Bellibolt
+		// observation. It ranks Vikavolt 19, Manectric 18, Bellibolt 17 in that
+		// position, so all three sit within two points and a small modelling
+		// error moves the answer. It is still a large improvement on scoring
+		// their choice by OUR objective, and tools/test_switching.js pins the
+		// failure so it cannot be quietly forgotten.
+		if (key === "foe" && typeof RRAISwitching !== "undefined") {
+			try {
+				var predicted = RRAISwitching.predict(state, "foe");
+				if (predicted && predicted.distribution.length) {
+					return predicted.distribution[0].index;
+				}
+			} catch (e) { /* fall through to the heuristic below */ }
+		}
+
 		var best = -1, bestScore = -Infinity;
 		// Swap the active index and put it back rather than cloning the whole
 		// state per candidate. Nothing below mutates -- damageRolls and
