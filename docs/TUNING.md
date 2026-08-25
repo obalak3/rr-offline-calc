@@ -1503,3 +1503,39 @@ what is unavailable.
 This is the min-loss feature, parked since early on, and this is the first
 measured case showing what its absence costs. Worth checking whether the other
 four losses have the same shape before treating them as search failures.
+
+## Restarts, measured across all 139 mirrors (2026-08-24, late)
+
+`tools/bench_mirror.js "" 250000 --all`, run at eaa7941 -- so this is the Luby
+restart driver WITHOUT the horizon rung, which landed afterwards. Mirror numbers
+come from trainer data rather than the generator, so unlike anything using
+generated teams these ARE directly comparable to the sweep recorded above:
+
+                            before      with restarts
+      clean wins           113/139        125/139
+      no clean line          3/139          3/139
+      undecided             23/139         11/139
+      won the fight at all 134/139        137/139
+      actually LOST          5/139          2/139
+      stalled, no verdict      n/a          0/139
+
+**Twelve of the twenty-three undecided fights fell**, and the count of fights
+proved to have no clean line did not move -- which is what should happen, since
+restarts change when an opening is searched and never which lines exist.
+
+The Elite Four is the part worth looking at, because it was the segment that
+looked structural: AGATHA now comes back in 520 nodes and 21,278, BRUNO in 156
+and 11,682. Those were undecided at a quarter of a million.
+
+The drop from 5 losses to 2 is the reporting fix in the same batch, not the
+search: three of the five were fights the fallback had not finished watching
+inside 40 turns. At 160 turns all three are wins, so "stalled" is 0 here. The
+two real losses are NELLE (the genuine min-loss case) and LANCE.
+
+**What this does not say.** It is one budget (250,000 nodes) on the benchmark
+where our team IS the opponent's, which is the easier side of the mechanism
+question -- a mirror usually has a clean line and often a shallow one. The
+cheapWitness probe scored 26 of 31 here and exactly zero on real fights. What
+makes restarts different is that they were also measured on ~40 real fights
+before being built: median 9.5x fewer nodes, best 1,193x, two rescues against
+one regression. See `REVIEW-2026-08-24.md`.
