@@ -587,6 +587,109 @@ var RRExact = (function () {
 		 * If they all come up empty, nothing has been concluded and the
 		 * exhaustive pass runs with whatever budget is left.
 		 */
+		/**
+		 * Luby's universal restart schedule: 1,1,2,1,1,2,4,1,1,2,4,8,...
+		 *
+		 * Chosen over plain doubling because it is provably within a constant
+		 * factor of the best FIXED cutoff for any runtime distribution, and we
+		 * do not know ours. Doubling gives every opening a slice and only comes
+		 * back a whole round later, so an opening that is right but needs a
+		 * little more than its slice waits a long time; Luby keeps returning
+		 * with short cutoffs while occasionally granting a long one. Measured
+		 * head to head it was never worse and twice as fast where they differed.
+		 */
+		function luby(i) {
+			for (var k = 1; k < 31; k++) {
+				var span = (1 << k) - 1;
+				if (i === span) return 1 << (k - 1);
+				if (i < span) return luby(i - ((1 << (k - 1)) - 1));
+			}
+			return 1;
+		}
+
+		/**
+		 * Deal the budget out over the opening moves instead of spending it all
+		 * under the first one.
+		 *
+		 * WHY THIS EXISTS. Depth-first search commits: it takes the first ranked
+		 * action and explores everything beneath it before trying the second,
+		 * and beneath one opening there can be 7^15 positions. So the cost of
+		 * this search is wildly uneven across the openings, which is the
+		 * classic heavy-tailed runtime distribution of backtracking search --
+		 * most branches are cheap, a few are effectively bottomless, and the
+		 * average is decided entirely by which one you happened to try first.
+		 * Brock's 6v6 mirror is the measured case: 74 nodes down one opening,
+		 * and still nothing after 250,000 down another.
+		 *
+		 * The remedy for a heavy tail is restarts, and this is the same idea the
+		 * portfolio, the fractional beam and the parallel worker split were all
+		 * reaching for separately. Each restart searches ONE opening under a
+		 * node cutoff; when the cutoff bites we move to the next opening and
+		 * come back later with a bigger one.
+		 *
+		 * WHY IT STAYS SOUND, which is the part to be careful about. A restart
+		 * narrows by BUDGET, never by width or by blurring positions -- beam
+		 * stays Infinity and hpBuckets stays 0 -- so a restart that stops
+		 * because it ran out of TREE rather than out of cutoff has genuinely
+		 * proved its opening holds no clean line. Every line begins with some
+		 * opening, so once every opening is proved empty the fight is decided.
+		 * That is the same argument rr-search.js already relies on to split the
+		 * root across workers. Anything less than a finished restart proves
+		 * nothing and the opening stays live.
+		 *
+		 * Truncation and give-ups are tracked separately from emptiness: an
+		 * opening whose lines ran past the horizon is FINISHED but not EMPTY, so
+		 * it leaves the rotation (re-searching it would repeat identical work)
+		 * while permanently forbidding a verdict of "no clean line exists".
+		 */
+		function restartDriver(rootKeys, cap) {
+			var live = rootKeys.slice();
+			// Small enough that the first sweep is cheap on every opening, so a
+			// fight whose answer sits one node down a late opening pays almost
+			// nothing to reach it.
+			var unit = Math.max(opts.restartUnit || 150,
+				Math.floor(limits.budget / (Math.max(1, live.length) * 8)));
+			var savedFilter = rootFilter;
+			var couldNotProve = false, horizonBlocked = false;
+			var hit = false, i = 1;
+			while (live.length && !limits.exhausted && limits.nodes < cap) {
+				var at = (i - 1) % live.length;
+				var key = live[at];
+				rootFilter = Object.create(null);
+				rootFilter[key] = true;
+				beam = Infinity;
+				hpBuckets = 0;
+				passUsesMatchup = true;
+				useValueOrdering = false;
+				// Never shared between restarts: a position failed under a small
+				// cutoff only because we stopped looking, and carrying that into
+				// a longer restart would turn "I did not look" into "there is
+				// nothing there".
+				seen = new Map();
+				orderCache = new Map();
+				line.length = 0;
+				limits.truncated = false;
+				limits.passOver = false;
+				passCap = Math.min(limits.budget, cap,
+					limits.nodes + luby(i) * unit);
+				if (walk(state, limits.maxTurns, true)) { hit = true; break; }
+				if (!limits.passOver && !limits.exhausted) {
+					// This restart ran out of tree, not out of cutoff.
+					live.splice(at, 1);
+					if (limits.truncated) { horizonBlocked = true; couldNotProve = true; }
+					if (limits.gaveUp) couldNotProve = true;
+					continue;   // do not advance i; the rotation just got shorter
+				}
+				i++;
+			}
+			rootFilter = savedFilter;
+			return {
+				found: hit,
+				decided: !hit && live.length === 0 && !couldNotProve,
+				blockedByHorizon: horizonBlocked
+			};
+		}
+
 		var passes = [];
 		// A portfolio is three restarts, so it pays for the same easy tree
 		// three times: a fight the plain search settles in 10 nodes costs 73
@@ -609,6 +712,8 @@ var RRExact = (function () {
 			//                        everything else was still lost at 150,000
 			//   a narrow beam        Lt. Surge, in 47,487 nodes, where the
 			//                        table-ordered search never arrives
+			//   restarts             Brock's 6v6 mirror, undecided at 250,000
+			//                        and answered in 74, plus Kindle Road at 11
 			//
 			// They are cheap when they work and capped when they do not, so the
 			// exhaustive pass still gets the bulk of the budget. Restarting the
@@ -620,6 +725,16 @@ var RRExact = (function () {
 			// well as a 6v6, with a floor of two so it is always a real choice.
 			passes.push({beam: 0.4, turns: limits.maxTurns, share: 0.20,
 				matchup: false});
+			// Restarts. ADDED to the portfolio rather than replacing anything:
+			// dropping the beam for them cost Lt. Surge, whose line the beam
+			// finds in 7,423 nodes and which full-width restarts do not reach.
+			// The two hedge against different failures -- a beam gets DEEP fast,
+			// a restart stops one opening swallowing everything -- and this
+			// project has now measured twice that no single such trick
+			// dominates. Unlike a beam, a finished restart may still conclude.
+			if (opts.restarts !== false) {
+				passes.push({driver: true, turns: limits.maxTurns, share: 0.40});
+			}
 			// The decider. Full width, full horizon, no pairing prior -- the
 			// search exactly as it was before any of this, and the only pass
 			// entitled to conclude anything.
@@ -633,8 +748,40 @@ var RRExact = (function () {
 		// past the horizon? That is the one situation where searching deeper is
 		// the right response rather than a waste.
 		var blockedByHorizon = false;
-		for (var p = 0; p < passes.length && !found; p++) {
+
+		// The openings this call is responsible for, named once. A restart pass
+		// rotates through them; with only one there is nothing to deal out and
+		// the driver has no work to do.
+		var rootKeys = null;
+		for (var dp = 0; dp < passes.length; dp++) {
+			if (!passes[dp].driver) continue;
+			passUsesMatchup = true;
+			useValueOrdering = false;
+			var rootOrder = ordered(state, RRBattle.positionKey(state));
+			rootKeys = [];
+			for (var rk = 0; rk < rootOrder.length; rk++) {
+				var rkey = actionKey(rootOrder[rk]);
+				if (!rootFilter || rootFilter[rkey]) rootKeys.push(rkey);
+			}
+			break;
+		}
+
+		for (var p = 0; p < passes.length && !found && !decidedHere; p++) {
 			var pass = passes[p];
+			// A restart pass is not a walk of the tree, it is a schedule of
+			// walks, so it takes its share of the budget and manages its own
+			// cutoffs inside it.
+			if (pass.driver) {
+				if (!rootKeys || rootKeys.length < 2) continue;
+				var driverCap = Math.min(limits.budget,
+					limits.nodes + Math.ceil(limits.budget * pass.share));
+				var driven = restartDriver(rootKeys, driverCap);
+				if (driven.blockedByHorizon) blockedByHorizon = true;
+				if (driven.found) { found = true; break; }
+				if (driven.decided) { decidedHere = true; break; }
+				if (limits.exhausted) break;
+				continue;
+			}
 			// Full width and full horizon is what earns the right to conclude.
 			// The ORDER does not enter into it: reordering changes which line
 			// is found first and never which lines exist, so a table-ordered
