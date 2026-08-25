@@ -19,7 +19,7 @@
  * No DOM. Loads in Node under vm for the tests and in the worker for the
  * search, following the same pattern as rr-critko.js.
  */
-/* global calc, RRCritKO, RR_MOVE_EFFECTS, RRAISwitching */
+/* global calc, RRCritKO, RR_MOVE_EFFECTS, RRAISwitching, RR_DISABLE_SWITCH_PORT */
 var RRBattle = (function () {
 	"use strict";
 
@@ -825,7 +825,8 @@ var RRBattle = (function () {
 		// error moves the answer. It is still a large improvement on scoring
 		// their choice by OUR objective, and tools/test_switching.js pins the
 		// failure so it cannot be quietly forgotten.
-		if (key === "foe" && typeof RRAISwitching !== "undefined") {
+		if (key === "foe" && typeof RRAISwitching !== "undefined"
+			&& typeof RR_DISABLE_SWITCH_PORT === "undefined") {
 			try {
 				var predicted = RRAISwitching.predict(state, "foe");
 				if (predicted && predicted.distribution.length) {
