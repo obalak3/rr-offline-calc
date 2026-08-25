@@ -1015,6 +1015,14 @@ var RRExact = (function () {
 		var total = opts.exactBudget || opts.budget || 400000;
 		var spent = 0;
 		var last = null;
+		// Whether every CHEAPER question was actually answered, rather than
+		// merely asked. It decides between two very different claims: "this
+		// costs one Pokemon and one is the least it can cost" and "this costs
+		// one Pokemon and we did not finish checking whether none was possible".
+		// A rung that ran out of budget proves nothing, and saying otherwise
+		// would be the same class of lie as calling an unfinished search
+		// impossible.
+		var lowerAllDecided = true;
 		for (var k = 0; k <= maxLosses; k++) {
 			var sub = Object.create(null);
 			for (var o in opts) sub[o] = opts[o];
@@ -1028,8 +1036,10 @@ var RRExact = (function () {
 				r.losses = k;
 				r.nodes = spent;
 				r.searchedUpTo = k;
+				r.minimal = lowerAllDecided;
 				return r;
 			}
+			if (!r.decided) lowerAllDecided = false;
 		}
 		if (last) {
 			last.losses = null;
@@ -1284,6 +1294,10 @@ var RRExact = (function () {
 					// than a guess, so the cost is a searched result too.
 					exactness: "no-clean-line-exists",
 					minLoss: true,
+					// Whether every cheaper option was actually ruled out, or
+					// merely tried. The panel must not say "the least it can
+					// cost" on the strength of a rung that ran out of budget.
+					minLossProved: cheap.minimal === true,
 					nodes: (nodes || 0) + cheap.nodes,
 					exactNodes: nodes || 0,
 					elapsedMs: 0

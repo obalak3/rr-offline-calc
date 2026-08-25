@@ -329,10 +329,25 @@
 				" The risks below are where it is most fragile.</div>";
 		}
 		if (route.exactness === "no-clean-line-exists") {
-			return '<div class="rr-adv-note"><b>No clean line exists.</b> ' +
+			var head = '<div class="rr-adv-note"><b>No clean line exists.</b> ' +
 				"The search finished having tried every option at median rolls: " +
-				"there is no way through without losing something. Below is the " +
-				"best available anyway.</div>";
+				"there is no way through without losing something. ";
+			// Two very different things can sit below this heading, and saying
+			// which is the point. A searched cheapest win is a real result; the
+			// weighted search's guess is not, and it used to be described the
+			// same way.
+			if (route.minLoss) {
+				var cost = route.losses === 1 ? "one Pokemon" : route.losses + " Pokemon";
+				return head + "Below is the cheapest win the search could find, " +
+					"costing <b>" + cost + "</b>" +
+					(route.minLossProved
+						? ", and losing fewer was searched and ruled out."
+						: ". Losing fewer was not ruled out -- that search ran " +
+						  "out of budget, so a cheaper win may exist.") +
+					"</div>";
+			}
+			return head + "Below is the best available anyway, and it is the " +
+				"weighted search's guess rather than a searched result.</div>";
 		}
 		if (route.exactness === "undecided") {
 			return '<div class="rr-adv-note">The search ran out of time on this ' +

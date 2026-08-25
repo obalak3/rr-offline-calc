@@ -410,6 +410,22 @@ function replay(state, steps) {
 			check('  and it really does finish the opponent', beaten);
 		}
 
+		// Minimality is a separate and stronger claim than cheapness, and it
+		// must be earned. Here it is: the k=0 search above came back DECIDED,
+		// so "losing one is the least this can cost" is a searched fact.
+		check('  and it knows whether that really is the least it can cost',
+			cheap.minimal === true && clean.decided === true,
+			JSON.stringify({minimal: cheap.minimal, k0decided: clean.decided}));
+
+		// The same claim must NOT survive a search that could not finish. A
+		// starved run has ruled nothing out and has to say so.
+		loaded.B.clearCache();
+		const starved = loaded.X.cheapestWin(mk(),
+			{exactBudget: 400, maxTurns: 24, maxLosses: 2});
+		check('  and a starved search claims no minimality at all',
+			starved.minimal !== true,
+			JSON.stringify({found: starved.found, minimal: starved.minimal}));
+
 		// The whole point is that the PLANNER acts on it, not just that the
 		// search can find it. Before this, planRoute proved no clean line
 		// existed and then handed the fight to a weighted search still trying
