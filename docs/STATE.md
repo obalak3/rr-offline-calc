@@ -511,6 +511,42 @@ fewest".
 Check the other four outright losses for the same shape first -- they may all be
 this.
 
+### 1b. UNVERIFIED, run this before acting on item 1
+
+A diagnostic was run at the end of 2026-08-24 and **its result is not trusted**,
+because the script matched battles by name PREFIX and several of these names are
+truncated and non-unique -- so some rows may be comparing a different battle
+from the one the mirror sweep scored. The discrepancy is visible in the table
+itself: the mirror reported all five as losses, and this shows three winning.
+
+What it appeared to say, if the matching is sound:
+
+    fight                     planner            no-switch line
+    VIRID. FOREST / ACE TRAI  LOSES (lost 2)     WINS, losing 1
+    ROUTE 13 / PICNICKER ALM  wins, losing 2     WINS, losing 4
+    VICTORY ROAD / ACE TRAIN  wins, losing 0     WINS, losing 0
+    ELITE FOUR LANCE          wins, losing 2     WINS, losing 4
+    TREASURE BEA. / SWIMMER   LOSES (lost 0)     WINS, losing 1
+
+("no-switch line" is the crudest possible policy: hit hardest with whoever is
+out, never switch, let things die. It is a lower bound on competent play.)
+
+**Two things to check, in this order:**
+
+1. **Fix the battle matching first.** Match on the full label, or on segment
+   plus index, not on a truncated prefix. Re-run before believing any row.
+2. If the table survives that, it says **only two of the five losses are
+   min-loss cases** -- Viridian Forest and Treasure Beach. On the other three
+   the planner already beats the crude no-switch policy, so item 1 would not
+   help them and they need a different diagnosis.
+
+**And one row is odd regardless of matching:** TREASURE BEACH reads
+`LOSES (lost 0)` -- the fight lost without a single Pokemon fainting. That is
+not a defeat, it is a stall or a turn-limit artifact, and it is worth chasing on
+its own because it suggests `won` is being reported false for a fight that
+simply did not resolve. `tools/bench_mirror.js` gives the weighted search 40
+turns; if these fights need more, the "5 outright losses" figure is overstated.
+
 ### 2. Play a line in the real game and compare it turn by turn
 
 **The only validation that would test the engine against Radical Red rather
