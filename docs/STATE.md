@@ -354,12 +354,16 @@ have none of these abilities, so the obvious test was inert.
 
 ## Open questions
 
-1. **Which mirrors do we lose?** `tools/bench_mirror.js --all` covers all 139
-   non-doubles fights and is the run that matters most: with the team removed as
-   a variable, anything not won is the planner rather than the team. Early
-   results have Blaine and Clair at "wins, losing 2" -- the fight is won and the
-   Nuzlocke objective is not, which is the expected shape. Full results pending;
-   record them here.
+1. **Which mirrors do we lose? ANSWERED.** All 139 non-doubles fights, our team
+   IS their team plus one level:
+
+       clean wins            113/139  (81%)
+       won the fight at all  134/139
+       actually LOST           5/139
+
+   So with the team removed as a variable the planner beats a one-ply scorer
+   almost everywhere. The five losses are the signal; one is diagnosed above
+   (min-loss) and the other four are unexamined.
 
    **Watch for the Brock pattern, which has already recurred.** The Lt. Surge
    REMATCH mirror comes back undecided at 250,000 nodes while the weighted
@@ -480,6 +484,70 @@ species, because the dex array is `[hp, atk, def, spe, spa, spd]` and Speed sits
 at index 3; alternate forms in the pool, because the filter read `name` where
 forms keep the base name and put the suffix in `key`; and an RNG that was
 deterministic but never uniform, giving three of six natures 0.1% each.
+
+## WHAT TO FIX NEXT, in order, with the evidence for each
+
+Written as a worklist rather than a description. Everything here is measured;
+nothing is speculative.
+
+### 1. Min-loss: when a clean win is impossible, find the CHEAPEST loss
+
+**The clearest defect in the project, and now demonstrated rather than
+suspected.** Parked early on, when the focus was losing nothing at all. The
+whole-game data has overtaken that decision.
+
+VIRID. FOREST / ACE TRAINER NELLE, a 2v2 mirror: the exact search correctly
+proves no clean line exists, and the fallback then **loses 0-2 a fight that is
+winnable losing 1**. It switches a nearly-dead Charcadet out on turn 4,
+conceding a free hit, and loses the Gulpin mirror by exactly that margin --
+their last Pokemon finishing at 21 HP. Let the Charcadet stay in and die and the
+fight is won on turn 10.
+
+The failure is structural, not tactical: once `cleanWin` reports impossible, the
+fallback is a weighted search **still trying to preserve everything**, which is
+precisely what is unavailable. Nothing anywhere searches for "win, losing the
+fewest".
+
+Check the other four outright losses for the same shape first -- they may all be
+this.
+
+### 2. Play a line in the real game and compare it turn by turn
+
+**The only validation that would test the engine against Radical Red rather
+than against itself**, and nobody has ever done it. Today alone found about
+twenty-five mechanics simulated wrongly, each silently wrong for the project's
+whole life, each capable of producing confident wrong lines. "Our tests pass"
+and "this matches the game" are different claims and only the first has
+evidence. If the AI deviates from prediction on turn four, that is worth more
+than every benchmark in `TUNING.md`.
+
+### 3. Re-run every stale number
+
+All of these predate roughly twenty-five correctness fixes, the generator
+repairs and both search fixes:
+
+    tools/bench_game.js     last read 42% clean, Elite Four 0/18 -- the most
+                            stale number in the project
+    tools/ceiling.js        defines "what is achievable" and was measured with
+                            teams that had no abilities
+    the real-team Surge     56 million nodes, undecided, predates everything
+    question                (hunt_parallel.js checkpoints, so it can resume)
+
+`bench_early` is current at 73%, but that predates the beam fix and the cheap
+witness, both of which are real search improvements.
+
+### 4. The beam regression
+
+The fractional beam rescued six fights and cost one: a Brock battle went from a
+19-turn clean win to undecided. Narrowing to 40% can miss a line a wider search
+found, and the exhaustive pass behind it did not recover it in budget. Either
+widen slightly, or give the exhaustive pass a larger share.
+
+### 5. Doubles
+
+27 of 167 battles, several before Misty. Entirely unimplemented, and correctly
+gated -- the advisor disables itself and says why rather than answering the
+singles question. `DOUBLES-SPEC.md` has the design.
 
 ## Known gaps, in rough priority order
 
