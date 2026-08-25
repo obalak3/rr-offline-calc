@@ -437,6 +437,12 @@ var RRExact = (function () {
 		var seen = new Map();
 		var beam = Infinity;
 		var passCap = limits.budget;
+		// How many of ours may fall. Zero is the Nuzlocke objective and the
+		// default; anything higher is cheapestWin asking a different question.
+		// Measured from the state we were handed, since a fight can be planned
+		// from partway through with somebody already down.
+		var lossBudget = opts.lossBudget || 0;
+		var startFainted = countFainted(state.me);
 		// How coarsely this pass names positions. 0 means exactly.
 		var hpBuckets = 0;
 
@@ -522,7 +528,6 @@ var RRExact = (function () {
 			// never entered.
 			if (!theirs) { limits.gaveUp = true; return false; }
 
-			var before = countFainted(current.me);
 			var actions = ordered(current, key);
 			if (isRoot && rootFilter) {
 				var mine = [];
@@ -560,8 +565,15 @@ var RRExact = (function () {
 					limits.gaveUp = true;
 					continue;
 				}
-				// The cut that makes this tractable.
-				if (countFainted(next.me) > before) continue;
+				// The cut that makes this tractable. Normally `lossBudget` is 0
+				// and this forbids any faint at all, which is the Nuzlocke
+				// objective and also the reason this search is affordable: the
+				// moment something of ours dies the branch is worth nothing and
+				// is dropped rather than explored. Counting from the START of
+				// the fight rather than from the parent is what lets a caller
+				// raise the budget and ask the different question "win, losing
+				// at most k" -- see cheapestWin.
+				if (countFainted(next.me) - startFainted > lossBudget) continue;
 
 				line.push({state: current, action: actions[i], theirAction: theirs,
 					next: next});
@@ -814,6 +826,12 @@ var RRExact = (function () {
 		// The openings this call is responsible for, named once. A restart pass
 		// rotates through them; with only one there is nothing to deal out and
 		// the driver has no work to do.
+		//
+		// Deliberately NOT `rootActionKeys()`, which looks like the same thing:
+		// that one rebuilds the pairing table and clears the caches, because it
+		// exists for callers outside a search (rr-search, splitting the root
+		// across workers). Calling it here would wipe the caches of the search
+		// it is being asked for.
 		var rootKeys = null;
 		for (var dp = 0; dp < passes.length; dp++) {
 			if (!passes[dp].driver) continue;
@@ -962,6 +980,67 @@ var RRExact = (function () {
 			line: found ? line.slice() : null,
 			blockedByHorizon: blockedByHorizon
 		};
+	}
+
+	/**
+	 * The cheapest win available, when a clean one is not.
+	 *
+	 * WHY THIS IS NOT JUST "THE FALLBACK". When `cleanWin` proves no clean line
+	 * exists, what happens today is that a weighted search takes over -- and it
+	 * is still trying to preserve everything, which is precisely the thing that
+	 * has just been shown to be unavailable. It plays for a goal it cannot have
+	 * and gets a worse result than aiming at the reachable one. The measured
+	 * case is VIRID. FOREST / ACE TRAINER NELLE, a 2v2 where no clean line
+	 * exists, the fallback loses 0-2, and the fight is winnable losing exactly
+	 * one: it switches a nearly-dead Charcadet out on turn 4, concedes a free
+	 * hit, and loses the Gulpin mirror by about that margin.
+	 *
+	 * So this asks the same question with the objective relaxed one step at a
+	 * time, and stops at the first answer. k=0 is `cleanWin` exactly.
+	 *
+	 * WHY CLIMBING IS THE RIGHT DIRECTION HERE, when iterative deepening on the
+	 * HORIZON measured eight times worse: a shallow horizon does not shrink this
+	 * tree, because the tree is wide rather than tall. The loss budget is
+	 * different -- it is the cut that makes the search affordable at all, since
+	 * a branch dies the moment something of ours does. Raising it genuinely
+	 * grows the tree, so the cheap questions must be asked first. Measured on
+	 * NELLE: 1,051 nodes at k=0, 1,959 at k=1, 5,531 at k=2.
+	 *
+	 * A "no line exists" at k=0 says nothing about k=1, so the climb continues
+	 * past it rather than stopping.
+	 */
+	function cheapestWin(state, options) {
+		var opts = options || {};
+		var maxLosses = opts.maxLosses === undefined ? 2 : opts.maxLosses;
+		var total = opts.exactBudget || opts.budget || 400000;
+		var spent = 0;
+		var last = null;
+		for (var k = 0; k <= maxLosses; k++) {
+			var sub = Object.create(null);
+			for (var o in opts) sub[o] = opts[o];
+			sub.lossBudget = k;
+			sub.exactBudget = total - spent;
+			if (sub.exactBudget <= 0) break;
+			var r = cleanWin(state, sub);
+			spent += r.nodes;
+			last = r;
+			if (r.found) {
+				r.losses = k;
+				r.nodes = spent;
+				r.searchedUpTo = k;
+				return r;
+			}
+		}
+		if (last) {
+			last.losses = null;
+			last.nodes = spent;
+			last.searchedUpTo = maxLosses;
+			// `decided` from the last rung means "no win losing at most
+			// maxLosses", which is a narrower claim than the one cleanWin makes
+			// and must not be read as "no clean line exists".
+		}
+		return last || {found: false, decided: false, nodes: 0, line: null,
+			losses: null, searchedUpTo: maxLosses};
 	}
 
 	/** Render a found line in the same shape planRoute produces. */
@@ -1451,6 +1530,7 @@ var RRExact = (function () {
 
 	return {
 		cleanWin: cleanWin,
+		cheapestWin: cheapestWin,
 		actionKey: actionKey,
 		rootActionKeys: rootActionKeys,
 		routeFromProof: routeFromProof,

@@ -360,5 +360,65 @@ function replay(state, steps) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The cheapest win, when a clean one does not exist.
+//
+// The fight to test this on has to be one where no clean line exists AND the
+// fight is still winnable, which is rare and easy to get wrong -- most fights
+// are either cleanly winnable or hopeless. VIRID. FOREST / ACE TRAINER NELLE
+// as a mirror is the measured case: cleanWin exhausts the tree in about a
+// thousand nodes and proves there is no clean line, and the fight is won losing
+// exactly one.
+{
+	const H = require('./lib/harness.js');
+	const loaded = H.loadEngine();
+	const battles = H.earlyBattles(loaded, {maxLevel: 100, relativeBase: 75});
+	const battle = battles.filter(b => H.label(b).toUpperCase().includes('NELLE'))[0];
+	if (!battle) {
+		check('the min-loss fixture battle is still in the dataset', false,
+			'NELLE not found');
+	} else {
+		const theirs = H.foeSets(battle);
+		const ours = theirs.map(s => Object.assign({}, s, {level: s.level + 1}));
+		const mk = () => loaded.B.createState(ours, theirs, {});
+
+		loaded.B.clearCache();
+		const clean = loaded.X.cleanWin(mk(), {exactBudget: 400000, maxTurns: 24});
+		check('a fight with no clean line is still proved to have none',
+			clean.decided && !clean.found,
+			JSON.stringify({found: clean.found, decided: clean.decided}));
+
+		loaded.B.clearCache();
+		const cheap = loaded.X.cheapestWin(mk(),
+			{exactBudget: 400000, maxTurns: 24, maxLosses: 2});
+		check('  and the cheapest win is found anyway',
+			cheap.found === true, JSON.stringify({found: cheap.found}));
+		check('  losing as few as possible, not merely few',
+			cheap.losses === 1, 'losses=' + cheap.losses);
+		if (cheap.found) {
+			// The claim is about the LINE, so read the line rather than trust
+			// the number that came back with it.
+			let worst = 0;
+			for (const step of cheap.line) {
+				const n = step.next.me.team.filter(m => m.fainted).length;
+				if (n > worst) worst = n;
+			}
+			check('  and the line really costs exactly that many',
+				worst === cheap.losses, 'line lost ' + worst);
+			const beaten = cheap.line[cheap.line.length - 1].next.foe.team
+				.every(m => m.fainted);
+			check('  and it really does finish the opponent', beaten);
+		}
+
+		// The default must be untouched: lossBudget 0 is the old cut exactly.
+		loaded.B.clearCache();
+		const zero = loaded.X.cleanWin(mk(),
+			{exactBudget: 400000, maxTurns: 24, lossBudget: 0});
+		check('  a loss budget of zero is the clean search, node for node',
+			zero.nodes === clean.nodes && zero.found === clean.found,
+			JSON.stringify({zero: zero.nodes, clean: clean.nodes}));
+	}
+}
+
 console.log('\n%d failure(s)', failures);
 process.exit(failures ? 1 : 0);
