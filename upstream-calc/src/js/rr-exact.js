@@ -1486,7 +1486,11 @@ var RRExact = (function () {
 			maxTurns: opts.maxTurns || 24,
 			forkBudget: opts.forkBudget === undefined ? 2 : opts.forkBudget,
 			exhausted: false,
-			collapsed: false
+			collapsed: false,
+			// True once any leaf was scored by estimate rather than searched to
+			// a real conclusion. One estimate anywhere disqualifies the whole
+			// result from being called a proof.
+			estimated: false
 		};
 		var memo = new Map();
 		var started = Date.now();
@@ -1507,7 +1511,31 @@ var RRExact = (function () {
 			// Running past the horizon is ignorance, not defeat. The fight is
 			// still going; we stopped watching. Scoring it zero is what made a
 			// long stall line indistinguishable from a loss.
-			if (turnsLeft <= 0) return unknown();
+			//
+			// ...but reporting ignorance is only useful if the caller can do
+			// something with it, and on a real fight it swallows everything: a
+			// win here means ALL of theirs are down, five knockouts do not fit
+			// in a short horizon, so every branch reaches this line and the
+			// whole search returns "nothing proved". Measured at horizons 2
+			// through 12 on Lt. Surge: 0% proved, 100% unexamined, every time.
+			// A search that discards its leaves can only answer when it sees
+			// the end of the fight, and this one cannot afford to.
+			//
+			// So a caller may supply `leafValue`, an estimate of the position
+			// in [0,1], and the horizon becomes an evaluation instead of a
+			// shrug. That is the standard shape -- search a few turns, score
+			// what you land on -- and it is the half this file never had.
+			if (turnsLeft <= 0) {
+				if (!opts.leafValue) return unknown();
+				// An ESTIMATE, which is a different kind of claim from anything
+				// else this function returns, so it is recorded. Nothing that
+				// passed through a guess may be called proved; `certain` below
+				// refuses on this flag, which is what keeps certify() honest.
+				limits.estimated = true;
+				var est = opts.leafValue(current);
+				if (typeof est !== "number" || !isFinite(est)) return unknown();
+				return {v: Math.max(0, Math.min(1, est)), u: 0};
+			}
 			// Same short-circuit as walk(): giving up has to stop the whole
 			// search, not just the node that noticed.
 			if (limits.exhausted) return unknown();
@@ -1658,7 +1686,11 @@ var RRExact = (function () {
 			upper: Math.min(1, chance + unknownMass),
 			ranking: rootRanking,
 			collapsed: limits.collapsed,
-			certain: chance >= CERTAIN && !limits.collapsed && !limits.exhausted,
+			// An estimated leaf anywhere means this is no longer a proof, no
+			// matter how confident the number looks.
+			certain: chance >= CERTAIN && !limits.collapsed && !limits.exhausted &&
+				!limits.estimated,
+			estimated: limits.estimated,
 			nodes: limits.nodes,
 			exhausted: limits.exhausted,
 			elapsedMs: Date.now() - started

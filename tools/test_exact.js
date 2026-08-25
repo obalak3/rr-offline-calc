@@ -241,6 +241,49 @@ function replay(state, steps) {
 		starved.why);
 }
 
+// ------------------------------------ an estimated leaf is never a proof
+
+// Leaf evaluation exists so the odds search can answer at a short horizon, and
+// it works by GUESSING the value of positions it did not search. That is fine
+// for ranking and fatal for proving, so the boundary between them has to hold:
+// one estimated leaf anywhere must disqualify the entire result from being
+// called certain, however confident the number looks. certify() is built on
+// that flag, so if this ever stops holding, the word "proved" starts appearing
+// on answers that were partly invented.
+{
+	const lv = (species, moves, level) => ({species, level, nature: 'Serious',
+		evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0},
+		ivs: {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31},
+		moves, item: '', ability: undefined});
+
+	// A fight that cannot be lost but takes SEVERAL turns, so a short horizon
+	// really is reached. Blastoise one-shots a Rattata, which meant the first
+	// version of this test never hit the horizon at all and proved nothing.
+	const easy = B.createState([lv('Blastoise', ['Surf'], 60)],
+		[lv('Blissey', ['Pound'], 40)], {});
+	const proved = X.winChance(easy, {exactBudget: 500000, maxTurns: 24,
+		leafValue: () => 1});
+	check('  a search that never reaches the horizon is still a proof',
+		proved.certain === true && proved.estimated === false,
+		'certain ' + proved.certain + ' estimated ' + proved.estimated);
+
+	// Same fight, but the horizon is set so short the search must guess, and the
+	// guess is the most flattering one possible.
+	const guessed = X.winChance(easy, {exactBudget: 500000, maxTurns: 1,
+		leafValue: () => 1});
+	check('    but one estimated leaf makes it NOT a proof, even at value 1',
+		guessed.estimated === true && guessed.certain === false,
+		'certain ' + guessed.certain + ' estimated ' + guessed.estimated);
+	check('      while still reporting the estimate it was given',
+		guessed.chance > 0.99, 'chance ' + guessed.chance);
+
+	// And without a leafValue the old behaviour is untouched: horizon is unknown.
+	const noLeaf = X.winChance(easy, {exactBudget: 500000, maxTurns: 1});
+	check('    with no evaluator the horizon is still unknown, not a guess',
+		noLeaf.estimated === false && noLeaf.unknown > 0.5,
+		'estimated ' + noLeaf.estimated + ' unknown ' + noLeaf.unknown);
+}
+
 // ------------------------------------------- unknown is distinct from lost
 
 // The whole point of splitting `v` from `u` is that "you lose" and "I did not

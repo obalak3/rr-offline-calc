@@ -359,8 +359,56 @@ var RRMatchup = (function () {
 		};
 	}
 
+	/**
+	 * A leaf evaluator for the odds search: this position, as a number in [0,1].
+	 *
+	 * `valueOf` returns a MARGIN -- how much of my team is left over after
+	 * paying for theirs -- which is unbounded in both directions and therefore
+	 * cannot be mixed with probabilities. The search averages chance nodes and
+	 * maximises choices, so whatever comes back from a leaf has to live on the
+	 * same scale as "1 means a clean win", or a single leaf would swamp every
+	 * real probability in the tree.
+	 *
+	 * Squashed with a logistic rather than clipped, because the shape matters:
+	 * it is monotone (more margin is never worth less), it saturates (being
+	 * enormously ahead is not meaningfully better than being clearly ahead,
+	 * which stops a hopeless branch being rescued by one lopsided leaf), and it
+	 * is smooth around zero, where the positions the search actually has to
+	 * choose between live.
+	 *
+	 * `k` sets how sharply it separates. At 1, a margin of 0 reads 0.5 and a
+	 * margin of 3 reads about 0.95.
+	 *
+	 * THIS IS AN ESTIMATE AND NOTHING ELSE. It is not a probability of anything
+	 * that was computed; it is a heuristic wearing a probability's clothes so it
+	 * can be averaged. winChance records that a leaf was estimated and refuses
+	 * to call the result proved, which is the only thing keeping the difference
+	 * visible downstream.
+	 */
+	function leafValue(table, options) {
+		var opts = options || {};
+		var k = opts.sharpness === undefined ? 1 : opts.sharpness;
+		return function (state) {
+			var v = valueOf(state, table, opts);
+			// A team that cannot answer something at all is not merely behind.
+			if (v.walls > 0) return 0;
+			// `afford`, NOT `margin`. The margin carries the progress term,
+			// which subtracts their whole remaining health, so at the start of
+			// a fight it reads -6.6 and squashes to 0.0014 -- every position in
+			// the game scoring "hopeless" and none of them distinguishable.
+			//
+			// The progress term exists because a one-turn ranker has no
+			// lookahead and would otherwise sit still rather than trade. A
+			// SEARCH already supplies the lookahead: deeper leaves have foes
+			// with less health, which lowers `needed` and raises `afford` by
+			// itself. Charging for progress here as well double-counts it, on a
+			// scale that has to mean something absolute.
+			return 1 / (1 + Math.exp(-k * v.afford));
+		};
+	}
+
 	return {build: build, versus: versus, anyCoverageGap: anyCoverageGap,
-		valueOf: valueOf};
+		valueOf: valueOf, leafValue: leafValue};
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = RRMatchup;

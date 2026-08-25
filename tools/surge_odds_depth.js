@@ -20,7 +20,8 @@
 
 const H = require('./lib/harness.js');
 const engine = H.loadEngine();
-const B = engine.B, X = engine.X;
+const B = engine.B, X = engine.X, MU = engine.MU;
+const USE_LEAF = !process.env.NO_LEAF;
 
 const party = H.realTeam();
 const battle = H.earlyBattles(engine, {maxLevel: 40})
@@ -28,7 +29,8 @@ const battle = H.earlyBattles(engine, {maxLevel: 40})
 const foeSets = H.foeSets(battle);
 
 console.log('=== ' + H.label(battle) + ' -- odds by horizon, from turn 1 ===\n');
-console.log('turns   proved   unknown   ceiling   nodes      time   best opening');
+console.log(USE_LEAF ? 'WITH leaf evaluation\n' : 'WITHOUT leaf evaluation (the old behaviour)\n');
+console.log('turns   value    unknown   ceiling   nodes      time   best opening');
 console.log('---------------------------------------------------------------------------');
 
 for (const turns of [2, 3, 4, 6, 8, 12]) {
@@ -37,7 +39,14 @@ for (const turns of [2, 3, 4, 6, 8, 12]) {
 	const t0 = Date.now();
 	let r;
 	try {
-		r = X.winChance(state, {exactBudget: 3e6, timeLimitMs: 60000, maxTurns: turns});
+		const opts = {exactBudget: 3e6, timeLimitMs: 60000, maxTurns: turns};
+		if (USE_LEAF) {
+			// Built once, outside the search, because cleanWin resets its caches
+			// on entry and a nested build would wipe the caller's.
+			const table = MU.build(state, {perPairBudget: 400});
+			opts.leafValue = MU.leafValue(table, {progressWeight: 2});
+		}
+		r = X.winChance(state, opts);
 	} catch (e) { console.log(String(turns).padStart(5) + '   ERROR ' + e.message); continue; }
 	const secs = ((Date.now() - t0) / 1000).toFixed(0);
 	let best = '-';
