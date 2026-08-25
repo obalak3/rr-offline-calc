@@ -1,5 +1,33 @@
 # Implementation plan: the restart driver (written 2026-08-24, late)
 
+## STATUS
+
+- **Phase 0a DONE** (4a1718e). bench_mirror no longer calls a timeout a loss.
+- **Phase 0b DONE** (9092939). STATE.md's five stale claims corrected inline.
+- **Phase 1 core DONE** (ed335ac). Luby restart driver in `cleanWin`, ADDED to
+  the portfolio rather than replacing it. Brock 6v6 mirror: undecided at
+  250,001 nodes / 93s -> FOUND 18T in 19,613 nodes / 11s. All 13 test files
+  green; worker bundle rebuilds and passes (dist/ is gitignored, so rebuilding
+  is a local step, not a commit).
+- **Phase 1 remaining**: horizon rungs (below), and the payoff sweeps.
+  A full mirror sweep with restarts was started
+  (`bench_mirror.js "" 250000 --all`) to compare against the recorded
+  113 clean / 3 no-line / 23 undecided. Mirror numbers use trainer data, not
+  the generator, so they ARE directly comparable to that record. bench_game is
+  NOT comparable to its recorded 42%: the generator changed since.
+- Next: Phase 1 horizon rungs, then Phase 3 (min-loss) or Phase 2 (novelty).
+
+**A trap learned the hard way this session:** do not benchmark against numbers
+recorded in TUNING.md for anything that uses the GENERATED teams. The restricted
+-mode filter moved the early fingerprint from `ec3d71803436a23f` to
+`02727428303d05a6`, so bench_hunt/bench_early numbers from before that are not
+a baseline. Compare against the same code with `restarts: false` instead. Doing
+this wrong cost a false "Lt. Surge regressed" alarm and an unnecessary rewrite.
+
+**Also:** write git commit messages via `git commit -F -` with a quoted
+heredoc. Backticks in a `-m` string get run by the shell and silently eat the
+text between them.
+
 The reviewed analysis behind this plan is `REVIEW-2026-08-24.md` (measured
 findings, raw numbers, sources). Read that first. This file is the execution
 plan: what to build, in what order, with the traps and the definition of done
