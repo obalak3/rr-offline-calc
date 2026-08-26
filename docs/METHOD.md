@@ -580,3 +580,84 @@ value-function learning would have papered over: a learner given a non-Markov
 state learns a blurred average over the histories that led there, and would have
 been permanently confused about replacements for reasons no benchmark would
 explain.
+
+---
+
+# Seventh pass: correcting the sixth, and a claim from the second
+
+## The Bellibolt match was weak evidence and I presented it as strong
+
+I tested FOUR moments in the fight against a field of four or five candidates,
+and reported the one that matched as though it confirmed a hypothesis. With four
+draws from a field that size, at least one match arises by chance roughly two
+times in three. That is a multiple-comparisons artifact, not a result, and the
+confidence in the previous section was unearned.
+
+What survives is the mechanism, which is independent of the match:
+
+    GetMostSuitableMonToSwitchIntoByParty:
+        CalcMostSuitableMonSwitchIfNecessary();     // skipped if already computed
+        option1 = bestMonIdToSwitchInto[...][0];
+        if (option1 == PARTY_SIZE || party[option1].hp == 0)   // only if DEAD
+            CalcMostSuitableMonToSwitchInto();                 // ...recompute
+
+The replacement really is computed once and reused, and recomputed only when the
+cached choice has died. So the decision can be older than the position it is
+applied to. That is a fact about the source. Whether it explains our one
+observation is unproven, and the test is the ~40 replacement events sitting in
+James's recordings, not four hand-picked moments.
+
+**Limitation recorded honestly:** I could not find where
+`calculatedAISwitchings` is reset. It is not in `ai_switching.c`,
+`battle_start_turn_start.c` or `battle_util.c`. Until that is found, the LIFETIME
+of the cache is unknown -- per turn, per switch, or per battle -- and those imply
+very different behaviour. I am not going to guess which.
+
+## A claim from the second pass was wrong: the AI does adapt
+
+I wrote, as the foundation of the MDP argument, that the opponent "does not
+model us, it does not adapt, it does not deceive". The first two are false.
+`battle_start_turn_start.c` carries:
+
+    //Prepare switching anti-AI abuse
+    gNewBS->ai.previousMonIn[i]       = 0xFF;
+    gNewBS->ai.secondPreviousMonIn[i] = 0xFF;
+    ...
+    case ABILITY_INTIMIDATE:
+        gNewBS->ai.switchesInARow[i] = 2;  //So the AI gets smart if the player
+                                           //immediately switches out
+
+The AI tracks which Pokemon we sent in on the previous two occasions and how
+many times we have switched in a row, explicitly to punish switch-spamming. It
+also carries its own `randSeed`. So it has memory of OUR behaviour and reacts to
+it.
+
+**Does this break the framework? No, but it changes what "the state" is.** The
+AI is still a FIXED function -- it does not learn, its rules do not change, and
+it is not optimising against us. A fixed policy that depends on recent history is
+still a stationary policy over an augmented state, so this remains an MDP
+provided the state includes what the AI remembers: its cached switch target, the
+previous two Pokemon we sent in, and our switch streak.
+
+The correction that matters is to the phrase, not the conclusion. "Not
+adversarial" is right. "Does not model us" was wrong, and I had used it to argue
+that no opponent modelling was needed. Some IS needed: not prediction of an
+adaptive opponent, but bookkeeping of the variables it remembers.
+
+## Consequence for everything above
+
+The list of state we must track to be Markov now reads:
+
+    the battle state we already model
+  + the AI's cached switch target and whether it has been computed
+  + previousMonIn, secondPreviousMonIn (our last two switch-ins)
+  + switchesInARow (our switch streak)
+  + possibly the AI's randSeed, which makes its "random" choices a deterministic
+    stream rather than fresh coin flips
+
+That last one is worth staring at. If ties are drawn from a seeded stream rather
+than true randomness, then two runs from the same save with the same inputs
+would produce the SAME "coin flips" -- which is testable against James's
+recordings, and which would mean some of what we have been modelling as
+irreducible chance is in principle predictable. I do not claim it is exploitable.
+I claim we do not currently know, and that we have been assuming otherwise.
