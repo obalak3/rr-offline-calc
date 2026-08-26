@@ -17,7 +17,43 @@
 > trajectory rather than a partial observation, which is what steps 1 and 2
 > need.
 >
-> **NEXT: step 1, the opponent scoreboard** over the corpus — is the game's
+> **2026-08-26 later: STEP 1 IS MEASURED.** `tools/scoreboard.js` over 102 real
+> AI decisions (`tools/screen/decisions.py`, fixture checked in):
+>
+>     predictor   membership     mean set width
+>     ties        77/102 75.5%   1.09
+>     margin      102/102 100%   3.52
+>
+> THE MARGIN SET HAS NEVER MISSED. All 25 argmax misses were within 5 points.
+> Demoting the margin to a one-shot robustness check (step 4) now has a
+> measured price of 24.5% coverage rather than being free. Re-read the third
+> pass with that in hand.
+>
+> MISSES ARE CONCENTRATED: four patterns cover 22 of 25 (Bellibolt Thunder Wave
+> over Parabolic Charge, Vikavolt Mud Shot over Bug Buzz, Pawmot Drain Punch
+> over Thunder Punch, Manectric Charge Beam over Volt Switch). So port-on-miss
+> converges and bulk porting is not needed.
+>
+> CALIBRATION IS BACKWARDS: where we predict a tie we are right 7/7; where we
+> predict one clear best move we are right 73.7%. Overconfident exactly where
+> it claims certainty.
+>
+> **THE SWITCH-IN PORT IS THE WEAK LINK, now measured** (`test_switch_cache.js`,
+> 23 replacement events): it names the right replacement 30% of the time
+> against a CHANCE baseline of 25%. Barely better than guessing, versus 75.5%
+> for move choice. The sixth pass's cached-replacement explanation is NOT
+> supported (13%, worse than at-faint's 30%); the mechanism is real in the
+> source but does not explain what we observe.
+>
+> **STILL OPEN, needs James:** LCG determinism under save-state replay. Reload
+> the same mid-battle save state twice with identical inputs; identical AI
+> choices confirm the seeded stream, different ones refute it. Cannot be tested
+> from recordings alone.
+>
+> **NEXT: step 2**, track the six AI state variables; the proof they are right
+> is the scoreboard number moving. Then step 3, objective + metric together.
+>
+> ~~NEXT: step 1, the opponent scoreboard~~ over the corpus — is the game's
 > observed action inside our predicted argmax-plus-ties set, and are our tie-set
 > sizes calibrated against observed frequencies. While there, settle the two
 > standing hypotheses: the switch-cache explanation of the Bellibolt miss (the
