@@ -93,14 +93,18 @@ local function tick()
 
   elseif phase == "settle" then
     emu:setKeys(0)
-    if emu:read16(FOE_MAX) == startMax then
-      lastHP = emu:read16(FOE_HP)
-    else
-      sawSwitch = 1
-    end
+    -- The AI SWITCHES rather than taking the hit in this position, so Scald
+    -- lands on the replacement. Tracking only while the original Pokemon was
+    -- out froze the reading at its undamaged HP and reported zero damage on
+    -- all 48 trials -- the third time today a value was read at a moment when
+    -- it described something else. What matters is the Pokemon that actually
+    -- took the hit, and since a replacement arrives at full health its damage
+    -- is simply max minus current.
+    if emu:read16(FOE_MAX) ~= startMax then sawSwitch = 1 end
+    lastHP = emu:read16(FOE_HP)
     if t >= SETTLE then
       out:write(string.format("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
-        trial, seeds[trial], before, lastHP, startMax, sawSwitch,
+        trial, seeds[trial], before, lastHP, emu:read16(FOE_MAX), sawSwitch,
         emu:read16(OUR_HP), emu:read32(RNG)))
       out:flush()
       t, phase = 0, "load"
