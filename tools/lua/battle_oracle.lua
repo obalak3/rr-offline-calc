@@ -36,6 +36,15 @@ for i = 1, 5 do STATES[i] = os.getenv("HOME") .. "/RadicalRed-mGBA/RadicalRed.ss
 local MON, SIZE = 0x02023BE4, 0x58
 local US, FOE = MON, MON + SIZE
 local O_SP, O_MOVES, O_PP, O_HP, O_MAX = 0x00, 0x0C, 0x24, 0x28, 0x2C
+-- ABILITY, and it is not a nicety. Our trainer data gives Surge's Pawmot Iron
+-- Fist, but the RR dex lists Volt Absorb among Pawmot's abilities (id 10,
+-- confirmed by Lanturn reading 10 and having Volt Absorb). If the real Pawmot
+-- absorbs Electric, then FindMonThatAbsorbsOpponentsMove -- the FIRST check in
+-- ShouldSwitch -- fires whenever our Lanturn is out with Shock Wave, which is
+-- exactly the switch our port forbids and cannot explain. It would also mean
+-- our damage calc is wrong for that matchup. Reading the ability off every
+-- Pokemon that appears settles it by measurement instead of inference.
+local O_ABILITY = 0x20
 
 local KEY_A, KEY_RIGHT, KEY_DOWN = 1, 16, 128
 -- Four button patterns, so replaying a state explores different lines. The
@@ -88,7 +97,7 @@ end
 
 local out = io.open(OUT, "w")
 out:write("episode\tstate\tpattern\tframe\tour_sp\tour_hp\tour_max\t" ..
-          "foe_sp\tfoe_hp\tfoe_max\taction\tmove_id\tnew_sp\n")
+          "foe_sp\tfoe_ability\tfoe_hp\tfoe_max\taction\tmove_id\tnew_sp\tnew_ability\n")
 
 local ep, frame, phase = 0, 0, "load"
 local prev, seq, seqStep, seqTimer, patIdx = nil, nil, 0, 0, 1
@@ -98,6 +107,7 @@ local decisions = 0
 local function snapshot()
   local s = {ourSp = emu:read16(US + O_SP), ourHP = emu:read16(US + O_HP),
              ourMax = emu:read16(US + O_MAX), foeSp = emu:read16(FOE + O_SP),
+             foeAb = emu:read8(FOE + O_ABILITY),
              foeHP = emu:read16(FOE + O_HP), foeMax = emu:read16(FOE + O_MAX),
              pp = {}, moves = {}}
   for i = 0, 3 do
@@ -107,12 +117,13 @@ local function snapshot()
   return s
 end
 
-local function log(action, moveId, newSp)
+local function log(action, moveId, newSp, newAb)
   decisions = decisions + 1
-  out:write(string.format("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\n",
+  out:write(string.format("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\n",
     ep, EPISODES[ep].si, EPISODES[ep].pi, frame,
     prev.ourSp, prev.ourHP, prev.ourMax,
-    prev.foeSp, prev.foeHP, prev.foeMax, action, moveId, newSp))
+    prev.foeSp, prev.foeAb, prev.foeHP, prev.foeMax,
+    action, moveId, newSp, newAb or 0))
   out:flush()
 end
 
@@ -168,10 +179,10 @@ local function tick()
   -- watch the foe
   local now = snapshot()
   if now.foeSp ~= prev.foeSp then
-    log("switch", 0, now.foeSp); idle = 0
+    log("switch", 0, now.foeSp, now.foeAb); idle = 0
   else
     for i = 1, 4 do
-      if now.pp[i] < prev.pp[i] then log("move", prev.moves[i], 0); idle = 0; break end
+      if now.pp[i] < prev.pp[i] then log("move", prev.moves[i], 0, 0); idle = 0; break end
     end
   end
   prev = now
