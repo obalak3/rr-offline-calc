@@ -1195,3 +1195,78 @@ through the parts of the state space that matter and are otherwise unreachable.
 3. **The honest ordering changes.** I have been treating the reader as
    infrastructure for the advisor. It is also the data pipeline for the method,
    and on this analysis that is the more important of its two jobs.
+
+---
+
+# Fifteenth pass: demonstrations at n=8, and the technique that actually fits
+
+## The scale problem I skipped
+
+Last pass concluded that demonstrations solve sparse-reward exploration. They do
+in general. But "we have demonstrations" hides a number: EIGHT trajectories
+through ONE fight, of which one is a clean win.
+
+For comparison, AlphaGo's policy prior came from ~30 million human positions.
+Behaviour cloning wants hundreds to thousands of trajectories. And James has
+said plainly that his contain mistakes, including in the clean win. So imitation
+is wrong twice over here -- far too few samples, and the target is not something
+we want copied. I asserted a technique without checking whether our data
+supports it.
+
+## What the demonstration is actually worth
+
+Its value is not statistical, it is structural. Eight trajectories cannot
+estimate anything. What one trajectory CAN do is establish that a particular
+region of the state space is reachable and valuable -- essentially the single
+fact "a state where Pawmot is asleep after the terrain dropped leads to a clean
+win". That is one bit of strategic information, and it is exactly the bit that
+random exploration cannot find.
+
+So the mechanism has to be one that converts a handful of trajectories into
+exploration guidance, not one that fits a policy to them.
+
+## The technique that fits: start states from the demonstration
+
+The standard answer for learning from very few demonstrations -- one, even -- is
+to change where episodes BEGIN rather than what they imitate. Start training
+episodes from states the demonstration visited, near the payoff, and walk the
+start point backwards as the learner succeeds:
+
+    start at the turn AFTER the sleep lands       -- payoff is immediate, learned fast
+    then a turn earlier                           -- learns that sleeping was good
+    then earlier still                            -- learns the setup that made it possible
+    eventually from the start of the fight
+
+Each stage is a short-horizon problem with a dense reward, which is the regime
+sampling handles well. The five-turn setup is never discovered by chance; it is
+learned backwards from a payoff the demonstration proved exists.
+
+**This is only available because we have a simulator that can be set to an
+arbitrary state.** Most reinforcement learning cannot choose where an episode
+begins. We can, and it converts our biggest weakness -- eight trajectories -- into
+a sufficient seed, because we need the demonstration only to tell us WHERE to
+start, not what to do.
+
+It also sidesteps the quality objection entirely. We are not copying James's
+moves, so his mistakes do not propagate. We are using the states he reached as a
+curriculum, and a state is not right or wrong.
+
+## What it requires, and it is the same thing as last pass
+
+To start an episode from a state in a demonstration, that state must be
+RECONSTRUCTIBLE: both teams, both HP values, statuses, field, and which Pokemon
+is out. We currently read our own side well and the foe only as a bar with no
+species. So the requirement is unchanged from the fourteenth pass and now has a
+sharper reason behind it: without the foe's identity we cannot rebuild the
+position, and without the position we cannot use the demonstration for anything
+except calibration.
+
+## Honest status of this whole line of argument
+
+I have now revised the exploration story twice in three passes -- from "iterated
+search-and-train handles it", to "demonstrations handle it", to "demonstrations
+handle it only as a start-state curriculum, and only because we have a settable
+simulator". Each revision came from costing a claim I had made qualitatively.
+The current version is the first one where I have checked the arithmetic before
+asserting it, which is not a reason to trust it, but is a reason to trust it more
+than the two it replaced.
