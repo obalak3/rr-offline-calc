@@ -251,3 +251,76 @@ they fall out of the problem rather than from a preference for an algorithm:
 Condition 2 is the one that has never been satisfied by anything in this repo,
 and it is the reason the same fight keeps being unwinnable by every method we
 try.
+
+---
+
+# Third pass: two uncertainties are conflated, and it costs 3.5x per ply
+
+Measured over 90 real Lt. Surge positions (every pairing of both teams at 100%,
+60% and 35% health), enumerating one turn against the true outcome distribution:
+
+    our legal actions                              9.0
+    foe actions, TRUE distribution (argmax+ties)   1.44
+    foe actions, margin set (RRAI.plausible, M=5)  5.08
+    successors per turn, true distribution         19.8
+    successors per turn, margin set                66.0
+
+Two conclusions, and the second is the important one.
+
+## Condition 4 is confirmed, decisively
+
+One turn fully enumerated -- damage bucketed by consequence, crits, accuracy,
+secondaries and AI ties all included -- is about **20 successors** against the
+real distribution, 66 even against the inflated one. Exact enumeration at the
+root is free. There is no reason to sample the current turn, ever, and every
+reason not to: it is the turn whose risk we most need calibrated and it is the
+cheapest one to get exactly right.
+
+## The conflation: a margin is not a probability
+
+`RRAI.plausible` returns everything within M points of the top score, and the
+searches branch over it as though the opponent might do any of them. But CFRU
+takes the ARGMAX and splits uniformly only among EXACT ties. A move three points
+below the best is not something the AI does rarely; it is something the AI does
+never.
+
+So the margin set is not a distribution over what the opponent will do. It is a
+confession about what WE do not know -- our port is 31 rules of roughly 880, so
+our computed argmax might not be the game's. Those are different objects:
+
+- **Chance uncertainty**: the dice, and the AI's genuine coin-flips. Known
+  probabilities. Correct treatment is an EXPECTATION, and the branching is 1.44.
+- **Model uncertainty**: our scoring may be wrong. Not a probability at all, and
+  no probability can be honestly assigned to it. Correct treatment is a
+  ROBUSTNESS CHECK on the action we chose -- "would this still be my move if the
+  AI's second choice were really its first?" -- which costs one re-evaluation,
+  not a branch at every ply.
+
+Branching over the margin prices our ignorance as though it were the game's
+randomness, and it does so multiplicatively. 3.5x per ply is 3.5^d: at six plies
+that is about 1,800 times more nodes for a fight that is not 1,800 times more
+uncertain. **This is a large part of why every search in this repo is
+unaffordable**, and it is not a tuning parameter, it is a category error with a
+measurable price.
+
+Note that `winChance` already gets this right -- its `replies()` collects only
+the tied-at-maximum set -- while `rr-solver.js` branches over
+`plausibleFoeActions` in six places. The repo is inconsistent with itself about
+what the opponent is.
+
+## The corrected architecture, in one paragraph
+
+At the root, enumerate this turn exactly over the true distribution: our nine
+actions against the AI's 1.44, with damage bucketed by consequence and crits,
+accuracy and secondaries included. That is ~20 successors, it is free, and it
+yields a calibrated statement of the risk being taken right now. Beyond the
+root, estimate by sampling with a policy that has support on every legal move,
+so nothing is invisible by construction. Handle model uncertainty once, at the
+end, by asking whether the chosen action survives the AI's second-best being its
+best -- not by branching on it. Re-plan every turn from the observed state, so
+the exact part is applied 25 times over a fight and the approximate part only
+ever has to rank, never to be precise.
+
+Every uncertainty in this game is then handled by exactly one mechanism, chosen
+because of what kind of uncertainty it is rather than because of which feature
+prompted it.
