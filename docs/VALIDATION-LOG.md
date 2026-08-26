@@ -193,3 +193,31 @@ not exist.
 
 That is a claim to test, not to assume. The probe is unchanged and cheap: re-run
 with `RR_DISABLE_SWITCH_PORT` set and see whether the old numbers come back.
+
+## RESOLVED: the "regressions" were corrections (2026-08-25)
+
+`tools/probe_port_regression.js`, same fight, same rung, same budget:
+
+    switch port OFF (our old invented heuristic)   FOUND, 23 turns, 8.1M nodes
+    switch port ON  (ported CFRU algorithm)        undecided at 9.8M nodes
+
+The 23-turn lossBudget-2 line is findable against the replacement model we
+INVENTED, and not against the real one. So neither this nor the mirror drop
+(125 -> 121 clean) is a regression. **The older, better-looking numbers were
+measured against an opponent that does not exist.** Every result in this repo
+predating the switch-in port shares that flaw, including the historical
+4,514,755-node figure quoted above and every mirror number.
+
+Strictly, "undecided" is not proof the line is gone -- it is proof we did not
+find it in 9.8M nodes. But finding it at 8.1M with the port off and missing it
+at 9.8M with the port on is a strong contrast, and it is the same story the
+mirror tells at a fixed NODE budget where throughput cannot be the cause.
+
+Two hypotheses were tested and rejected before this one, recorded above so they
+are not retried: the port being slow (fixing its worst cost moved whole-search
+throughput 1.6%) and the live terrain counter inflating the memo key (measured
+at exactly 1.00x).
+
+**Consequence worth stating plainly: the fights got harder because the opponent
+got real.** Comparisons across the port boundary are meaningless, and a new
+baseline has to be taken from here rather than measured against history.
