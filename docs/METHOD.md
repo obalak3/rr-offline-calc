@@ -953,3 +953,97 @@ changes across a playthrough -- his examples came with "these are examples that
 might change during the playthrough". So this cannot be a constant in the source
 under any circumstances. It is an input, it changes between fights, and it is
 the second thing today that turns out to belong to the player rather than to us.
+
+---
+
+# Twelfth pass: where the per-Pokemon costs come from, and the whole stack
+
+James said the costs "might change during the playthrough". That is the clue
+worth following, because a quantity that changes is derived from something, and
+naming what it is derived from closes the last hole in the objective.
+
+## The cost of losing a Pokemon is its contribution to the rest of the run
+
+Why is Kingambit expensive and Golem cheap? Not because of stats. Because of
+what is COMING. Kingambit answers threats in fights ahead that nothing else on
+the team answers; Golem is replaceable in the roles it fills. When the upcoming
+fights change, the costs change -- which is exactly the behaviour he described.
+
+Written down, the battle objective's parameters are derivatives of the run:
+
+    c_i  =  how much worse the REST OF THE RUN goes without Pokemon i
+         =  V_run(team)  -  V_run(team minus i)
+
+So there are two nested problems, and we have been conflating them:
+
+    RUN level:     which fights are ahead, which Pokemon answer them,
+                   what is worth catching, training and preserving
+    BATTLE level:  given costs from above, play this fight
+
+This is not an unwelcome complication. It is a structure that explains several
+things at once:
+
+- **Why the costs cannot live in the source.** They are a function of the
+  remaining run, and the remaining run changes every gym.
+- **Why James's "team composition helper" is the same feature, not a separate
+  one.** "Look through the PC and say if you brought this it could solve this
+  problem" is asking for V_run(team + candidate) - V_run(team). Same quantity,
+  evaluated over a different choice. Build one and the other follows.
+- **Why sacrifice can be correct.** If Golem's marginal contribution to the
+  remaining run is small, spending it to secure a win is not a failure, it is
+  the right trade, and only a run-level view can say so.
+
+There is a circularity -- the run value depends on battle outcomes, which depend
+on the costs, which come from the run value. It is the ordinary hierarchical
+kind and it is resolved the ordinary way: approximate the run level coarsely
+(can the remaining team still answer the remaining threats?) and let the battle
+level be exact. We already have the machinery for the coarse part; that is what
+the matchup table was built for, and coverage over FUTURE trainers is the job it
+is actually shaped for rather than scoring the current position.
+
+## The whole stack, stated once
+
+Twelve passes, and I want it in one place so it can be attacked as a whole:
+
+    PROBLEM      A Markov decision process. Verified: the opponent is a fixed,
+                 non-adapting policy (the "adapts to switching" code is dead --
+                 written, never read), all chance has known probabilities, the
+                 state is observable via the screen reader.
+
+    STATE        The battle, plus the AI's cached replacement target, which IS
+                 read (36 sites) and makes the process non-Markov if omitted.
+
+    OBJECTIVE    Terminal, per Pokemon: won is 1 minus the summed COST of the
+                 dead, lost is 0. Costs are set by the player or derived as
+                 marginal contribution to the remaining run. A protected
+                 Pokemon is a constraint, which prunes rather than costs.
+
+    UNCERTAINTY  Three kinds, three treatments, and conflating them is what has
+                 made searches unaffordable:
+                   chance (rolls, crits, ties)  -> expectation over the TRUE
+                     distribution; foe branching 1.2 healthy to 4.2 nearly dead
+                   missing trainer flags        -> a data gap; look it up, a gym
+                     leader is a boss
+                   unported scoring rules       -> no honest probability; ONE
+                     robustness check on the chosen action, never a branch per ply
+
+    METHOD       Turn by turn, which is optimal rather than a compromise: the
+                 optimal policy is greedy on the optimal value function.
+                 Enumerate THIS turn exactly (~20 successors, free, and it is
+                 where the killing crits live). Estimate the future by sampling
+                 with full support over every legal move.
+
+    VALUE        The one hard problem, and both existing estimators are blind
+                 to the strategies that win: handcrafted ones encode what their
+                 author thought of, rollout ones inherit their policy's
+                 blindness. Learn it against the fixed opponent, improving
+                 search and value alternately, so the sleep line is DISCOVERED
+                 rather than needing to be known.
+
+## What I would still attack if I had another pass
+
+The value representation. Everything above is settled enough to build on, and
+the one genuinely open technical question is whether a battle state can be
+featurised so that V generalises across positions -- because if it cannot,
+learning degenerates to a lookup table over a space far too large for one, and
+the whole stack rests on a step nobody has shown is possible here.
