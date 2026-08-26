@@ -1,0 +1,177 @@
+[
+ {
+  "state": "RadicalRed.ss1",
+  "ours": {
+   "species_id": 673,
+   "species": "Mienshao",
+   "level": 34,
+   "maxHP": 98,
+   "curHP": 98,
+   "ability_id": 86,
+   "ability": "Regenerator",
+   "item_id": 142,
+   "moves": [
+    "Fake Out",
+    "Drain Punch",
+    "Detect",
+    "Rock Tomb"
+   ]
+  },
+  "foe": {
+   "species_id": 100,
+   "species": "Voltorb",
+   "level": 28,
+   "maxHP": 63,
+   "curHP": 63,
+   "ability_id": 9,
+   "ability": "Static",
+   "item_id": 0,
+   "moves": [
+    "Screech",
+    "Swift",
+    "Electro Ball",
+    "Self-Destruct"
+   ]
+  }
+ },
+ {
+  "state": "RadicalRed.ss2",
+  "ours": {
+   "species_id": 71,
+   "species": "Victreebel",
+   "level": 34,
+   "maxHP": 108,
+   "curHP": 108,
+   "ability_id": 34,
+   "ability": "Chlorophyll",
+   "item_id": 142,
+   "moves": [
+    "Mega Drain",
+    "Sludge",
+    "Sleep Powder",
+    "Leaf Storm"
+   ]
+  },
+  "foe": {
+   "species_id": 61,
+   "species": "Poliwhirl",
+   "level": 25,
+   "maxHP": 70,
+   "curHP": 70,
+   "ability_id": 11,
+   "ability": "Water Absorb",
+   "item_id": 0,
+   "moves": [
+    "Hypnosis",
+    "Bubble",
+    "Double Slap",
+    "Body Slam"
+   ]
+  }
+ },
+ {
+  "state": "RadicalRed.ss3",
+  "ours": {
+   "species_id": 307,
+   "species": "Breloom",
+   "level": 34,
+   "maxHP": 95,
+   "curHP": 95,
+   "ability_id": 27,
+   "ability": "Effect Spore",
+   "item_id": 142,
+   "moves": [
+    "Headbutt",
+    "Mach Punch",
+    "Force Palm",
+    "Bullet Seed"
+   ]
+  },
+  "foe": {
+   "species_id": 386,
+   "species": "Volbeat",
+   "level": 19,
+   "maxHP": 62,
+   "curHP": 62,
+   "ability_id": 87,
+   "ability": "Prankster",
+   "item_id": 0,
+   "moves": [
+    "Confuse Ray",
+    "Quick Attack",
+    "Struggle Bug",
+    "Moonlight"
+   ]
+  }
+ },
+ {
+  "state": "RadicalRed.ss4",
+  "ours": {
+   "species_id": 602,
+   "species": "Lilligant",
+   "level": 34,
+   "maxHP": 102,
+   "curHP": 102,
+   "ability_id": 20,
+   "ability": "Own Tempo",
+   "item_id": 142,
+   "moves": [
+    "Recover",
+    "Baby-Doll Eyes",
+    "Sleep Powder",
+    "Mega Drain"
+   ]
+  },
+  "foe": {
+   "species_id": 1317,
+   "species": "Lokix",
+   "level": 32,
+   "maxHP": 97,
+   "curHP": 97,
+   "ability_id": 99,
+   "ability": "Tinted Lens",
+   "item_id": 188,
+   "moves": [
+    "First Impression",
+    "Knock Off",
+    "U-turn",
+    "Leech Life"
+   ]
+  }
+ },
+ {
+  "state": "RadicalRed.ss5",
+  "ours": {
+   "species_id": 171,
+   "species": "Lanturn",
+   "level": 34,
+   "maxHP": 139,
+   "curHP": 139,
+   "ability_id": 10,
+   "ability": "Volt Absorb",
+   "item_id": 142,
+   "moves": [
+    "Scald",
+    "Confuse Ray",
+    "Signal Beam",
+    "Shock Wave"
+   ]
+  },
+  "foe": {
+   "species_id": 1163,
+   "species": "Pincurchin",
+   "level": 32,
+   "maxHP": 95,
+   "curHP": 78,
+   "ability_id": 181,
+   "ability": "Electric Surge",
+   "item_id": 716,
+   "moves": [
+    "Volt Switch",
+    "Scald",
+    "Discharge",
+    "Hidden Power"
+   ]
+  }
+ }
+]
