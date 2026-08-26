@@ -872,3 +872,84 @@ Nothing structural. It is the reward function of the MDP, not the method for
 solving it. But it is worth noticing that nine passes of careful reasoning about
 HOW to search never once asked what we were searching FOR, and the answer had a
 false premise sitting in a comment the whole time.
+
+---
+
+# Eleventh pass: the objective is not a count, it is an identity, and the player
+# wants to choose the casualty
+
+James, correcting the tenth pass: "A pokemon loss does not end the run for me.
+Losing the WRONG pokemon ends the run for me. I am fine with losing a Golem, but
+I am not fine losing a Kingambit. If a pokemon of mine has to die, I would rather
+be able to pick which one it should be."
+
+This breaks both objectives I proposed, and it is better than either.
+
+## What is wrong with everything encoded so far
+
+    rr-mcts reward:   0.40 / (1 + losses)      -- counts losses
+    my tenth pass:    clean win 1, else 0      -- counts them at all-or-nothing
+
+Both treat Pokemon as interchangeable. They are not. Losing the sixth-best
+Pokemon and losing the linchpin score identically under a count, and that is not
+a small distortion -- it is the difference between a run continuing and a run
+ending, which is the only thing the player actually cares about.
+
+## The correct shape
+
+Each Pokemon carries a cost of losing it, set by the player, and the terminal
+reward reads:
+
+    lost the battle          0
+    won                      1 - sum of costs of the Pokemon that died
+
+with a protected Pokemon simply having cost 1, so losing it makes even a won
+battle worth nothing. "Expendable" is cost near 0. The current count-based
+reward is the special case where every cost is equal, which is exactly the
+assumption James is rejecting.
+
+Two consequences follow immediately, and both are behaviours the app cannot
+currently produce:
+
+1. **Sacrifice becomes a legitimate plan, not a failure.** If Golem is cheap,
+   a line that trades Golem for a safe win is close to optimal rather than a
+   0.20-scored consolation. The advisor should be willing to SAY "let Golem take
+   this hit", which is a sentence it has no way to reach today.
+2. **The risk-seeking conclusion from the tenth pass becomes conditional, which
+   is more useful than it was.** Gamble hard to avoid losing Kingambit. Do not
+   gamble at all to avoid losing Golem -- bank the win. A single scalar objective
+   cannot express that; per-Pokemon costs express it exactly.
+
+## "I would rather pick which one it should be" is a control, not just a reward
+
+The second half of his sentence is a different request from the first and I do
+not want to collapse them. He is not only saying the values differ; he is saying
+he wants the CHOICE. That means the advisor should accept a constraint and plan
+under it:
+
+    "Kingambit must survive this fight."
+    "Golem is expendable."
+
+A constraint is not merely a weight. It prunes: any line where Kingambit faints
+is dead, which makes the search cheaper rather than more expensive, and it
+converts a diffuse preference into something the player states once and the app
+respects for the rest of the fight. It also matches how he actually thinks --
+he brought Hatterene specifically to control a tie, so he already plays by
+imposing structure on the fight rather than by optimising a number.
+
+## What this does and does not change
+
+**The method is untouched.** An MDP takes an arbitrary terminal reward; making
+it per-Pokemon changes what we compute, not how.
+
+**The value function must carry more information.** Terminal states currently
+collapse to "won, k losses". They now have to say WHICH k, so anything learned
+or estimated has to keep the identity of the dead. That is a real requirement on
+the representation, and it is the first concrete constraint anything has placed
+on how V should be featurised.
+
+**And the objective is now explicitly time-varying.** Which Pokemon matter
+changes across a playthrough -- his examples came with "these are examples that
+might change during the playthrough". So this cannot be a constant in the source
+under any circumstances. It is an input, it changes between fights, and it is
+the second thing today that turns out to belong to the player rather than to us.
