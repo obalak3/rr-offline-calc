@@ -1,5 +1,14 @@
 # Where this stands — 2026-08-24 (end of day)
 
+> **2026-08-26 evening, JAMES'S CALL: the advisor's input is now LUA MEMORY
+> READING, not the screen reader.** The screen-reader direction was chosen
+> before anyone knew mGBA ships Lua scripting; with that known, pixels lose on
+> every axis (exactness, coverage, effort, and the RNG seed is invisible to
+> them). tools/screen/ stays as validation tooling; build no new nameplate
+> templates. The advisor build path is: Lua state feed (passive_logger.lua
+> pattern) -> bridge -> live.advise -> pinned Tk panel, visual only, never
+> audio.
+
 > **2026-08-26: STEP 0 OF THE TWENTIETH-PASS ORDERING IS DONE.** The ordering
 > itself is at the end of `METHOD.md` and supersedes the sixteenth/seventeenth
 > pass worklist. The foe is now fully readable off the screen:
