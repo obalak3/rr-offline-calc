@@ -1431,3 +1431,75 @@ internal measurement can validate it.
        the searches; keep the margin only as a one-shot robustness check.
     4. Re-measure. Only if a corrected handcrafted V still cannot approach
        James's own results does the learning machinery become justified.
+
+---
+
+# Eighteenth pass: the AI models the player, and this time the code is read
+
+## What I found
+
+`ai_util.c:666`, `PickMoveHumanLikelyToChoose`. Unlike the dead switch-tracking
+code from the seventh pass, this one is CALLED -- at lines 644 and 1656, gated by
+`ShouldUseHumanLikelyMove`, which is true whenever the bank being simulated is
+the player's. When the AI needs to guess what WE will do, it does not assume
+optimal play. It assumes human play, by these rules in order:
+
+    1. we will use a move with a good secondary effect (>=50% chance)
+    2. **we will repeat whatever last landed** -- gLastLandedMoves[aiBank],
+       commented "Assume the player will spam A and not bother changing attacks"
+    3. we will pick the super-effective move
+    4. we will avoid the not-very-effective move
+    5. we prefer STAB
+
+And where this model is NOT used (the AI reasoning about itself), the code picks
+between equal moves with `AIRandom() & 1` instead.
+
+## This corrects my correction
+
+Seventh pass: I claimed the AI adapts, on dead code. Eighth pass: James said he
+had never seen it, I checked reads, retracted, and restored "the opponent does
+not model us". That retraction was right about `switchesInARow` and **wrong as a
+general claim.** The AI does model the player. It just does not do it through
+the variable I first found.
+
+Three claims in three passes, and the one that survives is the one where I
+checked whether the function is called. The lesson from the eighth pass held; I
+simply had not applied it exhaustively.
+
+## Does it break the MDP framing? No -- but it adds required state
+
+`gLastLandedMoves[aiBank]` is history. The AI's behaviour depends on which of our
+moves last connected, so two positions identical in HP, status and field can
+produce different AI behaviour depending on what we did earlier. To stay Markov
+the state must include it, alongside the cached switch target from the sixth
+pass. Both are cheap to track and neither is in our engine today.
+
+The framework is unharmed: this is still a FIXED function of an augmented state,
+not an adaptive opponent. It does not learn, and it cannot surprise us twice with
+the same position.
+
+## The strategic consequence, which is the interesting part
+
+**The AI's model of us is wrong in a specific, exploitable direction, and the
+developer wrote the exploit into the comment.** It assumes we spam the move that
+last landed. A player who deliberately varies -- or who uses a move precisely
+because it is NOT what the AI expects -- is operating outside the model the AI
+uses to evaluate threats.
+
+That is a genuine strategic lever and it is the same SHAPE as the one James
+already found by himself. He brought Hatterene to collapse a tie, making the AI
+predictable. This is the mirror image: act unpredictably, and the AI's threat
+assessment is computed against a move we are not going to use.
+
+I want to be careful about how far to take this. The model is used to evaluate
+what WE might do to IT, which feeds its switching and its move scoring; it is not
+a full opponent model and I have not traced every consequence. What is certain
+is that it is called, that it depends on our history, and that its central
+assumption is that we are lazy.
+
+## Consequence for the advisor
+
+An advisor that knows this rule can, in principle, tell James when the AI's
+prediction of him is wrong, and what that buys. Nothing in the current app can
+reason about this at all, because our engine does not track `gLastLandedMoves`
+and our port has no equivalent of `PickMoveHumanLikelyToChoose`.
