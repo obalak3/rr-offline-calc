@@ -28,7 +28,7 @@
 -- produced one confounded result today.
 
 local STATE = os.getenv("HOME") .. "/RadicalRed-mGBA/RadicalRed.ss5"
-local OUT   = os.getenv("HOME") .. "/rr-screen-corpus/calibrate.tsv"
+local OUT   = os.getenv("HOME") .. "/rr-screen-corpus/crit_calib.tsv"
 
 -- THE BATTLE RNG, not 0x03005000. That one is vanilla gRngValue: consumed
 -- exactly 808 times a turn but proved (43 seeds, identical damage every time)
@@ -43,16 +43,23 @@ local OUR_HP  = 0x02023BE4 + 0x28
 local PRESS, GAP, TAPS, SETTLE = 6, 30, 3, 700
 local KEY_A = 1
 
-if _RR_CAL2_ACTIVE then
+if _RR_CRIT_ACTIVE then
   console:error("calibrate: ALREADY RUNNING. Quit mGBA before reloading.")
   return
 end
-_RR_CAL2_ACTIVE = true
+_RR_CRIT_ACTIVE = true
 
 -- Spread across the 32-bit space rather than sequential: consecutive seeds
 -- give correlated low bits and could make a wrong k look plausible.
 local seeds = {}
-for i = 0, 63 do seeds[#seeds+1] = (i * 2654435761) % 4294967296 end
+-- 256 seeds rather than 64, purely to collect CRITS. The damage roll is
+-- already solved (draw #1232, concordance 1.000 over 1417 pairs), but only 6
+-- of 64 trials crit, and a sweep of divisors 3-64 across 4000 indices returned
+-- NINE exact matches for the crit rule -- nine answers is no answer. At the
+-- observed ~9% crit rate this yields roughly 24 crits, at which point a
+-- spurious divisor match has probability around 10^-27 and the index is
+-- forced. Nothing else about the run changes.
+for i = 0, 255 do seeds[#seeds+1] = (i * 2654435761) % 4294967296 end
 
 local out = io.open(OUT, "w")
 out:write("trial\tseed\tfoe_before\tfoe_after\tfoe_max\tswitched\tour_after\trng_after\n")
