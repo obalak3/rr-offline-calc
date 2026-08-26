@@ -103,7 +103,7 @@ var RRAI = (function () {
 		}
 
 		// ShouldSwitchIfOnlyBadMovesLeft, and FindMonThatAbsorbsOpponentsMove.
-		if (!hasAnyUsefulMove(state, key)) reasons.push("no move does anything");
+		if (!hasAnyUsefulMove(state, key, flags)) reasons.push("no move does anything");
 		if (foe.set.ability === "Wonder Guard") reasons.push("foe has Wonder Guard");
 		if (benchAbsorbsSomething(state, key, benched)) {
 			reasons.push("someone on the bench absorbs a move");
@@ -126,16 +126,47 @@ var RRAI = (function () {
 		return worst;
 	}
 
-	function hasAnyUsefulMove(state, key) {
+	/**
+	 * The inverse of CFRU's OnlyBadMovesLeftInMoveset (ai_util.c:4880).
+	 *
+	 * The first version asked only whether SOME move deals nonzero damage, and
+	 * that is far too permissive. Upstream's CalcOnlyBadMovesLeftInMoveset runs
+	 * AIScript_Negatives on each move with a base viability of 100 and counts a
+	 * move only when it comes back at 100 or better -- that is, only when NO
+	 * penalty applied. A resisted move that still chips is penalised and does
+	 * not count.
+	 *
+	 * That distinction is what this gate turns on, and it was measured rather
+	 * than inferred. Against our Lanturn (Volt Absorb), Pincurchin's two
+	 * Electric moves are penalised for immunity while Scald and Hidden Power
+	 * Ice are merely resisted, so the old test said "it still has moves" and
+	 * switchGate returned maySwitch=FALSE. The real game switches Pincurchin
+	 * out in that matchup SEVEN times across the recordings. Being unable to
+	 * switch at all in the matchup where the game switches most often is a
+	 * worse error than picking the wrong replacement.
+	 *
+	 * Also gated on AI intelligence, as upstream is: CalcOnlyBadMovesLeft
+	 * returns FALSE outright when the only flag is CHECK_BAD_MOVE, so a plain
+	 * route trainer never switches for this reason and will stand there
+	 * swinging a resisted move.
+	 */
+	function hasAnyUsefulMove(state, key, flags) {
+		var f = flags || {};
+		if (!f[GOOD] && !f[SEMI]) return true;   // basic AI never switches for this
 		var actions = RRBattle.legalActions(state, key);
+		var notes = {};
+		var damaging = 0;
 		for (var i = 0; i < actions.length; i++) {
 			if (actions[i].type !== "move") continue;
+			// A penalty of any size disqualifies the move, matching the
+			// viability >= 100 test upstream.
+			if (scoreAction(state, key, actions[i], f, notes).score < BASE) continue;
 			var data = RRBattle.moveData(actions[i].move);
-			if (data && data.split === "Status") return true;
+			if (data && data.split === "Status") return true;   // viable status move
 			var rolls = RRBattle.damageRolls(state, key, actions[i].move);
-			if (rolls && !rolls.immune && rolls.noCrit[0] > 0) return true;
+			if (rolls && !rolls.immune && rolls.noCrit[0] > 0) damaging++;
 		}
-		return false;
+		return damaging > 0;
 	}
 
 	function benchAbsorbsSomething(state, key, benched) {

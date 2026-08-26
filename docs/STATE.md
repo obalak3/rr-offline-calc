@@ -76,6 +76,25 @@
 > choices confirm the seeded stream, different ones refute it. Cannot be tested
 > from recordings alone.
 >
+> **PARKED 2026-08-26 (timebox, 2 diagnostics): why does the AI switch
+> Pincurchin out against Lanturn?** It does so SEVEN times in the recordings
+> and our switchGate returns maySwitch=FALSE there, so we are not merely
+> picking the wrong replacement, we are forbidden from switching at all in the
+> matchup where the game switches most often.
+>   - Tried: porting OnlyBadMovesLeftInMoveset faithfully (a move counts only
+>     at viability >= 100, i.e. no penalty at all, plus upstream's gate that
+>     basic AI never switches for this reason). Landed, more faithful, but does
+>     NOT flip the case and moves no measured number.
+>   - Tried: finding a not-very-effective penalty in ai_negatives.c. CFRU
+>     penalises NO_EFFECT (immunity) but appears to have no generic NVE
+>     penalty, so Pincurchin's resisted Scald and Hidden Power Ice stay at full
+>     viability and the gate never fires.
+>   - So the trigger is something else. Candidates not yet checked: a
+>     damage-threshold rule elsewhere in the negatives, FindMonThatAbsorbs
+>     matching an ability we do not model, or a rule outside ai_negatives.c.
+>     Resume by dumping the AI's own score for each Pincurchin move from the
+>     ROM's perspective rather than ours.
+>
 > **NEXT: step 2**, track the six AI state variables; the proof they are right
 > is the scoreboard number moving. Then step 3, objective + metric together.
 >
