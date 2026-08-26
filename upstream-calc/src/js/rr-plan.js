@@ -149,9 +149,20 @@ var RRPlan = (function () {
 		// makes every option come back "loses this Pokemon", which ranks nothing
 		// and is the same over-pessimism that made proofs unreachable. Crits are
 		// a risk you switch on to ask a different question.
+		// MEDIAN OUR ROLLS WHEN PLAYING THE PREDICTION. The default maxroll
+		// read prices our own damage at its maximum, and that manufactured the
+		// T7 crime: Force Palm rolls 18-24 against an Onix at 24, so the
+		// evaluator counted a kill that lands 1 time in 16, concluded the foe
+		// never gets to attack, scored the action [survives, kills] -- and
+		// Mienfoo died on the 15-in-16. "Fear their mind, trust my luck" is
+		// exactly backwards now that the mind is assumed known: the move is
+		// the certain part, the dice are not. Median rolls make a kill claim
+		// mean "kills more often than not", and the truly knowable roll (the
+		// seed is readable; next_rolls.py reads it live) is the later upgrade.
+		var honest = opts && opts.assumePrediction;
 		var results = RRBattle.step(state, myAction, foeAction, {
 			mode: (opts && opts.mode) || "maxroll",
-			risks: (opts && opts.risks) || {}
+			risks: (opts && opts.risks) || (honest ? {roll: "median"} : {})
 		});
 		var after = results[0].state;
 		var mine = RRBattle.active(after.me);
