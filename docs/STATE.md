@@ -45,7 +45,33 @@
 > supported (13%, worse than at-faint's 30%); the mechanism is real in the
 > source but does not explain what we observe.
 >
-> **STILL OPEN, needs James:** LCG determinism under save-state replay. Reload
+> **SETTLED 2026-08-26 BY EXPERIMENT: save states restore the RNG, so scouting
+> a roll is impossible.** James replayed one position from a save state:
+>
+>   - Pincurchin -> Bellibolt switched 6/6 times, all at bar 39 / Lanturn 139.
+>   - Lanturn's Scald BURNED 5 times running (read off the frames as five
+>     distinct "The opposing Bellibolt was burned!").
+>
+> The burn is the decisive half. Six switches alone prove little -- the ROM
+> gate is 75%, so 6/6 happens by luck 18% of the time -- but Scald burns at
+> 30%, and five in a row is 0.24%. The burn result then RETROACTIVELY explains
+> the switches: the RNG state is restored, so both replay.
+>
+> Note the two generators are different. Scald's burn uses the main Random();
+> AI decisions use AIRandom(), a private LCG seeded once per battle from
+> Random32() (ninth pass). A save state restores ALL of RAM, hence both. The
+> AI one is the cleaner result because its LCG advances only on AI calls and
+> so is immune to input-frame timing, which the main RNG may not be.
+>
+> **CONSEQUENCES.** Save-state scouting of a tie or a roll CANNOT work -- not
+> because it re-rolls, but because it re-rolls identically. Battery-save
+> re-entry does redraw, since the seed is set at battle start. For the advisor
+> this means probabilities remain the correct model (the seed is unobservable,
+> so 75% is the right belief over unknown seeds) but the app must NEVER
+> suggest reloading a state to retry a gamble. That is a product rule, not a
+> modelling one.
+>
+> ~~STILL OPEN, needs James: LCG determinism under save-state replay.~~ Reload
 > the same mid-battle save state twice with identical inputs; identical AI
 > choices confirm the seeded stream, different ones refute it. Cannot be tested
 > from recordings alone.
