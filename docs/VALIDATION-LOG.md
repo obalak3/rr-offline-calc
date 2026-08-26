@@ -122,3 +122,43 @@ the Surge sheets have been so fragile in play.
 `GetMostSuitableMonToSwitchInto` logic in `ai_master.c` and friends), keep the
 Nuzlocke heuristic for OUR side only, and re-check against this exact position:
 Pincurchin down to Leaf Storm, does the model send Bellibolt?
+
+---
+
+## OPEN REGRESSION: lossBudget 2 on Surge is no longer found (2026-08-25)
+
+Re-ran the loss ladder on the real-team Lt. Surge fight after today's changes
+(terrain no longer permanent, switch-in port). 30M node budget, 1200s per rung:
+
+    clean          undecided at 20.3M nodes
+    lossBudget 1   undecided at 20.8M nodes
+    lossBudget 2   undecided at 21.4M nodes
+
+**The third rung is a real regression.** It was previously FOUND at 4,514,755
+nodes in 194s (line 56 above). It is now unfound at 21.4M, nearly five times the
+budget. That is too large a gap to be the variance of a randomised restart
+search, unlike an earlier scare today which turned out to be measured against a
+misremembered baseline.
+
+Two hypotheses tested and BOTH REJECTED, recorded so they are not retried:
+
+1. *The switch-in port is slow.* It costs throughput, but fixing its worst
+   offender (a per-candidate `toCalcPokemon`) took the port from 37us to 24.7us
+   and moved whole-search throughput by 1.6%. Not the cause.
+2. *The live terrain counter inflates the memo.* `positionKey` includes
+   `terrainTurns`, which used to be the constant `Infinity` and now counts down
+   5,4,3,2,1,0, so the same board at different points in the terrain clock is
+   several keys instead of one. Plausible, and measured: distinct keys over the
+   same slice of tree, counter live vs pinned, came out 1744 vs 1736. **1.00x.**
+   Not the cause either.
+
+So the cause is unknown. What is NOT yet ruled out: the switch-in port changes
+which positions exist at all (both sides' replacements differ), so the tree is
+genuinely a different tree rather than the same one searched more slowly, and a
+line that existed against our invented replacement heuristic may simply not
+exist against the real algorithm. That would make this a corrected result rather
+than a regression, and it is the first thing to check.
+
+Cheapest next probe: re-run lossBudget 2 with the port disabled via
+`RR_DISABLE_SWITCH_PORT`, at a budget past 4.51M. If it is found there and not
+with the port, the old line depended on the wrong opponent model.
