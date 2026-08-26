@@ -1,5 +1,42 @@
 # Where this stands — 2026-08-24 (end of day)
 
+> **2026-08-26: STEP 0 OF THE TWENTIETH-PASS ORDERING IS DONE.** The ordering
+> itself is at the end of `METHOD.md` and supersedes the sixteenth/seventeenth
+> pass worklist. The foe is now fully readable off the screen:
+>
+> - `tools/screen/read_name.py` — the foe's SPECIES from its nameplate, by
+>   whole-name template against the trainer's known team. 4702/8200 corpus
+>   frames named, all five of Surge's Pokemon, zero species flips between
+>   adjacent frames. Note Lanturn is on JAMES's team, not Surge's; earlier
+>   notes were ambiguous and it briefly looked like a missing sixth template.
+> - `tools/screen/read_message.py` — the foe's MOVE from the message box, via a
+>   bootstrapped 39-glyph font (`build_msgfont.py` rebuilds it). 1074 readings,
+>   26 distinct moves, every one in the pool of the side that used it.
+>
+> Both have tests that run against the real corpus. A recording is now a
+> trajectory rather than a partial observation, which is what steps 1 and 2
+> need.
+>
+> **NEXT: step 1, the opponent scoreboard** over the corpus — is the game's
+> observed action inside our predicted argmax-plus-ties set, and are our tie-set
+> sizes calibrated against observed frequencies. While there, settle the two
+> standing hypotheses: the switch-cache explanation of the Bellibolt miss (the
+> sixth pass's evidence was four hand-picked moments and one match, which is
+> worth little) and LCG determinism under save-state replay.
+>
+> **PARKED, deliberately, not forgotten:**
+> - A GENERAL nameplate font is not built. The corpus has exactly one trainer,
+>   so a font could not be validated on anything. Record a second trainer and
+>   it becomes worth doing; until then whole-name templates are correct.
+> - `bench_mirror --all` re-ran 2026-08-26 with the corrected engine:
+>   **121/139 clean, 16 undecided, 2 no-line, 136/139 won at all, 3 lost.**
+>   121 matches the post-switch-port figure exactly. The 125-clean/11-undecided
+>   baseline PREDATES the port and is not comparable to it, per the standing
+>   rule that every pre-port number describes an opponent that does not exist.
+> - Still unrun and still cheap: re-ask `cleanWin` for Surge now that terrain
+>   expires normally. If it finds the sleep line that is the strongest
+>   validation this project has had.
+
 Written as a handoff. `TUNING.md` holds the measurements and the traps;
 `RR-AI.md` holds what is known about the game's AI. This file holds the current
 architecture, what is actually fixed, and what is still open.
