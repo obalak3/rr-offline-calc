@@ -104,6 +104,18 @@
 >     Resume by dumping the AI's own score for each Pincurchin move from the
 >     ROM's perspective rather than ours.
 >
+> **PENDING WHEN THE MACHINE CAN STAY ON A FEW HOURS:** the deep loss ladder,
+> `node tools/rerun_surge.js 60 2400`. The 600s/rung version came back all
+> undecided -- notably the corrected opponent erases the lossBudget-2 win the
+> broken engine found at 4.5M nodes -- but 600s is underpowered by history.
+> Run it plugged in, lid open (`caffeinate -i node tools/rerun_surge.js 60
+> 2400` prevents sleep). What hangs on it: if even 60M finds nothing at
+> budget 2-3, sim-Surge under worst-case dice is effectively unwinnable
+> against the corrected opponent while James wins the real fight 3/3, making
+> the remaining sim-vs-game gaps (the AI's real switching, its human-model
+> mispredictions) the measured explanation and the switch-gate work the
+> priority.
+>
 > **NEXT: step 2**, track the six AI state variables; the proof they are right
 > is the scoreboard number moving. Then step 3, objective + metric together.
 >
