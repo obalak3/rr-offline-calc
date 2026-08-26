@@ -72,3 +72,37 @@ He was doing what our sheets do: assuming the AI repeats. It does not, wherever
 a tie exists, and the AI's replacement choice has its own coin flip on top
 (`ai_switching.c:2437`, 50% when scores are equal and neither faints). A plan
 that reads as a fixed sequence of turns is lying about a fight like this one.
+
+
+## MEASURED 2026-08-25: ties are HP-dependent, and damage creates them
+
+`tools/count_ties.js` at FULL HP says Lt. Surge is almost tie-free: 28 of 30
+matchups have one clearly best move, and only Mienshao produces ties (4-way,
+against Vikavolt and Manectric). That flatly contradicted James's report that
+Pawmot coin-flips between Thunder Punch and Drain Punch against his Mienshao.
+
+He was right and the full-HP snapshot was the wrong measurement. Sweeping his
+Mienshao's health against Pawmot:
+
+    Mienshao 98/98   Thunder Punch alone        103 vs 100
+    Mienshao 74/98   Thunder Punch alone        109 vs 100
+    Mienshao 49/98   Drain Punch + Thunder Punch TIE at 109
+    Mienshao 29/98   ALL FOUR moves tie at 109
+
+**The opponent becomes less predictable exactly as you get weaker.** As a
+Pokemon drops, more of the AI's moves become kill-capable, they all collect the
+same bonus, and the tied set grows. At full health Pawmot is deterministic; near
+half it is a coin flip; below a third it is a four-sided die every turn.
+
+Three consequences, and the first two are advice we could give today:
+
+1. **HP thresholds are tie thresholds.** "Keep Mienshao above 50% and Pawmot
+   stays predictable" is concrete, checkable, and exactly the kind of thing the
+   advisor should say. It is also invisible in any full-HP analysis.
+2. **It explains the run-killer without luck.** James lost runs to that flip
+   while trying to scout it with Detect. The flip was manufactured by the damage
+   his Mienshao had already taken, and scouting cannot work anyway because the
+   tie is re-rolled each turn.
+3. **Any tie measurement must sweep HP.** A tie count taken at full health
+   understates the real number badly, and check_forks.js scoring a specific line
+   is right to look at actual positions rather than a matchup table.
