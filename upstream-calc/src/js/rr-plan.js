@@ -374,8 +374,9 @@ var RRPlan = (function () {
 		state.me.team.forEach(function (m) {
 			if (m.fainted) lost += costOf(m.set.species, costs);
 		});
+		var pw = (costs && costs.__progressWeight) || 2;
 		return -10 * lost
-			+ 2 * (1 - teamFraction(state.foe))
+			+ pw * (1 - teamFraction(state.foe))
 			+ 1 * teamFraction(state.me);
 	}
 
@@ -404,7 +405,8 @@ var RRPlan = (function () {
 	 * cheapest place to be exact.
 	 */
 	function exactRootRank(state, myActions, foeActions, opts) {
-		var costs = opts && opts.costs;
+		var costs = Object.assign({}, (opts && opts.costs) || {});
+		if (opts && opts.progressWeight) costs.__progressWeight = opts.progressWeight;
 		return myActions.map(function (action) {
 			var total = 0, weight = 0;
 			foeActions.forEach(function (foeAction) {
