@@ -1125,3 +1125,73 @@ improves where search explored. Neither half needs to know about sleep.
 
 That is not a gap in the argument so much as the reason the argument specifies
 iterated improvement rather than plain supervised learning from random play.
+
+---
+
+# Fourteenth pass: retracting "full support", and what actually solves exploration
+
+## The overclaim
+
+Last pass I called it "a striking inversion" that uniform random play has full
+support while our clever policies do not, and implied that made the sleep line
+reachable by learning. Full support is an ASYMPTOTIC guarantee. It says a
+sequence has nonzero probability, not that it will be seen.
+
+Costed: the line needs roughly a five-turn setup, at about 1/9 per turn if
+chosen uniformly, so ~1/59,000 per episode -- and the episode must also SURVIVE
+those five turns, which random play mostly does not. Over 100,000 episodes that
+is a couple of raw hits, essentially none of which convert into a win that
+carries signal. **Random play will never discover this line in any budget we
+would run.** The property I described is true and useless, and I should have
+multiplied it out before calling it an argument.
+
+## The real problem has a name, and it is the hard one
+
+This is sparse-reward exploration. The reward for sleeping Pawmot arrives only
+after a specific multi-turn setup, and nothing before it distinguishes the good
+prefix from a wasted turn. Every standard mitigation is either unavailable or
+dangerous here:
+
+- **Reward shaping** -- give partial credit for sleeping things -- reintroduces
+  exactly the handcrafted bias the whole method exists to escape, and would be
+  the fourth time today we forbade a strategy by pre-deciding what matters.
+- **Deeper search** -- covering all depth-5 prefixes is ~59,000 leaves, which is
+  affordable, but UCT will not spend its budget there: a status move shows no
+  immediate progress, so the tree deprioritises it long before the payoff turn.
+- **More compute** -- multiplies a probability that is already negligible.
+
+So iterated search-and-train, as I proposed it, does NOT solve this by itself.
+That was the weakest link in the stack and I had waved at it.
+
+## What does solve it, and we already have it
+
+**Demonstrations.** The standard answer to sparse-reward exploration is to seed
+learning with trajectories that reach the reward, and stop requiring the learner
+to find them by chance. James has recorded eight Lt. Surge attempts, one of them
+a clean win THAT USES THE SLEEP LINE, plus two dirty wins and several losses.
+
+That reframes the recordings entirely. I have been treating them as calibration
+data -- a denominator for win rates, a check on the damage model. Their far more
+valuable role is as demonstrations that make the exploration problem tractable:
+the learner never has to discover that sleeping Pawmot after the terrain drops
+is worth doing, because it has watched it happen and can be trained toward it,
+after which search explores around a strategy it already partly knows.
+
+This also explains, in hindsight, why James's play has corrected the engine
+three times today. He is not merely a source of facts about mechanics. He is a
+source of the one thing this method cannot generate for itself: trajectories
+through the parts of the state space that matter and are otherwise unreachable.
+
+## Consequences for what to build
+
+1. **Reading the foe's species and move off the screen stops being a nice-to-have.**
+   A demonstration is only usable if we can reconstruct the full state and the
+   action taken. We have our own HP, the foe's bar, and the screen states. We do
+   not yet have which Pokemon they had out or what it did. Without those a
+   recording is not a trajectory, it is a partial observation.
+2. **Recording ordinary play is now directly valuable**, not just Surge attempts.
+   Every fight he plays is a trajectory through states a random policy would
+   never reach.
+3. **The honest ordering changes.** I have been treating the reader as
+   infrastructure for the advisor. It is also the data pipeline for the method,
+   and on this analysis that is the more important of its two jobs.
