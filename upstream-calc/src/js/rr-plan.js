@@ -42,6 +42,31 @@ var RRPlan = (function () {
 		// wrong, so rr-ai only ever drops an action it can show the AI will not
 		// take -- most usefully a switch the ShouldSwitch gate rules out.
 		if (opts.useAI !== false && typeof RRAI !== "undefined") {
+			// ASSUME THE PREDICTION. James, after watching the advisor Force
+			// Palm into a Self-Destruct our own model had predicted at 103 vs
+			// 100: "assume one line is true, the line that from your
+			// understanding of the AI it will do. And make the move as if you
+			// are 100% sure. Our whole basis is that we can predict the
+			// opponent. That is the only real strength we have."
+			//
+			// So: the reply set is ONE action, the model's argmax. Every
+			// criterion downstream -- survival, kills, race, damage -- is then
+			// computed against the fight we actually expect, which makes
+			// best-responses like blocking a predicted boom with Detect
+			// expressible for the first time. The worst-case machinery judged
+			// each action against its own per-action worst reply, and provably
+			// never evaluated anything against the predicted move at all.
+			//
+			// Prediction error (measured: argmax right 75.5% on moves) is a
+			// LATER concern, by his explicit call -- and the roll solver
+			// showed "unknowable" randomness here keeps turning out to be
+			// readable state. Exact ties take the first tied action,
+			// deterministically; tie prediction via the AI's seeded stream is
+			// the same later concern.
+			if (opts.assumePrediction && typeof RRAI.trueTies === "function") {
+				var predicted = RRAI.trueTies(state, "foe", opts).actions;
+				if (predicted.length) return [predicted[0]];
+			}
 			// THE TRUE DISTRIBUTION, when asked for: argmax plus exact ties,
 			// which is what CFRU actually does. It is 2.24x narrower than the
 			// margin set over 240 positions.
