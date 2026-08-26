@@ -64,6 +64,7 @@ function foeArgmax(st) {
 }
 
 let fights = 0, cleanWins = 0, wins = 0, stalls = 0, loops = 0;
+let costDeaths = 0;
 let deaths = 0, turnsTotal = 0, msTotal = 0, decisions = 0;
 const worst = {};
 
@@ -115,7 +116,24 @@ for (let t = 0; t < teamCount; t++) {
 
 		const foeDown = real.foe.team.every(m => m.fainted);
 		const lost = real.me.team.filter(m => m.fainted).length;
-		fights++; turnsTotal += turns; deaths += lost;
+		// COST-WEIGHTED loss, alongside the raw count.
+		//
+		// The raw count cannot see the thing rr-plan now optimises. James's
+		// objective is per-Pokemon -- "I am fine losing a Golem, I am not fine
+		// losing a Kingambit" -- so an advisor that learns to spend the cheap
+		// Pokemon instead of the expensive one scores IDENTICALLY on a count
+		// while being enormously better at what was asked for. The
+		// seventeenth pass predicted exactly this trap: a metric blind to the
+		// optimised quantity always reports that the smarter version is no
+		// better, which is the same shape as the matchup null test.
+		//
+		// With no costs supplied every Pokemon costs 1 and this equals the
+		// count, so the headline number is unchanged until someone opts in.
+		const costs = opts.costs || null;
+		const costLost = real.me.team.filter(m => m.fainted)
+			.reduce((sum, m) => sum + (costs && typeof costs[m.set.species] === 'number'
+				? Math.max(0, Math.min(1, costs[m.set.species])) : 1), 0);
+		fights++; turnsTotal += turns; deaths += lost; costDeaths += costLost;
 		if (foeDown) { wins++; if (lost === 0) cleanWins++; }
 		else if (!real.me.team.every(m => m.fainted)) stalls++;
 		if (looped) loops++;
@@ -135,6 +153,8 @@ console.log('wins (any cost)   ' + wins + '  (' + (100 * wins / fights).toFixed(
 console.log('stalled           ' + stalls);
 console.log('looped            ' + loops);
 console.log('POKEMON LOST      ' + deaths + '  (' + (deaths / fights).toFixed(2) + ' per fight)');
+console.log('COST-WEIGHTED     ' + costDeaths.toFixed(2) + '  (' + (costDeaths / fights).toFixed(2)
+	+ ' per fight)   <-- what rr-plan optimises when costs are set');
 console.log('mean turns        ' + (turnsTotal / fights).toFixed(1));
 console.log('mean decision     ' + Math.round(msTotal / Math.max(1, decisions)) + ' ms');
 

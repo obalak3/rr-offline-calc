@@ -120,6 +120,19 @@ var RRPlan = (function () {
 		}
 		var iLostOne = lost(state.me, after.me);
 		var theyLostOne = lost(state.foe, after.foe);
+		// WHICH of ours died, not merely that one did. James: "losing the wrong
+		// pokemon ends the run for me. I am fine with losing a Golem, but I am
+		// not fine losing a Kingambit." A count cannot express that, and every
+		// objective in this repo has been a count.
+		var iLostWho = null;
+		if (iLostOne) {
+			for (var li = 0; li < state.me.team.length; li++) {
+				if (!state.me.team[li].fainted && after.me.team[li].fainted) {
+					iLostWho = after.me.team[li].set.species;
+					break;
+				}
+			}
+		}
 		return {
 			state: after,
 			foeAction: foeAction,
@@ -128,6 +141,7 @@ var RRPlan = (function () {
 			myTeamHP: teamFraction(after.me),
 			foeTeamHP: teamFraction(after.foe),
 			iFainted: iLostOne,
+			iFaintedWho: iLostWho,
 			foeFainted: theyLostOne,
 			over: RRBattle.isOver(after)
 		};
@@ -201,10 +215,40 @@ var RRPlan = (function () {
 	 * scored against whatever resists it. That ranked Bite above Water Gun into
 	 * a Rock/Ground lead, which is not advice.
 	 */
-	function rankKey(worst, race, stable, isSwitch, chargeTempo) {
+	/**
+	 * The cost of losing a particular Pokemon, in [0, 1].
+	 *
+	 * DEFAULT IS 1 FOR EVERYTHING, which makes the survival criterion below
+	 * reduce to exactly the boolean it replaces (1 when nothing died, 0 when
+	 * something did). So this change is opt-in and cannot silently alter any
+	 * existing measurement -- which matters, because the null test showed this
+	 * project cannot detect a small behavioural change at the sample sizes it
+	 * has.
+	 *
+	 * Below 1 marks a Pokemon as spendable, so a line that trades it outranks
+	 * one that trades a costlier team-mate. A cost of exactly 1 is the
+	 * "protected" case: losing it is as bad as the worst outcome the criterion
+	 * can express.
+	 *
+	 * The twelfth pass argues these are really marginal contributions to the
+	 * REST OF THE RUN, which is why they cannot be constants in the source and
+	 * change between gyms. They are an input.
+	 */
+	function costOf(species, costs) {
+		if (!costs || species === null || species === undefined) return 1;
+		var c = costs[species];
+		return (typeof c === "number") ? Math.max(0, Math.min(1, c)) : 1;
+	}
+
+	function survivalScore(worst, costs) {
+		if (!worst.iFainted) return 1;
+		return 1 - costOf(worst.iFaintedWho, costs);
+	}
+
+	function rankKey(worst, race, stable, isSwitch, chargeTempo, costs) {
 		var damage = stable || worst;
 		if (race && race.knockedOut) return [
-			worst.iFainted ? 0 : 1,
+			survivalScore(worst, costs),
 			1,                       // it kills what is out; that is the point
 			99,
 			1 - damage.foeTeamHP,
@@ -233,7 +277,7 @@ var RRPlan = (function () {
 		var clock = turnLead > 0 ? 2 : (turnLead === 0 ? 1 : 0);
 
 		return [
-			worst.iFainted ? 0 : 1,                        // survival: worst case
+			survivalScore(worst, costs),                   // survival, priced
 			damage.foeFainted ? 1 : 0,                     // a kill on what is out
 			clock,                                         // ahead, level, behind
 			1 - damage.foeTeamHP,                          // then: actual damage
@@ -302,7 +346,7 @@ var RRPlan = (function () {
 		var foeActions = foeActions || [];
 		for (var i = 0; i < foeActions.length; i++) {
 			var result = exchange(state, myAction, foeActions[i], opts);
-			var key = rankKey(result, null, null);
+			var key = rankKey(result, null, null, false, false, opts && opts.costs);
 			if (worst === null || compareKeys(key, worstKey) > 0) {
 				worst = result;
 				worstKey = key;
@@ -332,7 +376,7 @@ var RRPlan = (function () {
 			worst: worst,
 			worstReply: worst.foeAction,
 			key: rankKey(worst, race, damageAgainst,
-				myAction.type === "switch", opts.chargeSwitchTempo !== false),
+				myAction.type === "switch", opts.chargeSwitchTempo !== false, opts && opts.costs),
 			ko: myKO,
 			race: race,
 			verdict: verdictFor(worst, race, damageAgainst),
