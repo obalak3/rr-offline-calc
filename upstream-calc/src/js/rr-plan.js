@@ -43,12 +43,24 @@ var RRPlan = (function () {
 		// take -- most usefully a switch the ShouldSwitch gate rules out.
 		if (opts.useAI !== false && typeof RRAI !== "undefined") {
 			// THE TRUE DISTRIBUTION, when asked for: argmax plus exact ties,
-			// which is what CFRU actually does. The margin set is our own
-			// uncertainty, and branching on it prices our ignorance as though
-			// it were the game's randomness -- measured at 2.24x per ply over
-			// 240 positions, and it inflates MOST where the AI is most
-			// deterministic. Handled once at the end instead, as a robustness
-			// check on the action finally chosen.
+			// which is what CFRU actually does. It is 2.24x narrower than the
+			// margin set over 240 positions.
+			//
+			// MEASURED TO PLAY WORSE, AND LEFT OFF BY DEFAULT BECAUSE OF IT.
+			// On nine level-appropriate fights, margin wins 9/9 losing 4
+			// Pokemon; this wins 8/9 losing 6, and the fight it loses is Lt.
+			// Surge, the only one that is close. The reason is exactly what the
+			// scoreboard says: our argmax is right 75.5% of the time and the
+			// margin catches 100%. Branching only on our argmax means that a
+			// quarter of the time the advisor prepares for a move the AI will
+			// not make and fails to prepare for the one it will.
+			//
+			// So the third pass's "the margin is our ignorance priced as the
+			// game's randomness" is a correct DESCRIPTION and the wrong
+			// PRESCRIPTION at our current port accuracy. The extra width is
+			// buying real coverage of a real error, and the honest order is to
+			// make the argmax better first and narrow afterwards -- not to
+			// narrow now and lose fights for it.
 			if (opts.trueDistribution && typeof RRAI.trueTies === "function") {
 				var ties = RRAI.trueTies(state, "foe", opts).actions;
 				if (ties.length) return ties;

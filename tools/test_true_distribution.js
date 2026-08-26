@@ -10,6 +10,18 @@
  * which is what CFRU does -- and the margin is spent ONCE, re-ranking the
  * chosen action, which is where that coverage is actually worth paying for.
  *
+ * IT IS OFF BY DEFAULT AND MUST STAY OFF. Measured on nine level-appropriate
+ * fights: the margin set wins 9/9 losing 4 Pokemon, the true distribution wins
+ * 8/9 losing 6, and the fight it drops is Lt. Surge -- the only close one. The
+ * scoreboard explains it exactly: our argmax is right 75.5% of the time and the
+ * margin catches 100%, so branching only on the argmax means a quarter of the
+ * time the advisor prepares for a move the AI will not make. The width was
+ * buying coverage of a real error, not paying for nothing.
+ *
+ * Kept, not reverted, because it is the right shape once the argmax is good
+ * enough -- and because the measurement is the point. Turning it on is now a
+ * decision with a known price rather than a guess.
+ *
  * Three things are checked:
  *
  *   THE SAVING IS REAL. The whole justification is that branching on the
