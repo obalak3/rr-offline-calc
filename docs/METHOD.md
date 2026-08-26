@@ -715,3 +715,81 @@ baseline you are comparing against.
 For a system whose entire value is telling someone what will happen, that is the
 failure mode that matters most, and the correction has come from outside the
 data every time.
+
+---
+
+# Ninth pass: the AI's "coin flips" are a deterministic stream
+
+Applying the eighth pass's lesson -- check that a thing is USED, not merely
+present -- to the last loose end: the AI's `randSeed`. It passes the test.
+`AIRandom()` is called throughout the switching and decision code.
+
+`ai_util.c:45`:
+
+    u16 AIRandom()
+    {
+        if (gBattleTypeFlags & BATTLE_TYPE_MOCK_BATTLE)
+            return Random(); //Use regular random since AI vs AI isn't exploitable
+
+        gNewBS->ai.randSeed = 1103515245 * gNewBS->ai.randSeed + 24691;
+        return gNewBS->ai.randSeed >> 16;
+    }
+
+seeded once per battle at `battle_start_turn_start.c:681` with `Random32()`.
+
+So every AI tie-break, every 50% switch decision and every 25% chance in the
+game comes from a **linear congruential generator with known constants**, not
+from the game's ordinary randomness. The author's comment is an admission: the
+separate path exists BECAUSE the seeded one is considered exploitable against a
+human player.
+
+## What this does and does not change
+
+**It does not change how we should plan.** The seed is drawn from `Random32()`
+at battle start and is unobservable to us. Over an unknown, uniformly-distributed
+seed, treating each tie as an independent uniform draw gives the correct
+expectation, which is what an MDP needs. Our modelling is right.
+
+**It does change three things we have been saying loosely.**
+
+1. "Coin flip" is technically wrong. Within a single battle the outcomes are
+   deterministic given the seed, and consecutive draws are related by the LCG
+   rather than independent. The probability we compute is really "the fraction of
+   seeds that produce a clean win", which is the same number but a different
+   object, and it matters for anything reasoning about correlation between turns.
+2. **It confirms the replay advice I gave James was right, for a reason I did
+   not know at the time.** I told him battery-save reloads sample fresh dice
+   while save states reproduce them. That is exactly right here: the seed is set
+   at battle start, so re-entering the fight redraws it, while reloading a
+   mid-battle save state restores the seed and replays the same AI decisions.
+   Save-state scouting of a tie cannot work -- not because the tie re-rolls, as
+   I said earlier, but because it re-rolls IDENTICALLY.
+3. It means the AI's randomness is in principle recoverable. Each observed tie
+   leaks a bit or two of a 32-bit state, and the stream also advances on calls we
+   cannot see, so a battle does not leak enough to solve it from screen reading.
+   I am not claiming this is exploitable. I am recording that it is not
+   impossible in the way true randomness would be, and that the developer thought
+   so too.
+
+## Where the research stands after nine passes
+
+The framework has survived every check I have been able to devise:
+
+- It is an MDP: fixed non-adapting opponent (verified by the read-test after a
+  false alarm), known chance distributions, fully observed state.
+- Turn-by-turn greedy on a good value function is optimal, not a compromise.
+- Enumerate the current turn exactly (~20 successors, free); sample beyond.
+- The margin set is model uncertainty masquerading as probability, costing ~2x
+  per ply where we know most and nothing where we know least.
+- Everything reduces to estimating V, and both of our estimators are blind to
+  the strategies that win, for the same reason: they cannot represent what they
+  were not told about.
+- One genuine gap in the Markov property remains: the AI's cached replacement
+  target, which IS read (36 reads) and must be part of the state.
+
+The one thing I would still not bet on is the sixth pass's claim that the cache
+explains the Bellibolt miss. The mechanism is real; the evidence for that
+particular explanation is four hand-picked moments and one match, which is worth
+very little. The test is the ~40 replacement events in the recordings, and it
+needs the foe's species read off the screen. That remains the single highest-value
+next step, and it is a reader task rather than a search task.
