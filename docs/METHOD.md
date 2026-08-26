@@ -161,3 +161,93 @@ CORRECTED opponent and on `bench_mirror` (which controls for team quality). Not
 to tune anything. To find out whether the only method in this repo that converts
 compute into quality was discarded on a measurement that four later discoveries
 invalidated.
+
+---
+
+# Checking the answer again: the shelved tool was not doing the thing
+
+Instructed to doubt my own conclusion, I read `rr-mcts.js` rather than trusting
+its header. The framework is right and the implementation does not implement it.
+That matters more than the verdict it was shelved on, because it means the 51%
+measured something other than the method being argued for.
+
+## Three defects, each of which alone would sink it
+
+**1. The rollouts are deterministic and use median rolls.** `runRollout`
+advances with `{mode: "maxroll", risks: {roll: "median"}}`. So beyond the first
+few plies there are no crits, no missed moves, and -- because `maxroll` fires a
+secondary only when guaranteed or when it belongs to the OPPONENT
+(`rr-battle.js:1558`) -- our own 30% burns never land. **The rollouts inherit
+precisely the blindness that made `cleanWin` unable to see James's winning
+line.** A method whose entire justification is "it samples the real
+distribution" was sampling a deterministic, biased one.
+
+The code defends this: "variance matters where the decision is made, near the
+root, and the tree samples it there; twenty turns deep it is noise that the
+average washes out." That is right about VARIANCE and wrong about BIAS. Median
+rolls with no crits and no player secondaries is not noise around the truth, it
+is a consistent shift away from it, and averaging more of it does not help.
+
+**2. The rollout policy cannot represent the winning strategy.** `rolloutAction`
+is a deterministic argmax over `damage / defender.curHP`, with status moves
+scored a flat 0.05 because `damageRolls` returns null for them. Any attack doing
+more than 5% of the target's remaining health beats Sleep Powder. So a rollout
+will essentially never put anything to sleep, and a position whose value comes
+from sleeping Pawmot is scored as though that option did not exist.
+
+This generalises into the principle the whole question turns on:
+
+> **A sampling method can only discover strategies its sampling distribution can
+> generate.** A rollout policy with no support on status moves makes status
+> strategies invisible, no matter how many iterations are run.
+
+That is the same failure as proof mode's, arrived at by a different road. One
+forbids the line by refusing luck; the other forbids it by never trying the
+move.
+
+**3. The rollout cache freezes one sample per position.** `rolloutCache` memoises
+the leaf value on `positionKey`, justified by the rollouts being deterministic --
+which they are, per defect 1. But if defect 1 is fixed and rollouts start
+sampling, this cache turns N samples into 1 and the estimate stops converging.
+The two are coupled: fixing the sampling requires removing the cache, and the
+cache is there because sampling was removed for speed.
+
+## What this does to the earlier conclusion
+
+It strengthens it and narrows it. The framework argument stands on its own
+reasoning: known stochastic opponent, known chance distributions, fully observed
+Markov state, so it is an MDP and the answer is an expectation over the real
+distribution. Nothing in the code changes that.
+
+But "we already had MCTS and it lost" is now void on FIVE grounds rather than
+four. Sample size, invented terrain, invented replacements, confounded teams --
+and now the implementation did not sample the distribution it was supposed to be
+sampling. The 51% is not evidence about the method.
+
+## What the method actually requires, stated as conditions
+
+Not "use MCTS". These are the properties any correct answer must have here, and
+they fall out of the problem rather than from a preference for an algorithm:
+
+1. **Expectation over the true distribution**, with crits, accuracy, secondary
+   effects, paralysis, sleep duration and AI ties all treated as what they are:
+   chance events with known probabilities. One mechanism, not one design per
+   uncertainty.
+2. **Full support in whatever generates candidate futures.** Every legal move
+   must have nonzero probability of being explored, or strategies using it are
+   invisible by construction. This is the condition both of our existing
+   searches violate, in opposite ways.
+3. **Anytime, and improving with compute.** The one property measured and
+   recorded on both methods: MCTS gave 47/49/51% at 50/150/400 iterations, the
+   proxy search was flat across lookahead 2, 3 and 4 and stuck at exactly 81/135
+   through three targeted fixes.
+4. **Exact where exactness is cheap.** The dangerous events -- a crit that kills
+   something -- are one turn away and few. Enumerate them at the root for a
+   calibrated number; sample only the future beyond, where precision is neither
+   affordable nor needed.
+5. **No unbiased-sample caching.** Memoising a stochastic estimate on position
+   destroys convergence.
+
+Condition 2 is the one that has never been satisfied by anything in this repo,
+and it is the reason the same fight keeps being unwinnable by every method we
+try.
