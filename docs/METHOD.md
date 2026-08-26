@@ -793,3 +793,82 @@ particular explanation is four hand-picked moments and one match, which is worth
 very little. The test is the ~40 replacement events in the recordings, and it
 needs the foe's species read off the screen. That remains the single highest-value
 next step, and it is a reader task rather than a search task.
+
+---
+
+# Tenth pass: the objective is mis-specified, and it makes us too cautious
+# exactly where caution is worthless
+
+Nine passes stress-tested the METHOD. None questioned the OBJECTIVE. It has an
+error, and unlike most of what I have found today it changes what the advisor
+should actually recommend.
+
+## What is currently encoded
+
+`rr-mcts.js` reward:
+
+    clean win            1.0
+    win losing k         0.40 / (1 + k)      -> 0.20 for one loss
+    lost / unresolved    ~0.05 (progress-weighted)
+    wiped                ~0.01
+
+justified in the comment as: "in a Nuzlocke a lost battle usually ends the run".
+
+## The premise is false for the player we are building this for
+
+James resets. Across eight recorded Lt. Surge attempts, both of the wins that
+cost a Pokemon were followed by a reset -- he reloaded and played it again. A
+lost battle does not end his run. It costs him ten minutes.
+
+If a dirty win is reset just as a loss is, then the two outcomes have the SAME
+value to him, and the true utility is close to binary:
+
+    clean win            1
+    everything else      0
+
+## Why this matters, quantified
+
+With the current numbers, a certain win costing one Pokemon scores 0.20. So the
+search prefers a GUARANTEED dirty win over any clean-win chance below 20%. Under
+the binary utility it should prefer any clean chance above zero, because a dirty
+win is worth nothing.
+
+That is not a rounding difference. It is a sign flip in behaviour across the
+whole 0-20% band, which is exactly the desperate positions where the choice
+between playing safe and gambling actually arises. **In a position where the
+clean win is slipping away, the correct play for a resetting player is to take
+the highest-variance line that still has any chance, and the current objective
+tells it to do the opposite.**
+
+This is the same class of error as the proof-mode blindness and the rollout
+policy: not a bug, a mis-specification that makes an entire category of correct
+play unreachable. And it would never show up as a benchmark regression, because
+the benchmark scores clean-win RATE, and a search that secures dirty wins loses
+nothing measurable by trading away low-probability clean ones.
+
+## The correction is a parameter, not a constant
+
+I am not claiming binary is right either, and this is where I have to be careful
+not to over-infer. Those eight attempts were a testing session in which James was
+deliberately hunting a clean win to give me data. In ordinary play he may well
+accept a death and continue -- a Nuzlocke without any accepted deaths is not
+really the game being played.
+
+So the honest statement is that **the relative value of a dirty win is a player
+preference that is currently hard-coded with a false justification.** It should
+be explicit and settable, because it materially changes advice:
+
+    dirty-win value 0.20   play safe, bank the win, accept the loss  (current)
+    dirty-win value 0.00   gamble for clean, reset if it fails       (resetting)
+
+and the right value is a question for James rather than for a benchmark. It is
+also the first thing on this list that could be shipped as a visible control
+rather than a hidden constant, since the player is the one who knows whether he
+is going to reset.
+
+## What this does to the framework
+
+Nothing structural. It is the reward function of the MDP, not the method for
+solving it. But it is worth noticing that nine passes of careful reasoning about
+HOW to search never once asked what we were searching FOR, and the answer had a
+false premise sitting in a comment the whole time.
