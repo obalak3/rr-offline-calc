@@ -149,6 +149,8 @@ var RRBattle = (function () {
 			active: 0,
 			hazards: {stealthrock: 0, spikes: 0, toxicspikes: 0, stickyweb: 0},
 			switchCooldown: 0,
+			// The move that last connected on this side. See executeMove.
+			lastLandedMove: null,
 			screens: {}        // name -> turns remaining
 		};
 	}
@@ -1475,6 +1477,26 @@ var RRBattle = (function () {
 			}
 		}
 		damage(defender, dealt);
+		}
+
+		// gLastLandedMoves: the move that last CONNECTED on this side.
+		//
+		// One of the six AI state variables the nineteenth pass enumerated, and
+		// the one with a strategic edge attached. PickMoveHumanLikelyToChoose
+		// (ai_util.c:666) is called whenever the AI simulates what WE will do,
+		// and its second rule is to assume we will repeat whatever last landed
+		// -- the source comment says "Assume the player will spam A and not
+		// bother changing attacks". So the AI's threat assessment is computed
+		// against a move we may have no intention of using, and a player who
+		// varies is operating outside the model the AI is reasoning with.
+		//
+		// Tracked here rather than ported into scoring yet: a rule that reads a
+		// variable we do not maintain is wrong however faithfully it is
+		// transcribed, so the state comes first. Nothing consumes this field
+		// today, which is deliberate -- it is inert until the scoring side
+		// lands, and inert is better than half-wired.
+		if (dealt > 0 && !hitSubstitute) {
+			defenderSide.lastLandedMove = action.move;
 		}
 
 		// Electromorphosis charges its holder whenever it is hit by a damaging
