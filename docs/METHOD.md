@@ -1270,3 +1270,89 @@ simulator". Each revision came from costing a claim I had made qualitatively.
 The current version is the first one where I have checked the arithmetic before
 asserting it, which is not a reason to trust it, but is a reason to trust it more
 than the two it replaced.
+
+---
+
+# Sixteenth pass: doubting the whole edifice, not the details
+
+Fifteen passes have refined a single answer: learn the value function, seeded by
+a start-state curriculum from demonstrations. Each pass sharpened it. None asked
+whether the whole thing is necessary.
+
+## The chain of reasoning, and where it can be attacked
+
+    V must be estimated
+      -> handcrafted V is blind to strategies its author did not encode  (measured)
+      -> rollout V is blind to strategies its policy never plays          (measured)
+      -> searching to terminal is 20^25                                   (measured)
+      => therefore learn V
+
+The three premises are individually well grounded. But the conclusion only
+follows if there is nothing else wrong with the searches -- and we spent today
+discovering that there was a great deal else wrong with them, and we have never
+re-measured after fixing it.
+
+Every search result this project has ever produced was measured against at least
+one of:
+
+  - an invented mechanic (AI terrain permanent, corrected today)
+  - an invented opponent (replacement heuristic, ported today)
+  - a margin set treated as a probability distribution, costing ~2x per ply
+    and inflating most where the AI is most deterministic (diagnosed today,
+    NOT yet fixed)
+  - a reward that counts losses instead of pricing them, and that treats a
+    dirty win as 0.20 for a player who resets (diagnosed today, NOT yet fixed)
+
+**Nobody has ever run this search with all four corrected.** The conclusion
+"handcrafted V is not good enough, therefore learn" was reached by measuring a
+search that was solving a different game with the wrong scoring.
+
+## The specific reason this matters for what to build next
+
+The observed failure is not that the advisor cannot win. On level-appropriate
+fights it wins 8/9, and with today's corrections it wins Lt. Surge. **The failure
+is that it wins DIRTY** -- four Pokemon on Surge where James loses zero or one.
+
+And the objective analysis says exactly why that would happen, with no reference
+to value estimation at all: the reward counts losses rather than pricing them, so
+it cannot distinguish sacrificing a Golem from sacrificing a Kingambit, and it
+scores a certain dirty win above any clean chance below 20%, so it banks the win
+whenever the clean line looks difficult.
+
+That is a complete explanation of the observed symptom that requires no learning
+whatsoever. It might be wrong, but it is cheap to test and it has not been
+tested.
+
+## The honest ordering
+
+    1. Fix the objective. Per-Pokemon costs, protected-Pokemon as a constraint,
+       and the dirty-win value exposed as a control rather than hard-coded at
+       0.40/(1+k). Cheap, and it is the thing the analysis most directly implicates.
+    2. Fix the opponent distribution. Use the true argmax-plus-ties set for the
+       expectation, and handle model uncertainty as one robustness check on the
+       chosen action. Recovers ~2x per ply, and is a deletion rather than a feature.
+    3. THEN re-measure whether a handcrafted V is actually insufficient.
+    4. Only if it is, build the learning machinery.
+
+I have spent fifteen passes designing step 4 while steps 1 and 2 sit undone, and
+step 3 -- the measurement that would justify step 4 -- has never been run against
+a corrected engine. That is precisely the failure James described at the start of
+this loop: constant activity, no progress, because the tactics were being chosen
+before the question was settled. I reproduced it at a higher level of abstraction.
+
+## What survives regardless of that ordering
+
+The framework is not wasted work and does not depend on the outcome of step 3:
+
+  - It is an MDP; the opponent is verifiably non-adapting.
+  - Turn-by-turn greedy on a good V is optimal, not a compromise.
+  - The current turn is free to enumerate exactly (~20 successors).
+  - Three uncertainties want three different treatments; conflating them is what
+    made searches unaffordable.
+  - The objective is per-Pokemon and time-varying, derived from the run.
+  - If V does have to be learned, the exploration problem is real and the fix is
+    a start-state curriculum from demonstrations, not imitation.
+
+All of that is true whether or not learning turns out to be needed. What I got
+wrong was the ORDER, by assuming the measurements that motivated learning were
+sound when every one of them predates today's corrections.
