@@ -1,0 +1,102 @@
+{"frame": "f0206.png", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108, "foe": "Vikavolt", "foe_bar": 48, "foe_move": "Bug Buzz", "run": "surge_run1"}
+{"frame": "f0254.png", "us": "Victreebel", "our_hp": 70, "our_maxhp": 108, "foe": "Vikavolt", "foe_bar": 38, "foe_move": "Mud Shot", "run": "surge_run1"}
+{"frame": "f0278.png", "us": "Lanturn", "our_hp": 89, "our_maxhp": 139, "foe": "Vikavolt", "foe_bar": 38, "foe_move": "Bug Buzz", "run": "surge_run1"}
+{"frame": "f0312.png", "us": "Lanturn", "our_hp": 63, "our_maxhp": 139, "foe": "Vikavolt", "foe_bar": 12, "foe_move": "Bug Buzz", "run": "surge_run1"}
+{"frame": "f0393.png", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Thunder Punch", "run": "surge_run1"}
+{"frame": "f0416.png", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Drain Punch", "run": "surge_run1"}
+{"frame": "f0482.png", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Ice Punch", "run": "surge_run1"}
+{"frame": "f0082.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 35, "foe_move": "Discharge", "run": "surge_run2"}
+{"frame": "f0098.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 35, "foe_move": "Discharge", "run": "surge_run2"}
+{"frame": "f0146.png", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108, "foe": "Bellibolt", "foe_bar": 48, "foe_move": "Thunder Wave", "run": "surge_run2"}
+{"frame": "f0215.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Vikavolt", "foe_bar": 48, "foe_move": "Mud Shot", "run": "surge_run2"}
+{"frame": "f0250.png", "us": "Lanturn", "our_hp": 89, "our_maxhp": 139, "foe": "Vikavolt", "foe_bar": 31, "foe_move": "Bug Buzz", "run": "surge_run2"}
+{"frame": "f0290.png", "us": "Lanturn", "our_hp": 62, "our_maxhp": 139, "foe": "Vikavolt", "foe_bar": 10, "foe_move": "Mud Shot", "run": "surge_run2"}
+{"frame": "f0387.png", "us": "Mienshao", "our_hp": 66, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 48, "foe_move": "Charge Beam", "run": "surge_run2"}
+{"frame": "f0425.png", "us": "Mienshao", "our_hp": 66, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 48, "foe_move": "Charge Beam", "run": "surge_run2"}
+{"frame": "f0459.png", "us": "Lanturn", "our_hp": 96, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 48, "foe_move": "Hidden Power", "run": "surge_run2"}
+{"frame": "f0484.png", "us": "Mienshao", "our_hp": 65, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 48, "foe_move": "Charge Beam", "run": "surge_run2"}
+{"frame": "f0501.png", "us": "Lanturn", "our_hp": 130, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 48, "foe_move": "Hidden Power", "run": "surge_run2"}
+{"frame": "f0527.png", "us": "Lanturn", "our_hp": 73, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 32, "foe_move": "Hidden Power", "run": "surge_run2"}
+{"frame": "f0560.png", "us": "Mienshao", "our_hp": 65, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 23, "foe_move": "Volt Switch", "run": "surge_run2"}
+{"frame": "f0576.png", "us": "Lanturn", "our_hp": 107, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 23, "foe_move": "Hidden Power", "run": "surge_run2"}
+{"frame": "f0612.png", "us": "Mienshao", "our_hp": 67, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 14, "foe_move": "Volt Switch", "run": "surge_run2"}
+{"frame": "f0627.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 14, "foe_move": "Hidden Power", "run": "surge_run2"}
+{"frame": "f0695.png", "us": "Lanturn", "our_hp": 82, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Drain Punch", "run": "surge_run2"}
+{"frame": "f0827.png", "us": "Mienshao", "our_hp": 59, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 38, "foe_move": "Drain Punch", "run": "surge_run2"}
+{"frame": "f0841.png", "us": "Mienshao", "our_hp": 59, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 38, "foe_move": "Thunder Punch", "run": "surge_run2"}
+{"frame": "f0919.png", "us": "Diggersby", "our_hp": 112, "our_maxhp": 112, "foe": "Pawmot", "foe_bar": 38, "foe_move": "Drain Punch", "run": "surge_run2"}
+{"frame": "f0962.png", "us": "Diggersby", "our_hp": 79, "our_maxhp": 112, "foe": "Pawmot", "foe_bar": 24, "foe_move": "Drain Punch", "run": "surge_run2"}
+{"frame": "f1000.png", "us": "Mienshao", "our_hp": 28, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 39, "foe_move": "Mach Punch", "run": "surge_run2"}
+{"frame": "f1088.png", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102, "foe": "Pincurchin", "foe_bar": 35, "foe_move": "Hidden Power", "run": "surge_run2"}
+{"frame": "f0220.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 40, "foe_move": "Discharge", "run": "surge_run3"}
+{"frame": "f0238.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 40, "foe_move": "Discharge", "run": "surge_run3"}
+{"frame": "f0302.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 34, "foe_move": "Hidden Power", "run": "surge_run3"}
+{"frame": "f0332.png", "us": "Lanturn", "our_hp": 78, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 11, "foe_move": "Hidden Power", "run": "surge_run3"}
+{"frame": "f0354.png", "us": "Victreebel", "our_hp": 103, "our_maxhp": 108, "foe": "Bellibolt", "foe_bar": 11, "foe_move": "Thunder Wave", "run": "surge_run3"}
+{"frame": "f0374.png", "us": "Lanturn", "our_hp": 112, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 11, "foe_move": "Hidden Power", "run": "surge_run3"}
+{"frame": "f0399.png", "us": "Victreebel", "our_hp": 98, "our_maxhp": 108, "foe": "Bellibolt", "foe_bar": 11, "foe_move": "Thunder Wave", "run": "surge_run3"}
+{"frame": "f0448.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 28, "foe_move": "Hidden Power", "run": "surge_run3"}
+{"frame": "f0496.png", "us": "Lanturn", "our_hp": 82, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 6, "foe_move": "Hidden Power", "run": "surge_run3"}
+{"frame": "f0521.png", "us": "Mienshao", "our_hp": 67, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 3, "foe_move": "Volt Switch", "run": "surge_run3"}
+{"frame": "f0542.png", "us": "Lanturn", "our_hp": 116, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 1, "foe_move": "Hidden Power", "run": "surge_run3"}
+{"frame": "f0621.png", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 37, "foe_move": "Drain Punch", "run": "surge_run3"}
+{"frame": "f0658.png", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 37, "foe_move": "Thunder Punch", "run": "surge_run3"}
+{"frame": "f0677.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 37, "foe_move": "Drain Punch", "run": "surge_run3"}
+{"frame": "f0704.png", "us": "Lanturn", "our_hp": 73, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 21, "foe_move": "Drain Punch", "run": "surge_run3"}
+{"frame": "f0738.png", "us": "Lanturn", "our_hp": 71, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 3, "foe_move": "Drain Punch", "run": "surge_run3"}
+{"frame": "f0811.png", "us": "Mienshao", "our_hp": 64, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 40, "foe_move": "Discharge", "run": "surge_run3"}
+{"frame": "f0836.png", "us": "Lanturn", "our_hp": 105, "our_maxhp": 139, "foe": "Pincurchin", "foe_bar": 40, "foe_move": "Scald", "run": "surge_run3"}
+{"frame": "f0136.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run4"}
+{"frame": "f0159.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run4"}
+{"frame": "f0438.png", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108, "foe": "Bellibolt", "foe_bar": 48, "foe_move": "Thunder Wave", "run": "surge_run4"}
+{"frame": "f0528.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 23, "foe_move": "Hidden Power", "run": "surge_run4"}
+{"frame": "f0578.png", "us": "Lanturn", "our_hp": 87, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 2, "foe_move": "Hidden Power", "run": "surge_run4"}
+{"frame": "f0628.png", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 38, "foe_move": "Drain Punch", "run": "surge_run4"}
+{"frame": "f0643.png", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 38, "foe_move": "Drain Punch", "run": "surge_run4"}
+{"frame": "f0672.png", "us": "Lanturn", "our_hp": 46, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Drain Punch", "run": "surge_run4"}
+{"frame": "f0789.png", "us": "Mienshao", "our_hp": 50, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 37, "foe_move": "Drain Punch", "run": "surge_run4"}
+{"frame": "f0803.png", "us": "Mienshao", "our_hp": 50, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 37, "foe_move": "Drain Punch", "run": "surge_run4"}
+{"frame": "f0859.png", "us": "Diggersby", "our_hp": 67, "our_maxhp": 112, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Ice Punch", "run": "surge_run4"}
+{"frame": "f0046.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run5"}
+{"frame": "f0066.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run5"}
+{"frame": "f0082.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Scald", "run": "surge_run5"}
+{"frame": "f0148.png", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102, "foe": "Bellibolt", "foe_bar": 48, "foe_move": "Thunder Wave", "run": "surge_run5"}
+{"frame": "f0034.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run6"}
+{"frame": "f0049.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run6"}
+{"frame": "f0111.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 33, "foe_move": "Hidden Power", "run": "surge_run6"}
+{"frame": "f0145.png", "us": "Lanturn", "our_hp": 94, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 15, "foe_move": "Hidden Power", "run": "surge_run6"}
+{"frame": "f0172.png", "us": "Victreebel", "our_hp": 103, "our_maxhp": 108, "foe": "Bellibolt", "foe_bar": 12, "foe_move": "Thunder Wave", "run": "surge_run6"}
+{"frame": "f0404.png", "us": "Lanturn", "our_hp": 128, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Drain Punch", "run": "surge_run6"}
+{"frame": "f0449.png", "us": "Lanturn", "our_hp": 88, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 24, "foe_move": "Drain Punch", "run": "surge_run6"}
+{"frame": "f0487.png", "us": "Victreebel", "our_hp": 73, "our_maxhp": 108, "foe": "Pawmot", "foe_bar": 31, "foe_move": "Ice Punch", "run": "surge_run6"}
+{"frame": "f0554.png", "us": "Mienshao", "our_hp": 54, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 20, "foe_move": "Thunder Punch", "run": "surge_run6"}
+{"frame": "f0570.png", "us": "Mienshao", "our_hp": 54, "our_maxhp": 98, "foe": "Pawmot", "foe_bar": 20, "foe_move": "Drain Punch", "run": "surge_run6"}
+{"frame": "f0020.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run7"}
+{"frame": "f0040.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run7"}
+{"frame": "f0092.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 30, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0123.png", "us": "Lanturn", "our_hp": 98, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 14, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0145.png", "us": "Victreebel", "our_hp": 103, "our_maxhp": 108, "foe": "Bellibolt", "foe_bar": 11, "foe_move": "Thunder Wave", "run": "surge_run7"}
+{"frame": "f0194.png", "us": "Lanturn", "our_hp": 132, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 9, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0246.png", "us": "Victreebel", "our_hp": 105, "our_maxhp": 108, "foe": "Pawmot", "foe_bar": 48, "foe_move": "Ice Punch", "run": "surge_run7"}
+{"frame": "f0405.png", "us": "Diggersby", "our_hp": 112, "our_maxhp": 112, "foe": "Vikavolt", "foe_bar": 48, "foe_move": "Mud Shot", "run": "surge_run7"}
+{"frame": "f0435.png", "us": "Diggersby", "our_hp": 82, "our_maxhp": 112, "foe": "Vikavolt", "foe_bar": 36, "foe_move": "Mud Shot", "run": "surge_run7"}
+{"frame": "f0493.png", "us": "Mienshao", "our_hp": 68, "our_maxhp": 98, "foe": "Vikavolt", "foe_bar": 28, "foe_move": "Roost", "run": "surge_run7"}
+{"frame": "f0515.png", "us": "Mienshao", "our_hp": 68, "our_maxhp": 98, "foe": "Vikavolt", "foe_bar": 48, "foe_move": "Mud Shot", "run": "surge_run7"}
+{"frame": "f0587.png", "us": "Mienshao", "our_hp": 63, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 48, "foe_move": "Charge Beam", "run": "surge_run7"}
+{"frame": "f0620.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 48, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0652.png", "us": "Lanturn", "our_hp": 85, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 28, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0702.png", "us": "Mienshao", "our_hp": 63, "our_maxhp": 98, "foe": "Manectric", "foe_bar": 14, "foe_move": "Volt Switch", "run": "surge_run7"}
+{"frame": "f0773.png", "us": "Lanturn", "our_hp": 119, "our_maxhp": 139, "foe": "Manectric", "foe_bar": 11, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0856.png", "us": "Lanturn", "our_hp": 97, "our_maxhp": 139, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Scald", "run": "surge_run7"}
+{"frame": "f0870.png", "us": "Victreebel", "our_hp": 37, "our_maxhp": 108, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Hidden Power", "run": "surge_run7"}
+{"frame": "f0907.png", "us": "Lanturn", "our_hp": 88, "our_maxhp": 139, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Scald", "run": "surge_run7"}
+{"frame": "f0365.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run8"}
+{"frame": "f0389.png", "us": "Mienshao", "our_hp": 98, "our_maxhp": 98, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Discharge", "run": "surge_run8"}
+{"frame": "f0407.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Pincurchin", "foe_bar": 39, "foe_move": "Scald", "run": "surge_run8"}
+{"frame": "f0467.png", "us": "Lanturn", "our_hp": 121, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 32, "foe_move": "Hidden Power", "run": "surge_run8"}
+{"frame": "f0504.png", "us": "Lanturn", "our_hp": 86, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 15, "foe_move": "Hidden Power", "run": "surge_run8"}
+{"frame": "f0529.png", "us": "Mienshao", "our_hp": 74, "our_maxhp": 98, "foe": "Bellibolt", "foe_bar": 12, "foe_move": "Thunder Wave", "run": "surge_run8"}
+{"frame": "f0552.png", "us": "Lanturn", "our_hp": 120, "our_maxhp": 139, "foe": "Bellibolt", "foe_bar": 9, "foe_move": "Hidden Power", "run": "surge_run8"}
+{"frame": "f0570.png", "us": "Mienshao", "our_hp": 72, "our_maxhp": 98, "foe": "Bellibolt", "foe_bar": 7, "foe_move": "Thunder Wave", "run": "surge_run8"}
+{"frame": "f0616.png", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "foe": "Pawmot", "foe_bar": 25, "foe_move": "Drain Punch", "run": "surge_run8"}
+{"frame": "f0654.png", "us": "Diggersby", "our_hp": 112, "our_maxhp": 112, "foe": "Pawmot", "foe_bar": 32, "foe_move": "Drain Punch", "run": "surge_run8"}

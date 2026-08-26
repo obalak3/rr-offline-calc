@@ -1586,3 +1586,141 @@ This is also the cheapest high-value work found in nineteen passes. Tracking six
 variables is small, mechanical, testable against the recordings, and it improves
 every method we might eventually choose -- search, learning, or heuristic --
 because all of them are downstream of the simulator being right.
+
+---
+
+# Twentieth pass: the framework is right, the ordering reproduces the cycle,
+# and fidelity must become a number
+
+Prompted by James, 2026-08-26: is this the right idea, and why would the last
+four days not simply happen again?
+
+## The framework survives attack. That part is settled.
+
+I went at the stack looking for a halfway idea, something that scores well now
+and caps out later, and did not find one in the framework itself:
+
+- The MDP claim rests on read-verified source, not on hope. The one adaptation
+  the AI does perform (PickMoveHumanLikelyToChoose) is a fixed function of
+  augmented state, enumerated exhaustively in the nineteenth pass.
+- Turn-by-turn greedy is optimal given a Markov state and a good V, and the
+  state augmentation needed for Markov is now a concrete six-item list.
+- The objective (per-Pokemon costs, player-set, run-derived) is the player's
+  actual utility, confirmed in his own words twice.
+- The method choice (handcrafted V versus learned V) is correctly DEFERRED to a
+  measurement rather than committed to, and the fallback if handcrafting fails
+  (start-state curriculum from demonstrations) is the standard answer to the
+  exploration problem and was costed, not asserted.
+- Quality is not capped: the enumerated-root plus sampled-future architecture
+  converts compute into quality, which is the property James asked to optimise
+  for, and the only property the discarded methods measurably lacked.
+
+Every structural blindness found in four days (proof mode, rollout policy,
+margin set, count-based reward, count-blind benchmark) has a named fix in the
+ordering. The idea is right. That is not where the risk is.
+
+## But the cycle would recur as ordered, and here is its engine, named
+
+Every number this project has voided died the same death: a divergence between
+the simulator and the real game, or between the metric and the objective, was
+discovered BY ACCIDENT, usually because James noticed something, after the
+divergence had already poisoned the measurements built on it. Six voidings in
+four days: permanent terrain, invented replacements, the margin priced as
+probability, the count-based reward, the count-blind benchmark, six unread AI
+state variables. Every one discovered incident-first, priced afterwards.
+
+The current ordering fixes every KNOWN divergence and then re-measures. It
+contains no mechanism for the unknown ones. Our port covers ~31 of ~880 scoring
+sites; the next Bellibolt is already in there somewhere, and under the plan as
+written it gets found the way the last six were: after it voids a week.
+
+Fixing known bugs and re-measuring is what the last four days already were.
+That is the cycle, and re-entering it with a better simulator is still
+re-entering it.
+
+## The missing first-class item: opponent fidelity as a measured number
+
+Simulator fidelity is currently established by anecdote and corrected by
+incident. It has to become a tracked measurement, and the corpus makes that
+possible:
+
+**The opponent scoreboard.** For every AI decision point in recorded play, two
+numbers over hundreds of decisions: (a) is the observed action inside our
+predicted argmax-plus-ties set, and (b) calibration, do our predicted tie-set
+sizes match observed frequencies? (b) exists because (a) alone rewards a lazy
+port that predicts wide sets; membership must be scored against set width.
+
+With the scoreboard, an unported rule or untracked variable shows up as a
+membership drop within days, localised to the decisions it distorts, instead of
+surfacing months later as a voided baseline. It also gives fidelity work a
+STOPPING CONDITION, which nothing today provides: the port is done when the
+scoreboard says the game's decisions are inside our predicted sets at the rate
+the tie structure implies, and further porting is unfunded.
+
+## The measurement stack, three layers, each validated by the one below
+
+    LAYER 1  FIDELITY   scoreboard versus real recorded decisions
+    LAYER 2  QUALITY    Monte Carlo of the advisor inside the sim, on real-team
+                        fights: P(clean) and cost-weighted expected deaths per
+                        fight. Hundreds of episodes per fight costs minutes.
+                        VALID ONLY once layer 1 passes a stated bar.
+    LAYER 3  OBJECTIVE  James: his judgement on specific trades, his recorded
+                        rates as the floor to beat. No internal number can
+                        validate the objective, per the seventeenth pass.
+
+Every number this project has voided was a layer-2 claim made while layer 1 was
+unmeasured. The stack is the anti-cycle mechanism: it does not prevent the next
+divergence, it prices it on discovery and quarantines what it invalidates.
+
+## Step 4 must be pre-registered or it will not terminate
+
+The null test proved that 180 generated fights cannot separate a considered
+value function from "my HP minus twice theirs". If "re-measure, then decide on
+learning" has no pre-stated criterion, the measurement returns "no detectable
+difference" and the honest response is passes twenty-one through twenty-five.
+So the criterion is stated now, before anything is run:
+
+    On the real-team fights we have recordings of, with the corrected engine
+    and cost-weighted metric, Monte-Carlo the advisor per fight. Handcrafted V
+    is SUFFICIENT if its P(clean) beats James's recorded rate on those fights
+    (his rate is a floor, not a target, per his own instruction). If it cannot
+    beat the floor after the objective and distribution fixes, the learning
+    machinery is justified and gets built without further debate.
+
+## Revised ordering
+
+    0. Foe species + move reader. Already "top priority" in the reader plan and
+       absent from this document's ordering, which was an inconsistency. It
+       gates everything below: the scoreboard, validating the six variables
+       against the ~40 replacement events, and reconstructing states for the
+       curriculum if learning is ever needed. Classification against known
+       candidate sets, same technique that already works.
+    1. Scoreboard over the existing corpus. While there, test two standing
+       hypotheses at last: the switch-cache explanation of Bellibolt, and LCG
+       determinism under save-state replay.
+    2. Track the six AI state variables in the engine. The proof they are
+       right IS the scoreboard number moving.
+    3. Objective + metric together (per-Pokemon costs into rr-plan criteria 1
+       and 6, cost-weighted bench_live). Independent of the reader; can run as
+       a parallel track. The sequencing rule that matters is narrower than an
+       ordering: NO layer-2 verdicts count until layer 1 is measured.
+    4. True distribution in the searches; margin demoted to a one-shot
+       robustness check.
+    5. The pre-registered re-measurement, then the learning decision.
+
+Cheap and anytime, both one command, both still undone: the bench_mirror re-run
+James asked for (started 2026-08-26), and re-asking cleanWin for Surge with
+terrain fixed, which would be the strongest validation the project has had if
+it finds the sleep line.
+
+## Honest residuals, so this pass can be attacked too
+
+- The scoreboard sees only divergences that alter an AI CHOICE. Divergences in
+  outcome mechanics are covered separately by verify_damage and by the event
+  checker; between them the two cover what the advisor consumes, but that
+  claim itself has not been stress-tested.
+- The featurisation risk on the learning path is untouched by all of this; it
+  remains the open technical question if step 5 says learn.
+- Real-team fights with recordings are few, so layer 3 rests on small n and on
+  James's judgement. That is a structural feature (the objective is his), not
+  a fixable gap, but it should be said rather than hidden.
