@@ -324,3 +324,72 @@ ever has to rank, never to be precise.
 Every uncertainty in this game is then handled by exactly one mechanism, chosen
 because of what kind of uncertainty it is rather than because of which feature
 prompted it.
+
+---
+
+# Fourth pass: correcting my own number, and what survives
+
+Told to doubt my own data, I re-measured the branching claim over the full
+health range instead of three points. The claim was wrong in a way that matters.
+
+    our HP    foe tie size (boss flags)   union over 3 flag sets   inflation
+      100%              1.20                       4.50              3.75x
+       80%              1.20                       4.50              3.75x
+       60%              1.23                       4.50              3.65x
+       45%              1.40                       4.50              3.21x
+       35%              1.90                       4.50              2.37x
+       25%              2.77                       4.50              1.63x
+       15%              3.97                       4.50              1.13x
+        8%              4.23                       4.50              1.06x
+
+    mean across the range: 2.24, not the 1.44 I reported
+
+I had sampled 100%, 60% and 35% -- exactly the healthy regime -- and quoted the
+average as though it described a fight. It does not. **The opponent's true tie
+count rises from 1.2 to 4.2 as our Pokemon is worn down**, for the reason found
+earlier today: as a target weakens, more of the AI's moves become kill-capable,
+they collect the same bonus, and the argmax set widens. So the branching factor
+is smallest where nothing is at stake and largest where the fight is decided.
+
+(I also caught a bug in the first version of this measurement: the union column
+deduplicated by move NAME, collapsing every switch into one, so it compared
+against a differently-counted quantity and reported the union as narrower than
+one of its own members. Fixed by keying both sides identically. Two errors in
+two passes on the same claim is a fair rate for numbers produced quickly.)
+
+## What this does to the argument
+
+**The category error stands, and is now better supported.** The margin set
+inflates by 3.75x precisely where fights are NOT decided -- at high health,
+where the AI is nearly deterministic and there is least to be uncertain about.
+Where the fight is actually decided, at low health, the real tie set has grown
+to meet it and the inflation falls to 1.06x. So branching over the margin buys
+almost nothing where it matters and costs almost everything where it does not.
+That is a worse trade than I described, not a better one.
+
+**But the cost is smaller than I claimed.** 2.24 rather than 1.44 as the honest
+mean, against a margin set of 4.50, is 2.0x per ply rather than 3.5x. At six
+plies that is ~64x, not ~1800x. Still large enough to matter, and still a
+category error, but I overstated it by more than an order of magnitude and
+should say so.
+
+**And a third uncertainty appears that I had folded into the second.** The union
+is over three trainer flag-sets because per-trainer AI flags are ROM data absent
+from our dataset. That is not the same as unported scoring rules. It is
+resolvable rather than merely unknown: a gym leader is a boss, and using the
+boss flags alone for a gym is a factual claim about the game, not an assumption.
+So of the 4.50, most of the width is a data gap that could be closed for the
+fights we care about, rather than an irreducible ignorance about scoring.
+
+Three distinct things, then, each wanting a different treatment:
+
+1. **Chance** (dice, crits, accuracy, genuine ties): known probabilities,
+   treat as an expectation. Branching 1.2 to 4.2 depending on how hurt we are.
+2. **Missing trainer flags**: a data gap, closable per trainer class. Do not pay
+   3.75x for it on a gym leader we can identify.
+3. **Unported scoring rules**: genuine model uncertainty, no honest probability.
+   One robustness check on the chosen action, not a branch at every ply.
+
+The architecture from the previous pass is unchanged; the numbers attached to it
+are corrected, and the reason the conflation is expensive is now more precise
+than "3.5x": it is that we pay most where we know most.
