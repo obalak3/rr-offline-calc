@@ -106,3 +106,27 @@ Three consequences, and the first two are advice we could give today:
 3. **Any tie measurement must sweep HP.** A tie count taken at full health
    understates the real number badly, and check_forks.js scoring a specific line
    is right to look at actual positions rather than a matchup table.
+
+## Diagnosis 2026-08-25: the sleep line is now LEGAL but still not FOUND
+
+James's clean win runs through sleeping Pawmot once Electric Terrain drops. Two
+things were checked to see whether the engine can represent that at all:
+
+- **Accuracy is not a blocker.** In `maxroll` mode, which `cleanWin` uses, an
+  inaccurate move LANDS unless the caller spends a miss from a luck budget
+  (`rr-battle.js:1320`). Sleep Powder's 75% is therefore available to the search.
+- **The mechanic is right.** Directly tested: with Electric Terrain up, Sleep
+  Powder leaves Pawmot with no status; with the terrain expired, it lands and
+  Pawmot sleeps for 2 turns.
+
+So the blocker has changed category. Before the terrain fix the line was
+IMPOSSIBLE in the model -- sleep could never land on a grounded Pokemon under
+permanent terrain. It is now LEGAL and merely unfound: clean came back undecided
+at 20.3M nodes in 1200s, deeper than the 10.3M probe earlier in the day but
+still well short of the historical 84M attempt.
+
+That is worth stating precisely because the two failures look identical from
+outside and mean opposite things. "Cannot be represented" is a modelling bug and
+no amount of compute fixes it. "Not yet found" is a search-budget question. We
+have moved from the first to the second, and nobody has yet run this fight at
+the depth the old measurement reached.
