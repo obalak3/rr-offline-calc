@@ -33,20 +33,20 @@ import read_hp
 
 def party_from_save():
     """species -> maxHP, straight from the battery save. Never ask, read it."""
+    # Via party_maxhp.js, not read_save.js: max HP is DERIVED from species,
+    # level, nature and IVs rather than stored in the save, so it has to be
+    # computed through the engine. Doing it there rather than here also means
+    # these are the same numbers the damage calculation uses.
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     try:
-        out = subprocess.run(["node", os.path.join(root, "tools/read_save.js"), "--json"],
+        out = subprocess.run(["node", os.path.join(root, "tools/party_maxhp.js"), "--json"],
                              capture_output=True, text=True, timeout=60).stdout
-        party = json.loads(out.strip().split("\n")[-1])
+        d = json.loads(out.strip().split("\n")[-1])
     except Exception:
         return {}
-    by_max = {}
-    for m in party:
-        mx = m.get("maxHP") or m.get("maxhp")
-        if mx:
-            by_max.setdefault(mx, []).append(m["species"])
-    # Only unambiguous maxima are usable as an identifier.
-    return {mx: names[0] for mx, names in by_max.items() if len(names) == 1}
+    # Only unambiguous maxima identify a Pokemon. If two share one, both are
+    # dropped and the trace says "?" rather than picking one.
+    return {int(k): v for k, v in d.get("unique_by_max", {}).items()}
 
 
 def trace(folder, by_max=None):
