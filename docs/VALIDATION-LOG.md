@@ -162,3 +162,34 @@ than a regression, and it is the first thing to check.
 Cheapest next probe: re-run lossBudget 2 with the port disabled via
 `RR_DISABLE_SWITCH_PORT`, at a budget past 4.51M. If it is found there and not
 with the port, the old line depended on the wrong opponent model.
+
+## Mirror benchmark after today's changes (2026-08-25)
+
+`bench_mirror.js --all`, the only benchmark here whose numbers compare across
+time: both sides bring the trainer's own team, so it uses fixed trainer data
+rather than the generator, and it controls for team quality.
+
+                      historical      now
+    clean wins           125          121 / 139
+    undecided             11           16 / 139
+    no line exists         -            2
+    lost outright          -            3
+
+Four clean wins down, five more undecided. Small, but it points the same way as
+the Surge lossBudget-2 regression rather than against it.
+
+**The important detail: this is a NODE budget, not a time budget** (200,001
+nodes per fight). So the switch-in port's ~25% throughput cost cannot explain
+it. Finding fewer lines with the same number of nodes means the TREE CHANGED,
+not that the search got slower.
+
+That is now the same conclusion from two independent measurements, and it
+supports the leading hypothesis for the Surge regression: the switch-in port
+changes which positions exist, on BOTH sides in a mirror, so lines that existed
+against our invented replacement heuristic need not exist against the real
+algorithm. If the port is faithful, these are corrected results rather than
+regressions -- the earlier numbers were measured against an opponent that does
+not exist.
+
+That is a claim to test, not to assume. The probe is unchanged and cheap: re-run
+with `RR_DISABLE_SWITCH_PORT` set and see whether the old numbers come back.
