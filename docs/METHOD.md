@@ -1047,3 +1047,81 @@ the one genuinely open technical question is whether a battle state can be
 featurised so that V generalises across positions -- because if it cannot,
 learning degenerates to a lookup table over a space far too large for one, and
 the whole stack rests on a step nobody has shown is possible here.
+
+---
+
+# Thirteenth pass: is the value learnable here? Data is affordable; features are
+# the real question
+
+The last open item. If a battle state cannot be represented so that value
+generalises, the whole stack rests on an impossible step.
+
+## The trap I nearly walked into
+
+The obvious representation is the features we already compute: matchup costs,
+coverage gaps, HP fractions, the things `RRMatchup.valueOf` uses. That would be
+a mistake, and it is the same mistake for the third time today. **A value learned
+over handcrafted features inherits the blindness of those features.** If nothing
+in the feature vector can express "sleep becomes available once terrain expires",
+then no amount of training discovers it -- the learner cannot represent the
+distinction, so it averages over it.
+
+Proof mode forbade the line by refusing luck. The rollout policy forbade it by
+never trying the move. Handcrafted features would forbid it by being unable to
+describe the position. Same failure, third road.
+
+So the representation has to be raw enough for the structure to be discoverable
+rather than pre-decided: HP fractions, status one-hots, boost stages, PP, field
+and hazard flags, species and move identity. A few hundred numbers, none of them
+encoding a strategy.
+
+## Measured: generating experience is affordable
+
+Full episodes played to termination, sampling the real outcome distribution
+(`mode: "odds"`), single-threaded:
+
+    episodes/sec         95
+    steps/sec         1,873
+    mean steps/episode 19.7
+    100,000 episodes     18 minutes
+    1,000,000 episodes  2.9 hours
+
+Slower than I expected -- odds-mode forking costs roughly 14x the search's
+maxroll stepping, which is the price of sampling the distribution honestly
+rather than at median rolls. Still: hours, not weeks, and trivially parallel
+across cores.
+
+**Data volume is therefore not the bottleneck**, and that is worth stating
+because it is the reason "just learn it" usually fails on hobby projects.
+
+## Two properties of this problem that make it much smaller than it looks
+
+1. **Uniform random play has FULL SUPPORT by construction.** A random legal move
+   picks Sleep Powder about one time in nine. So the exploration condition that
+   both existing estimators violate is satisfied for free by the dumbest possible
+   policy. The sleep line is reachable in random play; it is only unreachable in
+   our *clever* policies. That is a striking inversion and it is the strongest
+   argument that learning can find what handcrafting could not.
+2. **We do not need a general Pokemon AI.** We need V for ONE team against the
+   specific trainers ahead. James's party is six known Pokemon; the opponent is a
+   known trainer. That collapses the generalisation burden enormously compared
+   to Showdown-style bots that must handle arbitrary teams. When the team
+   changes, retrain -- which the numbers above say costs minutes.
+
+## What I am still not sure of, stated plainly
+
+The measured episodes averaged 19.7 steps under RANDOM play, which is shorter
+than the ~26-turn fights James plays, because random play loses quickly. So the
+figure above is the cost of generating BAD experience. Good experience -- longer
+fights, guided by a partially-trained value -- costs more per episode, and how
+much more is unmeasured.
+
+And random play, while it has full support, has terrible sample efficiency for a
+line requiring a specific five-turn setup. Reaching "survive the terrain, then
+sleep" by chance is rare. The standard fix is exactly the alternating scheme
+already proposed -- search with the current value, train on what search chose --
+because search concentrates the sampling where value says it matters, and value
+improves where search explored. Neither half needs to know about sleep.
+
+That is not a gap in the argument so much as the reason the argument specifies
+iterated improvement rather than plain supervised learning from random play.
