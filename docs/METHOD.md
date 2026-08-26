@@ -1503,3 +1503,86 @@ An advisor that knows this rule can, in principle, tell James when the AI's
 prediction of him is wrong, and what that buys. Nothing in the current app can
 reason about this at all, because our engine does not track `gLastLandedMoves`
 and our port has no equivalent of `PickMoveHumanLikelyToChoose`.
+
+---
+
+# Nineteenth pass: the complete inventory of the AI's hidden state
+
+I had been finding the AI's memory one variable at a time, by accident. That is
+not rigorous, and "what must the state contain to be Markov" is answerable
+exhaustively. Enumerating every `gNewBS->ai.*` field the code touches, and
+separating the ones that are READ and change behaviour from the ones that are
+per-turn caches:
+
+## Genuine memory, all verified read
+
+    bestMonIdToSwitchInto[]        the cached replacement choice, with
+    calculatedAISwitchings[]       its computed flag. Recomputed only if the
+                                   chosen Pokemon has DIED. (sixth pass)
+
+    gLastLandedMoves[]             our last move that connected. Feeds
+                                   PickMoveHumanLikelyToChoose, which assumes we
+                                   will repeat it. (eighteenth pass)
+
+    switchingCooldown[]            "just switched in". Read at 8 sites. The
+                                   decisive one, ai_switching.c:356:
+                                     noSwitchChance = cooldown ? 75 : 25
+                                   The AI is 75% unlikely to switch again right
+                                   after switching, against 25% otherwise. A
+                                   THREEFOLD change in switching behaviour driven
+                                   purely by what it did last turn.
+
+    didTypeAbsorbSwitchToMonBefore[]  a per-Pokemon bitmask of which of its own
+                                   mons it has already used to absorb an attack.
+                                   Stops it repeating the trick with the same
+                                   Pokemon.
+
+    playerSwitchedCount            whether WE have ever switched, feeding
+                                   Pursuit logic via playerHasSwitchedBefore.
+
+    randSeed                       the LCG. (ninth pass)
+
+## Confirmed dead, despite suggestive names
+
+    switchesInARow, previousMonIn, secondPreviousMonIn -- written, never read.
+    (eighth pass, prompted by James saying he had never seen the behaviour)
+
+## Per-turn caches, not memory
+
+    strongestMove, canKnockOut, damageByMove, moveKnocksOut, monMaxDamage,
+    monDamageByMove, secondaryEffectDamage, itemEffects, backupAbilities,
+    dynamax*, zMove*, mega*
+
+## What this means
+
+**Our engine tracks NONE of these.** Six pieces of state demonstrably affect the
+AI's decisions and none of them exist in our simulator. That is a far more
+complete explanation of why our predictions diverge from the real game than
+anything I proposed earlier today, and it is not a scoring-rule problem -- it is
+a state problem, which is a different and easier kind of work.
+
+It also reframes the "31 of ~880 scoring sites" figure that has been used as the
+measure of our port's incompleteness. That number counts RULES. It says nothing
+about STATE, and a perfectly ported rule reading a variable we do not track is
+still wrong. `switchingCooldown` alone swings a switch decision from 25% to 75%.
+
+**And it explains a class of behaviour James has been attributing to randomness.**
+He described planning around a switch he had seen and getting something else.
+Some of that is the genuine tie coin-flip. But an AI that is three times less
+likely to switch on the turn after switching, that will not reuse a Pokemon it
+already absorbed with, and that predicts our move from what last landed, will
+look erratic to anyone modelling it as memoryless -- while being entirely
+deterministic given its own state.
+
+## Effect on the framework
+
+The MDP framing survives, and this is the strongest version of it yet: every one
+of these is a fixed function of an augmented state. Nothing here learns or
+adapts across battles. But the state we must track is now specified concretely
+rather than discovered by accident, and it is six fields rather than the one I
+had identified.
+
+This is also the cheapest high-value work found in nineteen passes. Tracking six
+variables is small, mechanical, testable against the recordings, and it improves
+every method we might eventually choose -- search, learning, or heuristic --
+because all of them are downstream of the simulator being right.
