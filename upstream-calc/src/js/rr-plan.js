@@ -268,7 +268,7 @@ var RRPlan = (function () {
 		return 1 - costOf(worst.iFaintedWho, costs);
 	}
 
-	function rankKey(worst, race, stable, isSwitch, chargeTempo, costs) {
+	function rankKey(worst, race, stable, isSwitch, chargeTempo, costs, opts) {
 		var damage = stable || worst;
 		if (race && race.knockedOut) return [
 			survivalScore(worst, costs),
@@ -298,6 +298,36 @@ var RRPlan = (function () {
 		// the opponent's clock further than attacking shortened yours, and a
 		// move that never wins should not outrank one that does.
 		var clock = turnLead > 0 ? 2 : (turnLead === 0 ? 1 : 0);
+
+		// KILLING VERSUS SURVIVING, as a TRADE rather than a precedence.
+		//
+		// Measured over 20 Surge episodes: survival-first put Mienshao out for
+		// a THIRD of all turns for 6 kills, while Victreebel -- which one-shots
+		// both Pincurchin and Pawmot -- was fielded 10% of the time. A Pokemon
+		// that survives and kills nothing outranked switching to the one that
+		// wins the trade, because survival was criterion 1 and killing was
+		// criterion 2. The advisor lost 0/20 with a full team wipe.
+		//
+		// Swapping the two would be the crude fix and would trade away the
+		// team to score kills. Pricing them against each other is the honest
+		// one: a kill is worth 1, losing a Pokemon costs what that Pokemon is
+		// worth, and the ranking compares them. With the default costs of 1
+		// this reads exactly as it should -- kill without loss is +1, an even
+		// trade is 0, dying for nothing is -1.
+		//
+		// This is also the first place the per-Pokemon costs do real work
+		// unprompted: trading a cheap Pokemon for a kill now scores ABOVE
+		// trading an expensive one, without anyone having to ask for it.
+		if (opts && opts.tradeRank) {
+			return [
+				(damage.foeFainted ? 1 : 0) - (1 - survivalScore(worst, costs)),
+				damage.foeFainted ? 1 : 0,
+				clock,
+				1 - damage.foeTeamHP,
+				(race && race.movesFirst === "me") ? 1 : 0,
+				worst.myTeamHP
+			];
+		}
 
 		return [
 			survivalScore(worst, costs),                   // survival, priced
@@ -438,7 +468,7 @@ var RRPlan = (function () {
 		var foeActions = foeActions || [];
 		for (var i = 0; i < foeActions.length; i++) {
 			var result = exchange(state, myAction, foeActions[i], opts);
-			var key = rankKey(result, null, null, false, false, opts && opts.costs);
+			var key = rankKey(result, null, null, false, false, opts && opts.costs, opts);
 			if (worst === null || compareKeys(key, worstKey) > 0) {
 				worst = result;
 				worstKey = key;
@@ -468,7 +498,7 @@ var RRPlan = (function () {
 			worst: worst,
 			worstReply: worst.foeAction,
 			key: rankKey(worst, race, damageAgainst,
-				myAction.type === "switch", opts.chargeSwitchTempo !== false, opts && opts.costs),
+				myAction.type === "switch", opts.chargeSwitchTempo !== false, opts && opts.costs, opts),
 			ko: myKO,
 			race: race,
 			verdict: verdictFor(worst, race, damageAgainst),

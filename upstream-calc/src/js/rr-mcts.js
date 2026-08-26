@@ -192,8 +192,22 @@ var RRMCTS = (function () {
 	 * cost that buys far fewer playouts. Here the tree does the thinking and the
 	 * rollout only has to avoid being actively stupid.
 	 */
+	// Epsilon keeps FULL SUPPORT: with probability EPS the rollout plays a
+	// uniformly random legal action, so every strategy -- status lines
+	// included -- has nonzero probability of being explored. METHOD.md's
+	// second condition, and the one both of this repo's searches violated:
+	// "a sampling method can only discover strategies its sampling
+	// distribution can generate." The old policy scored status moves a flat
+	// 0.05, so a rollout essentially never slept anything, and a position
+	// whose value came from sleeping Pawmot was scored as if that option did
+	// not exist.
+	var ROLLOUT_EPS = 0.15;
+
 	function rolloutAction(state) {
 		var actions = RRBattle.legalActions(state, "me");
+		if (Math.random() < ROLLOUT_EPS && actions.length) {
+			return actions[Math.floor(Math.random() * actions.length)];
+		}
 		var best = null, bestScore = -Infinity;
 		var defender = RRBattle.active(state.foe);
 		for (var i = 0; i < actions.length; i++) {
@@ -205,7 +219,10 @@ var RRMCTS = (function () {
 				score = me.curHP * 3 < me.maxHP ? 0.35 : -1;
 			} else {
 				var rolls = RRBattle.damageRolls(state, "me", action.move);
-				if (!rolls) { score = 0.05; }
+				// A status move is not "5% of a kill", it is a different kind
+				// of good. 0.25 keeps it competitive with weak chip damage
+				// without beating a real attack; epsilon covers the rest.
+				if (!rolls) { score = 0.25; }
 				else {
 					var hit = rolls.noCrit[rolls.noCrit.length - 1];
 					score = Math.min(1, hit / Math.max(1, defender.curHP));
@@ -225,15 +242,15 @@ var RRMCTS = (function () {
 	 * 155us and dominates everything else in the search, recomputing an answer
 	 * already known is where the budget was going.
 	 */
-	var rolloutCache = {};
-
+	// THE CACHE IS GONE, and it has to be. It was justified by the rollouts
+	// being deterministic -- which was defect 1. Once rollouts sample real
+	// dice, memoising the first sample turns N samples into 1 and the
+	// estimate stops converging; the two defects were load-bearing on each
+	// other, which is exactly what the second pass of METHOD.md predicted:
+	// "fixing the sampling requires removing the cache, and the cache is
+	// there because sampling was removed for speed."
 	function rollout(state, opts, turnsLeft) {
-		var cacheKey = RRBattle.positionKey(state) + "@" + turnsLeft;
-		var cached = rolloutCache[cacheKey];
-		if (cached !== undefined) return cached;
-		var value = runRollout(state, opts, turnsLeft);
-		rolloutCache[cacheKey] = value;
-		return value;
+		return runRollout(state, opts, turnsLeft);
 	}
 
 	/**
@@ -267,16 +284,15 @@ var RRMCTS = (function () {
 			var mine = rolloutAction(current);
 			var theirs = cheapFoeAction(current);
 			if (!mine || !theirs) break;
-			// Rollouts advance at the median roll rather than forking the dice.
-			// Variance matters where the decision is made, near the root, and
-			// the tree samples it there; twenty turns deep it is noise that the
-			// average washes out anyway, and forking every turn of every rollout
-			// was most of the search's cost.
-			var next;
-			try {
-				next = RRBattle.step(current, mine, theirs,
-					{mode: "maxroll", risks: {roll: "median"}})[0].state;
-			} catch (e) { break; }
+			// Rollouts SAMPLE the real distribution. The old median-roll
+			// stepping defended itself as washing out variance, but that is
+			// right about variance and wrong about BIAS: median rolls with no
+			// crits and no player secondaries is not noise around the truth,
+			// it is a consistent shift away from it, and averaging more of it
+			// does not help. Our own Scald never burned; the line James
+			// actually wins with was invisible. forkBudget 2 keeps the
+			// branches to the decision-relevant split (does it KO or not).
+			var next = sampleSuccessor(current, mine, theirs, 2);
 			if (!next) break;
 			current = next;
 			turns++;
@@ -373,7 +389,6 @@ var RRMCTS = (function () {
 		var deadline = opts.timeLimitMs ? Date.now() + opts.timeLimitMs : null;
 
 		tieCache = {};
-		rolloutCache = {};
 		var root = makeNode(state);
 		for (var i = 0; i < iterations; i++) {
 			simulate(root, opts, 0, budget);
