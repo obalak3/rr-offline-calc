@@ -53,8 +53,24 @@ import zlib
 IW_OFF, IW_LEN = 0x19000, 0x8000
 EW_OFF, EW_LEN = 0x21000, 0x40000
 
-AI_MUL, AI_ADD = 1103515245, 24691          # ai_util.c:45
-G3_MUL, G3_ADD = 0x41C64E6D, 0x00006073     # vanilla Gen-3 Random()
+# THERE ARE SEVERAL GENERATORS AND THEY DO NOT SHARE AN INCREMENT. The
+# multiplier 0x41C64E6D (= 1103515245) is common to all of them, and checking
+# only the multiplier is what cost most of a day: the increment sits in the
+# same literal pool and DIFFERS per generator.
+#
+#   ROM 0x044EE0:  03005000 / 41C64E6D / 00006073   increment 24691
+#   ROM 0x083244:  020386D0 / 41C64E6D / 00003039   increment 12345
+#
+# Simulating the battle generator with 24691 does not fail cleanly, which is
+# why it survived so long: two LCGs sharing a multiplier differ by a
+# seed-independent offset, so ORDERING is preserved and a rank correlation
+# still locates the damage draw. It reported draw #1232 (the true answer is
+# #4) and an 18% "second base" that was really the carry out of the low
+# half-word. Anything using an exact residue -- like the crit's % 24 -- was
+# destroyed outright, which is why the crit looked unsolvable.
+G3_MUL, G3_ADD = 0x41C64E6D, 0x00006073     # generator at 0x03005000
+BATTLE_MUL, BATTLE_ADD = 0x41C64E6D, 0x00003039   # generator at 0x020386D0
+AI_MUL, AI_ADD = G3_MUL, G3_ADD             # kept: same pool as 0x03005000
 MASK = 0xFFFFFFFF
 
 
