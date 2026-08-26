@@ -476,8 +476,52 @@ var RRAI = (function () {
 		};
 	}
 
+	/**
+	 * What the AI will ACTUALLY do: the argmax, plus exact ties.
+	 *
+	 * This is the distribution, as opposed to RRAI.plausible's margin set,
+	 * which is a confession about what WE do not know. CFRU takes the argmax
+	 * and splits uniformly only among EXACT ties (ai_master.c:360). A move
+	 * three points below the best is not something the AI does rarely; it is
+	 * something the AI does never.
+	 *
+	 * The third pass argued for this on principle and the scoreboard has since
+	 * priced it. Over 102 recorded decisions:
+	 *
+	 *     argmax + ties   77/102 (75.5%)   mean width 1.09
+	 *     margin set     102/102 (100%)    mean width 3.52
+	 *
+	 * So branching on the margin costs ~2x per ply to buy coverage of OUR
+	 * error, and it buys most where the AI is most deterministic. Branch on
+	 * this instead, and spend the margin ONCE as a robustness check on the
+	 * action finally chosen -- which is what the 24.5% gap actually justifies,
+	 * rather than deleting the margin outright as the plan originally said.
+	 *
+	 * A gym leader IS a boss, so boss flags are the honest default here: the
+	 * fourth pass established that per-trainer flags are a data gap that is
+	 * CLOSABLE per trainer class rather than irreducible ignorance.
+	 */
+	function trueTies(state, key, options) {
+		var opts = options || {};
+		var flags = opts.flags || {checkBadMove: true, checkGoodMove: true};
+		var gate = switchGate(state, key, flags);
+		var scored = scoreAll(state, key, flags, {}).filter(function (entry) {
+			return gate.maySwitch || entry.action.type !== "switch";
+		});
+		if (!scored.length) return {actions: [], scored: []};
+		var best = -Infinity;
+		scored.forEach(function (e) { if (e.score > best) best = e.score; });
+		var top = scored.filter(function (e) { return e.score === best; });
+		return {
+			actions: top.map(function (e) { return e.action; }),
+			scored: top,
+			best: best
+		};
+	}
+
 	return {
 		scoreAll: scoreAll,
+		trueTies: trueTies,
 		switchGate: switchGate,
 		scoreAction: scoreAction,
 		plausible: plausible,

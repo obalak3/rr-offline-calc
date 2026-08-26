@@ -42,6 +42,17 @@ var RRPlan = (function () {
 		// wrong, so rr-ai only ever drops an action it can show the AI will not
 		// take -- most usefully a switch the ShouldSwitch gate rules out.
 		if (opts.useAI !== false && typeof RRAI !== "undefined") {
+			// THE TRUE DISTRIBUTION, when asked for: argmax plus exact ties,
+			// which is what CFRU actually does. The margin set is our own
+			// uncertainty, and branching on it prices our ignorance as though
+			// it were the game's randomness -- measured at 2.24x per ply over
+			// 240 positions, and it inflates MOST where the AI is most
+			// deterministic. Handled once at the end instead, as a robustness
+			// check on the action finally chosen.
+			if (opts.trueDistribution && typeof RRAI.trueTies === "function") {
+				var ties = RRAI.trueTies(state, "foe", opts).actions;
+				if (ties.length) return ties;
+			}
 			var narrowed = RRAI.plausible(state, "foe", opts).actions;
 			if (narrowed.length) return narrowed;
 		}
@@ -404,6 +415,33 @@ var RRPlan = (function () {
 			});
 		});
 
+		// ROBUSTNESS CHECK, run ONCE on the chosen action rather than branched
+		// on at every ply. This is the third pass's prescription and the
+		// scoreboard is what justifies the shape of it: our argmax is right
+		// 75.5% of the time and the margin set catches 100% of the rest, so
+		// our error is real but BOUNDED by the margin. Branching on it costs
+		// 2.24x per ply to carry that coverage everywhere; re-ranking once
+		// carries it where it matters -- on the answer we are about to give.
+		//
+		// It reports rather than overrides. A choice that survives the AI's
+		// second-best being its best is worth more confidence than one that
+		// does not, and that distinction is exactly what the old single number
+		// could not express.
+		var robust = null;
+		if (opts.trueDistribution && entries.length) {
+			var wide = plausibleFoeActions(state,
+				Object.assign({}, opts, {trueDistribution: false}));
+			var reranked = myActions.map(function (action) {
+				return evaluateAction(state, action, wide, opts);
+			});
+			reranked.sort(function (a, b) { return compareKeys(a.key, b.key); });
+			robust = {
+				stable: reranked[0].label === entries[0].label,
+				underWiderModel: reranked[0].label,
+				foeActionCount: wide.length
+			};
+		}
+
 		// What the opponent threatens, independent of what you pick. This is the
 		// number that decides whether you can afford to set up.
 		var threats = foeActions.filter(function (a) { return a.type === "move"; })
@@ -418,6 +456,7 @@ var RRPlan = (function () {
 			best: entries[0] || null,
 			threats: threats,
 			foeActionCount: foeActions.length,
+			robust: robust,
 			// Stated so the caller can report the assumption rather than imply
 			// a confidence the model has not earned.
 			reading: (opts.risks && opts.risks.crit)
