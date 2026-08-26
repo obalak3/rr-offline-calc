@@ -661,3 +661,57 @@ would produce the SAME "coin flips" -- which is testable against James's
 recordings, and which would mean some of what we have been modelling as
 irreducible chance is in principle predictable. I do not claim it is exploitable.
 I claim we do not currently know, and that we have been assuming otherwise.
+
+---
+
+# Eighth pass: the seventh pass was wrong, and James's play caught it
+
+I wrote that the AI adapts to switch-spam, retracting a premise the whole
+framework rests on. James: "I have never had this happen."
+
+He is right. Checked across all five AI source files -- `ai_switching.c`,
+`ai_advanced.c`, `ai_negatives.c`, `ai_positives.c`, `ai_util.c`, about 570KB of
+decision code -- plus `battle_util.c` and `battle_start_turn_start.c`:
+
+    switchesInARow   appears 3 times, ALL WRITES, never read
+    previousMonIn    appears 3 times, ALL WRITES, never read
+
+They are dead state. Something writes them; nothing consults them. **I read
+INTENT from a comment and reported it as BEHAVIOUR.** The comment says "so the
+AI gets smart if the player immediately switches out", and the code that would
+act on it does not exist in any file I can find. A comment describes what
+someone meant to build, not what runs.
+
+So the second pass stands as originally written: **the opponent does not model
+us and does not adapt.** The MDP framing needs no repair on this count, and the
+state does not need our switch history in it.
+
+By contrast, the variables that ARE consulted:
+
+    monToSwitchIntoId       39 mentions, ~36 of them reads
+    calculatedAISwitchings  read in the guard at ai_switching.c:1970
+    pivotTo, randSeed       read
+
+So the CACHE finding survives -- the AI's chosen replacement is real state that
+is genuinely consulted -- while the ADAPTATION finding does not. The distinction
+is exactly whether the variable is read, and I did not check that before
+reporting.
+
+## The methodological lesson, which is the point of this pass
+
+Three times today James's experience of playing this game has overturned
+something I derived from sources or measurements: permanent terrain (invented
+mechanic I accepted), the clean win being unreliable (I had assumed his
+remembered win proved a reliable line existed), and now this. The pattern in my
+errors is consistent and worth naming:
+
+**I treat a plausible artifact -- a comment, a matching number, a suggestive
+grep -- as evidence, without checking the one thing that would distinguish
+evidence from coincidence.** A comment is not behaviour unless the variable is
+read. A matching prediction is not confirmation unless you count how many
+predictions you made. A slow benchmark is not a regression unless you check the
+baseline you are comparing against.
+
+For a system whose entire value is telling someone what will happen, that is the
+failure mode that matters most, and the correction has come from outside the
+data every time.
