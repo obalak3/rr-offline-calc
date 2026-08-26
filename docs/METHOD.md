@@ -501,3 +501,82 @@ today hand-discovering one at a time.
   played.
 - If the opponent were not stationary, this would be self-play with all its
   instabilities. It is stationary; the CFRU source is read and ported.
+
+---
+
+# Sixth pass: the state is NOT Markov, and it explains the Bellibolt miss
+
+Before defending the learning conclusion I checked its foundation: is the state
+actually Markov? If the opponent carries hidden state we do not model, the MDP
+framing is unsound and everything above it is built on sand.
+
+It does carry hidden state.
+
+## The mechanism, from the source
+
+`ai_switching.c:1967`:
+
+    static void CalcMostSuitableMonSwitchIfNecessary(void)
+    {
+        if (!gNewBS->ai.calculatedAISwitchings[gActiveBattler] && BATTLER_ALIVE(...))
+        {
+            CalcMostSuitableMonToSwitchInto();
+            gNewBS->ai.calculatedAISwitchings[gActiveBattler] = TRUE;
+        }
+    }
+
+and `CalcMostSuitableMonToSwitchInto` itself opens with
+
+    if (gBattleStruct->monToSwitchIntoId[gActiveBattler] != PARTY_SIZE)
+        return gBattleStruct->monToSwitchIntoId[gActiveBattler];
+
+**The AI decides who it will send in ONCE and remembers the answer.** The
+decision is therefore made at some moment which need not be the moment of the
+faint, and it is evaluated against the position as it stood THEN.
+
+## It predicts the one real observation we have
+
+The Bellibolt miss has resisted every explanation today. Re-running our port
+from different moments in the fight:
+
+    at the faint (Pincurchin dead, Victreebel 90hp, -2 SpA)   -> Vikavolt
+    at turn start (Pincurchin alive, full SpA)                -> Manectric-Mega
+    the PREVIOUS turn (Lanturn out, Pincurchin alive)         -> BELLIBOLT
+
+The game sent Bellibolt. A decision cached from an earlier turn -- when Lanturn,
+not Victreebel, was the Pokemon it was scoring against -- produces exactly the
+observed answer, and no other moment does.
+
+## Why this matters more than one fixed prediction
+
+**The battle is not Markov in the state we model.** Two identical-looking
+positions can have different futures depending on what the AI decided earlier
+and is still holding. That is a genuine violation, not a modelling nicety, and
+it has three consequences:
+
+1. **The state must be augmented.** Add the AI's cached switch target (and the
+   flag saying whether it has been computed) to the state. With that included
+   the process is Markov again and everything above this section stands. Without
+   it, our simulator can diverge from the game at every faint, which is exactly
+   the class of error that voided the Surge sheets.
+2. **It explains a whole category of "AI randomness" we have been attributing to
+   coin flips.** James described planning around a switch he had seen before and
+   getting something else. Some of that is the genuine 50% tie in
+   `ai_switching.c:2437`. But some of it is this: the answer depended on when the
+   AI last looked, which depends on the history of the fight rather than its
+   current state.
+3. **It is testable at scale and we already have the data.** The recordings hold
+   about forty replacement events across eight runs. Reading the foe's species
+   from the frames -- the one reader step still missing -- turns this from an
+   n=1 story into a real measurement. That is now the highest-value use of the
+   screen reader, above anything to do with advice.
+
+## What it does to the conclusion
+
+It does not overturn it; it repairs a hole in it. An MDP requires a Markov
+state, we do not have one, and the fix is to include the hidden variable rather
+than to abandon the framework. Worth noting that this is a hole no amount of
+value-function learning would have papered over: a learner given a non-Markov
+state learns a blurred average over the histories that led there, and would have
+been permanently confused about replacements for reasons no benchmark would
+explain.
