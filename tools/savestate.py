@@ -42,8 +42,16 @@ import struct
 import sys
 import zlib
 
-IW_OFF, IW_LEN = 0x300, 0x8000
-EW_OFF, EW_LEN = 0x8300, 0x40000
+# CORRECTED 2026-08-26. These were 0x300 and 0x8300, guessed from a plausible
+# reading of mGBA's struct, and WRONG -- which invalidated every address this
+# file produced and sent a whole day of memory probing at addresses that do not
+# exist. The right values are pinned by two independent facts, not by guessing:
+# under this mapping the LCG-fitting word lands exactly on 0x03005000 (vanilla
+# FireRed gRngValue, which the ROM names beside the multiplier 0x41C64E6D), and
+# the player's party lands exactly on 0x02024284 (vanilla gPlayerParty). The
+# regions also tile the state exactly: 0x19000 + 0x8000 + 0x40000 = 0x61000.
+IW_OFF, IW_LEN = 0x19000, 0x8000
+EW_OFF, EW_LEN = 0x21000, 0x40000
 
 AI_MUL, AI_ADD = 1103515245, 24691          # ai_util.c:45
 G3_MUL, G3_ADD = 0x41C64E6D, 0x00006073     # vanilla Gen-3 Random()
