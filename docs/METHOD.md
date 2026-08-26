@@ -1356,3 +1356,78 @@ The framework is not wasted work and does not depend on the outcome of step 3:
 All of that is true whether or not learning turns out to be needed. What I got
 wrong was the ORDER, by assuming the measurements that motivated learning were
 sound when every one of them predates today's corrections.
+
+---
+
+# Seventeenth pass: "fix the objective" was imprecise, and the benchmark cannot
+# see the fix
+
+## Two different objectives, and only one is running
+
+Last pass I said to fix the objective and pointed at the `0.40/(1+k)` reward.
+That reward lives in `rr-mcts.js`, **which is wired into nothing**. The system
+that actually produces advice -- and that wins 8/9 -- is `rr-plan.js`, and it
+does not maximise a reward at all. It sorts actions lexicographically:
+
+    1. worst.iFainted ? 0 : 1     did my ACTIVE Pokemon faint in the worst case
+    2. foeFainted                 did I kill what is out
+    3. clock                      am I ahead in the race
+    4. 1 - foeTeamHP              damage dealt
+    5. movesFirst                 tiebreak
+    6. worst.myTeamHP             preserve my team's health
+
+So the running advisor has no concept of a Pokemon's VALUE, no accumulated risk,
+and no probability anywhere. Its risk aversion is myopic and binary: avoid
+actions whose worst case faints the active Pokemon, and if every action faints in
+the worst case, fall through to criteria that do not care about losses at all
+until position 6.
+
+That is a materially different fix from the one I described. For the running
+system, "per-Pokemon costs" means replacing criterion 1 with a cost-weighted
+term and giving criterion 6 real weight. It is a small, local change -- much
+smaller than I implied -- and it is testable immediately.
+
+## The part I had not noticed: our benchmark cannot detect the improvement
+
+James's request is: "if a pokemon of mine has to die, I would rather pick which
+one." Satisfying that does not necessarily reduce the NUMBER of deaths. It
+REDISTRIBUTES them onto cheap Pokemon.
+
+`bench_live` scores clean wins and counts Pokemon lost. Both are blind to
+identity. An advisor that learns to sacrifice a Golem instead of a Kingambit
+scores IDENTICALLY on our benchmark while being enormously better at the thing
+that was asked for.
+
+**So fixing the objective requires fixing the metric in the same change, or the
+measurement will report no improvement and we will wrongly conclude the fix
+failed.** That is a trap this project would have walked into, and it is the same
+shape as the null test earlier today: a metric that cannot see the quantity being
+optimised will always say the sophisticated version is no better than the dumb one.
+
+## And the trap immediately after that one
+
+Once the metric is cost-weighted and the objective is cost-weighted, they are the
+same function, and optimising a metric you defined is not evidence of anything.
+The check has to come from outside:
+
+  - James's judgement on specific decisions -- "would you have made that trade?"
+  - The recordings: in his clean win he lost nobody; in his dirty wins he lost
+    one and reset. An advisor whose recommendations, played out, lose Pokemon he
+    would not have spent is wrong regardless of what the weighted score says.
+
+This is the second time today that the honest check has turned out to be James
+rather than a number, and I think that is a structural feature of the problem
+rather than a temporary state: the objective itself is his preference, so no
+internal measurement can validate it.
+
+## Revised ordering, more precise than the sixteenth pass
+
+    1. Add per-Pokemon costs to rr-plan's ranking (criterion 1 and 6), with
+       costs settable and defaulting to equal, so the default behaviour is
+       unchanged and the change is opt-in.
+    2. Extend bench_live to report COST-WEIGHTED losses alongside raw counts.
+       Without this, step 1 is unmeasurable.
+    3. Use the true argmax-plus-ties distribution instead of the margin set in
+       the searches; keep the margin only as a one-shot robustness check.
+    4. Re-measure. Only if a corrected handcrafted V still cannot approach
+       James's own results does the learning machinery become justified.
