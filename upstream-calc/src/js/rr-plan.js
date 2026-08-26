@@ -360,6 +360,73 @@ var RRPlan = (function () {
 	}
 
 	/**
+	 * EXPECTED value of a position, under the per-Pokemon cost objective.
+	 *
+	 * Deliberately simple and dominated by the thing James cares about. Losing
+	 * a Pokemon outweighs any amount of chip damage, so its weight is an order
+	 * larger; progress against the foe comes next, because a cost-to-go alone
+	 * is FLAT along a winning path (measured: Detect and Fake Out tied for
+	 * first at exactly the do-nothing value); keeping our own HP is a
+	 * tiebreak.
+	 */
+	function positionValue(state, costs) {
+		var lost = 0;
+		state.me.team.forEach(function (m) {
+			if (m.fainted) lost += costOf(m.set.species, costs);
+		});
+		return -10 * lost
+			+ 2 * (1 - teamFraction(state.foe))
+			+ 1 * teamFraction(state.me);
+	}
+
+	/**
+	 * THE EXACT ROOT: rank this turn over the TRUE outcome distribution.
+	 *
+	 * Measured, and this is why it exists. Every quality figure this project
+	 * quotes was taken with median damage, no crits and no secondaries, and
+	 * tools/measure_variance.js shows what that hides: eight of nine fights
+	 * are identical under real dice, but Lt. Surge goes from WON to lost
+	 * 15 times out of 15 with a full wipe. The advisor plans a two-turn kill
+	 * as though it were certain when it is closer to a coin flip, and has no
+	 * answer when the roll comes in low.
+	 *
+	 * The fix is not a better heuristic, it is a correct question: score each
+	 * action by its EXPECTED value over the outcomes that can actually happen,
+	 * weighted by how likely they are. Crits, misses, damage rolls, secondary
+	 * effects and AI ties are then all handled by one mechanism, which is the
+	 * unification METHOD.md argues for -- there is no separate crit design and
+	 * roll design, only one distribution and one expectation over it.
+	 *
+	 * Affordable because it is one turn deep: measured at about 20 successors
+	 * against the true opponent distribution, so it is free at the root and
+	 * needs no sampling. Sampling the CURRENT turn would be the one place not
+	 * to sample -- it is where the risk we most need calibrated lives, and the
+	 * cheapest place to be exact.
+	 */
+	function exactRootRank(state, myActions, foeActions, opts) {
+		var costs = opts && opts.costs;
+		return myActions.map(function (action) {
+			var total = 0, weight = 0;
+			foeActions.forEach(function (foeAction) {
+				var branches;
+				try {
+					branches = RRBattle.step(state, action, foeAction, {mode: "odds"});
+				} catch (e) { return; }
+				if (!branches || !branches.length) return;
+				// Each foe action is equally likely within the model; each of
+				// its outcomes carries its own probability.
+				var share = 1 / foeActions.length;
+				branches.forEach(function (br) {
+					var p = (br.probability === undefined ? 1 / branches.length : br.probability);
+					total += share * p * positionValue(br.state, costs);
+					weight += share * p;
+				});
+			});
+			return {action: action, value: weight ? total / weight : -Infinity};
+		}).sort(function (a, b) { return b.value - a.value; });
+	}
+
+	/**
 	 * Evaluate one of your actions against every plausible reply.
 	 * The reported outcome is the worst of them.
 	 */
@@ -419,6 +486,31 @@ var RRPlan = (function () {
 			return evaluateAction(state, action, foeActions, opts);
 		});
 		entries.sort(function (a, b) { return compareKeys(a.key, b.key); });
+
+		// The exact root replaces the lexicographic ordering when asked for.
+		// The entries are still built, because everything downstream -- the
+		// verdict text, the threats, the KO profiles -- reads them; only the
+		// ORDER changes, which is the whole claim being tested.
+		if (opts.exactRoot) {
+			var ranked = exactRootRank(state, myActions, foeActions, opts);
+			var order = {};
+			ranked.forEach(function (r, i) {
+				order[r.action.type === "switch" ? "s" + r.action.index : r.action.move] = i;
+			});
+			entries.sort(function (a, b) {
+				var ka = a.action.type === "switch" ? "s" + a.action.index : a.action.move;
+				var kb = b.action.type === "switch" ? "s" + b.action.index : b.action.move;
+				var ia = order[ka] === undefined ? 999 : order[ka];
+				var ib = order[kb] === undefined ? 999 : order[kb];
+				return ia - ib;
+			});
+			entries.forEach(function (entry) {
+				var k = entry.action.type === "switch"
+					? "s" + entry.action.index : entry.action.move;
+				var r = ranked[order[k]];
+				if (r) entry.expectedValue = r.value;
+			});
+		}
 
 		var unmodelled = [];
 		entries.forEach(function (entry) {
