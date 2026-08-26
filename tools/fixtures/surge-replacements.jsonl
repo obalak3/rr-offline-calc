@@ -1,28 +1,28 @@
-{"kind": "replacement", "run": "surge_run1", "frame": "f0101.png", "out": "Pincurchin", "in": "Vikavolt", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108}
-{"kind": "replacement", "run": "surge_run1", "frame": "f0389.png", "out": "Vikavolt", "in": "Pawmot", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run2", "frame": "f0141.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108}
-{"kind": "replacement", "run": "surge_run2", "frame": "f0212.png", "out": "Bellibolt", "in": "Vikavolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run2", "frame": "f0377.png", "out": "Vikavolt", "in": "Manectric", "us": "Mienshao", "our_hp": 66, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run2", "frame": "f0664.png", "out": "Manectric", "in": "Pawmot", "us": "Lanturn", "our_hp": 82, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run2", "frame": "f1079.png", "out": "Pawmot", "in": "Pincurchin", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102}
-{"kind": "replacement", "run": "surge_run2", "frame": "f1127.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lilligant", "our_hp": 63, "our_maxhp": 102}
-{"kind": "replacement", "run": "surge_run3", "frame": "f0280.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run3", "frame": "f0431.png", "out": "Bellibolt", "in": "Manectric", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run3", "frame": "f0579.png", "out": "Manectric", "in": "Pawmot", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run3", "frame": "f0798.png", "out": "Pawmot", "in": "Pincurchin", "us": "Mienshao", "our_hp": 64, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run3", "frame": "f0901.png", "out": "Pincurchin", "in": "Vikavolt", "us": "Victreebel", "our_hp": 82, "our_maxhp": 108}
-{"kind": "replacement", "run": "surge_run3", "frame": "f1067.png", "out": "Vikavolt", "in": "Bellibolt", "us": "Mienshao", "our_hp": 96, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run4", "frame": "f0435.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108}
-{"kind": "replacement", "run": "surge_run4", "frame": "f0508.png", "out": "Bellibolt", "in": "Manectric", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run4", "frame": "f0611.png", "out": "Manectric", "in": "Pawmot", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run5", "frame": "f0144.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102}
-{"kind": "replacement", "run": "surge_run6", "frame": "f0097.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run6", "frame": "f0232.png", "out": "Bellibolt", "in": "Pawmot", "us": "Lanturn", "our_hp": 128, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run6", "frame": "f0966.png", "out": "Pawmot", "in": "Pincurchin", "us": "Lanturn", "our_hp": 23, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run7", "frame": "f0073.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run7", "frame": "f0243.png", "out": "Bellibolt", "in": "Pawmot", "us": "Victreebel", "our_hp": 105, "our_maxhp": 108}
-{"kind": "replacement", "run": "surge_run7", "frame": "f0327.png", "out": "Pawmot", "in": "Vikavolt", "us": "Diggersby", "our_hp": 112, "our_maxhp": 112}
-{"kind": "replacement", "run": "surge_run7", "frame": "f0574.png", "out": "Vikavolt", "in": "Manectric", "us": "Mienshao", "our_hp": 63, "our_maxhp": 98}
-{"kind": "replacement", "run": "surge_run7", "frame": "f0847.png", "out": "Manectric", "in": "Pincurchin", "us": "Lanturn", "our_hp": 97, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run8", "frame": "f0448.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 121, "our_maxhp": 139}
-{"kind": "replacement", "run": "surge_run8", "frame": "f0598.png", "out": "Bellibolt", "in": "Pawmot", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139}
+{"kind": "replacement", "cause": "faint", "run": "surge_run1", "frame": "f0101.png", "out": "Pincurchin", "in": "Vikavolt", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108, "out_bar": 0, "last_foe_move": null}
+{"kind": "replacement", "cause": "faint", "run": "surge_run1", "frame": "f0389.png", "out": "Vikavolt", "in": "Pawmot", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "out_bar": 0, "last_foe_move": "Bug Buzz"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run2", "frame": "f0141.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108, "out_bar": 35, "last_foe_move": "Discharge"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run2", "frame": "f0212.png", "out": "Bellibolt", "in": "Vikavolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 4, "last_foe_move": "Thunder Wave"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run2", "frame": "f0377.png", "out": "Vikavolt", "in": "Manectric", "us": "Mienshao", "our_hp": 66, "our_maxhp": 98, "out_bar": 0, "last_foe_move": "Mud Shot"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run2", "frame": "f0664.png", "out": "Manectric", "in": "Pawmot", "us": "Lanturn", "our_hp": 82, "our_maxhp": 139, "out_bar": 0, "last_foe_move": "Hidden Power"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run2", "frame": "f1079.png", "out": "Pawmot", "in": "Pincurchin", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102, "out_bar": 0, "last_foe_move": "Mach Punch"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run2", "frame": "f1127.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lilligant", "our_hp": 63, "our_maxhp": 102, "out_bar": 0, "last_foe_move": "Hidden Power"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run3", "frame": "f0280.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 40, "last_foe_move": "Discharge"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run3", "frame": "f0431.png", "out": "Bellibolt", "in": "Manectric", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 11, "last_foe_move": "Thunder Wave"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run3", "frame": "f0579.png", "out": "Manectric", "in": "Pawmot", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "out_bar": 0, "last_foe_move": "Hidden Power"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run3", "frame": "f0798.png", "out": "Pawmot", "in": "Pincurchin", "us": "Mienshao", "our_hp": 64, "our_maxhp": 98, "out_bar": 5, "last_foe_move": "Drain Punch"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run3", "frame": "f0901.png", "out": "Pincurchin", "in": "Vikavolt", "us": "Victreebel", "our_hp": 82, "our_maxhp": 108, "out_bar": 0, "last_foe_move": "Scald"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run3", "frame": "f1067.png", "out": "Vikavolt", "in": "Bellibolt", "us": "Mienshao", "our_hp": 96, "our_maxhp": 98, "out_bar": 0, "last_foe_move": "Bug Buzz"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run4", "frame": "f0435.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Victreebel", "our_hp": 108, "our_maxhp": 108, "out_bar": 39, "last_foe_move": "Discharge"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run4", "frame": "f0508.png", "out": "Bellibolt", "in": "Manectric", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 18, "last_foe_move": "Parabolic Charge"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run4", "frame": "f0611.png", "out": "Manectric", "in": "Pawmot", "us": "Mienshao", "our_hp": 62, "our_maxhp": 98, "out_bar": 0, "last_foe_move": "Hidden Power"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run5", "frame": "f0144.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lilligant", "our_hp": 102, "our_maxhp": 102, "out_bar": 28, "last_foe_move": "Scald"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run6", "frame": "f0097.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 39, "last_foe_move": "Discharge"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run6", "frame": "f0232.png", "out": "Bellibolt", "in": "Pawmot", "us": "Lanturn", "our_hp": 128, "our_maxhp": 139, "out_bar": 0, "last_foe_move": "Thunder Wave"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run6", "frame": "f0966.png", "out": "Pawmot", "in": "Pincurchin", "us": "Lanturn", "our_hp": 23, "our_maxhp": 139, "out_bar": 36, "last_foe_move": "Drain Punch"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run7", "frame": "f0073.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 39, "last_foe_move": "Discharge"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run7", "frame": "f0243.png", "out": "Bellibolt", "in": "Pawmot", "us": "Victreebel", "our_hp": 105, "our_maxhp": 108, "out_bar": 0, "last_foe_move": "Hidden Power"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run7", "frame": "f0327.png", "out": "Pawmot", "in": "Vikavolt", "us": "Diggersby", "our_hp": 112, "our_maxhp": 112, "out_bar": 26, "last_foe_move": "Ice Punch"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run7", "frame": "f0574.png", "out": "Vikavolt", "in": "Manectric", "us": "Mienshao", "our_hp": 63, "our_maxhp": 98, "out_bar": 0, "last_foe_move": "Mud Shot"}
+{"kind": "replacement", "cause": "faint", "run": "surge_run7", "frame": "f0847.png", "out": "Manectric", "in": "Pincurchin", "us": "Lanturn", "our_hp": 97, "our_maxhp": 139, "out_bar": 0, "last_foe_move": "Hidden Power"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run8", "frame": "f0448.png", "out": "Pincurchin", "in": "Bellibolt", "us": "Lanturn", "our_hp": 121, "our_maxhp": 139, "out_bar": 28, "last_foe_move": "Scald"}
+{"kind": "replacement", "cause": "switch", "run": "surge_run8", "frame": "f0598.png", "out": "Bellibolt", "in": "Pawmot", "us": "Lanturn", "our_hp": 139, "our_maxhp": 139, "out_bar": 4, "last_foe_move": "Thunder Wave"}

@@ -92,6 +92,12 @@ rows.forEach(r => {
 		+ r.out + ' -> ' + r['in'] + ', we said ' + ties.join('/'));
 });
 
+const causes = {};
+rows.forEach(r => { causes[r.cause] = (causes[r.cause] || 0) + 1; });
+console.log('');
+console.log('  CAUSE OF THE FOE\'S POKEMON CHANGING: ' + JSON.stringify(causes));
+console.log('  Nearly half are VOLUNTARY switches, not faint replacements, and our');
+console.log('  engine only runs a replacement decision at faints.');
 console.log('');
 console.log('  REPLACEMENT PREDICTION over ' + n + ' recorded events, scored at the FAINT');
 console.log('    named outright     ' + top + '/' + n + '  ' + (100 * top / n).toFixed(0) + '%');
