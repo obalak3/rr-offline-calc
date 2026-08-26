@@ -30,7 +30,12 @@
 local STATE = os.getenv("HOME") .. "/RadicalRed-mGBA/RadicalRed.ss5"
 local OUT   = os.getenv("HOME") .. "/rr-screen-corpus/calibrate.tsv"
 
-local RNG     = 0x03005000
+-- THE BATTLE RNG, not 0x03005000. That one is vanilla gRngValue: consumed
+-- exactly 808 times a turn but proved (43 seeds, identical damage every time)
+-- to decide none of this. 0x020386D0 is the generator whose value actually
+-- moves the roll, confirmed by replanting each save state's own seed and
+-- getting that state's own outcome back.
+local RNG     = 0x020386D0
 local FOE_HP  = 0x02023BE4 + 0x58 + 0x28
 local FOE_MAX = 0x02023BE4 + 0x58 + 0x2C
 local OUR_HP  = 0x02023BE4 + 0x28
@@ -38,16 +43,16 @@ local OUR_HP  = 0x02023BE4 + 0x28
 local PRESS, GAP, TAPS, SETTLE = 6, 30, 3, 700
 local KEY_A = 1
 
-if _RR_CAL_ACTIVE then
+if _RR_CAL2_ACTIVE then
   console:error("calibrate: ALREADY RUNNING. Quit mGBA before reloading.")
   return
 end
-_RR_CAL_ACTIVE = true
+_RR_CAL2_ACTIVE = true
 
 -- Spread across the 32-bit space rather than sequential: consecutive seeds
 -- give correlated low bits and could make a wrong k look plausible.
 local seeds = {}
-for i = 0, 47 do seeds[#seeds+1] = (i * 2654435761) % 4294967296 end
+for i = 0, 63 do seeds[#seeds+1] = (i * 2654435761) % 4294967296 end
 
 local out = io.open(OUT, "w")
 out:write("trial\tseed\tfoe_before\tfoe_after\tfoe_max\tswitched\tour_after\trng_after\n")
