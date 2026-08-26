@@ -393,3 +393,111 @@ Three distinct things, then, each wanting a different treatment:
 The architecture from the previous pass is unchanged; the numbers attached to it
 are corrected, and the reason the conflation is expensive is now more precise
 than "3.5x": it is that we pay most where we know most.
+
+---
+
+# Fifth pass: everything reduces to one problem, and we have already measured
+# that both of our answers to it fail
+
+## Turn-by-turn is not a compromise. It is optimal.
+
+Worth stating because it has been treated as a practical concession forced by
+the screen reader. It is not. In a Markov decision process, the optimal policy
+is exactly the greedy policy with respect to the optimal value function:
+
+    pi*(s) = argmax_a  E[ r + V*(s') | s, a ]
+
+So "just tell me the best move this turn, every turn" is not an approximation of
+planning. It IS optimal planning, provided V is right. There is no additional
+power in producing a twenty-four turn script; a script is only a record of what
+the greedy policy would have done if the dice cooperated, which is why every
+script this project has produced broke at the first tie.
+
+That collapses the whole question. Search depth, line-finding, proof, the loss
+ladder, the margin -- all of it is machinery for one purpose: estimating
+
+    V(s) = P(win with nobody lost | play well from here)
+
+Get V right and the rest is one enumerated turn, which we measured as ~20
+successors and therefore free.
+
+## We have tried both standard ways to get V, and measured both failing
+
+**Handcrafted V.** `rr-plan.js`'s race heuristic, and `RRMatchup.valueOf`.
+Measured: the race heuristic has intransitive preferences and oscillated for
+twenty turns; the matchup value function was beaten by "my health minus twice
+theirs" in a null test, meaning the pairing table it was built on contributed
+nothing detectable at n=9 fights. And the proxy search built on such an
+evaluation was FLAT in depth -- lookahead 2, 3 and 4 within noise, three
+targeted improvements each leaving it at exactly 81/135. A handcrafted V encodes
+the strategies its author thought of, and is blind to the rest by construction.
+
+**Rollout V.** `rr-mcts.js`. Measured today: its rollout policy scores status
+moves a flat 0.05, so it never sleeps anything, and its rollouts run at median
+damage with our secondaries suppressed. It cannot value a position whose worth
+comes from sleeping Pawmot, because it never sleeps Pawmot in any sample. A
+rollout V inherits every blindness of the rollout policy.
+
+These are not two bugs. They are the same fact twice: **an estimate of V is only
+as good as the strategies its estimator can represent, and both of ours were
+given estimators that cannot represent the strategy that wins this fight.**
+
+## Which leaves exactly three options, and only one has a future
+
+1. **Search deep enough that V stops mattering.** If the search reaches terminal
+   states, V is only needed at the horizon and its bias is irrelevant. Measured
+   cost: at ~20 successors per turn with the true distribution, reaching turn 25
+   is 20^25. Not a budget problem, an impossibility. Rejected.
+
+2. **Keep handcrafting V and add the missing strategies by hand.** This is what
+   the project has been doing all day: notice sleep matters, add a sleep term;
+   notice ties matter, add a tie term. It is unbounded work, each addition needs
+   its own tuning, and the null test says we cannot even measure whether an
+   addition helped at the sample sizes we have. This is the "good statistics, no
+   future" path James named.
+
+3. **Learn V from experience against the fixed opponent.** The environment is
+   unusually favourable for this and the reasons are specific rather than
+   hopeful: the opponent is a FIXED, KNOWN, non-adapting policy, so this is
+   ordinary reinforcement learning against a stationary environment rather than
+   self-play against a moving target; the simulator runs at tens of thousands of
+   steps per second; the reward is well-defined and terminal (won clean / won
+   losing k / lost); and episodes are short, twenty to forty turns.
+
+Option 3 is the only one whose quality is not bounded by what we thought to
+encode. It is also the one that turns compute into quality, which is the single
+property James asked to optimise for and the single property the shelved MCTS
+demonstrably had.
+
+## The version of option 3 that does not require a research project
+
+Not "train a network and hope". The standard construction is iterated policy
+improvement, and each half already exists here:
+
+    search with the current V   ->  produces better decisions than V alone
+    record what search decided  ->  train V toward those decisions
+    repeat
+
+The search half is the enumerated root plus sampling that we have already
+justified. The V half starts as anything at all -- even "my health minus twice
+theirs", which the null test showed is no worse than our considered attempt --
+and improves from data rather than from someone thinking of a term.
+
+Crucially this makes the sleep line discoverable rather than requiring it to be
+known: search only has to stumble on sleeping Pawmot ONCE in any episode for the
+outcome to be recorded, and V then learns that such positions are good, which
+makes search reach them more often. Neither half needs to be told about sleep,
+terrain timing, or tie-collapsing. Those are exactly the things we have spent
+today hand-discovering one at a time.
+
+## What would make this wrong, stated so it can be checked
+
+- If the state cannot be featurised well enough for V to generalise across
+  positions, learning gains nothing over a lookup table and the state space is
+  far too large for a table. This is the real technical risk and it is a
+  question about representation, not about the framework.
+- If episodes against the real trainer set are too few to learn from, the data
+  is insufficient. Mitigated by the simulator: episodes are generated, not
+  played.
+- If the opponent were not stationary, this would be self-play with all its
+  instabilities. It is stationary; the CFRU source is read and ported.
