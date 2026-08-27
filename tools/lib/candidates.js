@@ -311,31 +311,89 @@ function candidatesFor(ctx, fi, options) {
 		});
 	});
 
-	// 4. CHIP CHAINS. The unit of a plan is not one of ours against one of
-	//    theirs; on some fights that unit is simply wrong. Nothing on this team
-	//    beats Bellibolt alone, because Parabolic Charge heals it faster than
-	//    most of us hit -- but one of us takes it to 1 HP and anybody finishes.
-	const RETREATS = [0.5, 0.35];
-	party.forEach((p, mi) => {
-		for (const at of RETREATS) {
-			const chip = D.duelLines(engine, party, foeSets, mi, fi, {}, {retreatAt: at})
-				.filter(l => l.outcome === 'retreat')
-				.sort((a, b) => b.chip - a.chip)[0];
-			if (!chip || chip.chip < 0.2) continue;
-			party.forEach((q, qi) => {
-				if (qi === mi) return;
-				const finish = D.duelLines(engine, party, foeSets, qi, fi,
-					{foeChip: chip.chip}, {}).find(l => l.outcome === 'kill');
-				if (!finish) return;
-				push([{mon: p.species, moves: chip.moves, until: {selfHp: at}},
-					{mon: q.species, moves: finish.moves}],
-					p.species + ' chips it to ' + pctOf(1 - chip.chip) + ' for '
-					+ pctOf(chip.cost) + ', then ' + q.species + ' finishes for '
-					+ pctOf(finish.cost),
-					chip.cost + finish.cost + 3 * (chip.deathRisk + finish.deathRisk));
+	// 4. CHIP CHAINS, any length. The unit of a plan is not one of ours
+	//    against one of theirs; on some fights that unit is simply wrong.
+	//    James, watching himself win: "there is almost never a killing line.
+	//    There is a multiple moves doing chip damage which ends up killing
+	//    line." Measured on 200 live plans, 194 were two-leg and 6 solo -- the
+	//    families above can only designate ONE Pokemon to duel the foe to
+	//    death, so the shape James actually plays was inexpressible.
+	//
+	//    This is a beam search over contributors: each leg chips what it
+	//    safely can and retreats; the accumulated chip persists (their
+	//    switching launders boosts, not damage); the chain ends either when
+	//    somebody has a genuine killing line against the REMAINING fraction,
+	//    or when the accumulated chip is itself lethal. The old two-leg
+	//    chipper+finisher family is the depth-1 case and falls out of this.
+	//
+	//    Generation offers; pricing decides. Chip legs carry the measured
+	//    move list and a retreat threshold; pricePath simulates the whole
+	//    relay against the real AI, so healing (Parabolic Charge, Roost,
+	//    Drain Punch) undoing the chip is caught there, not guessed here.
+	// RR_NO_CHIP_CHAINS disables this family for A/B measurement, the same
+	// pattern as RR_DISABLE_SWITCH_PORT.
+	const RETREATS = process.env.RR_NO_CHIP_CHAINS ? [] : [0.5, 0.35];
+	const CHIP_MIN = 0.15;      // a leg must bank at least this to extend
+	const MAX_CHIP_LEGS = 3;    // contributors before the finisher
+	const BEAM = 6;
+	let frontier = [{acc: 0, legs: [], used: {}, est: 0, risk: 0}];
+	for (let depth = 0; depth <= MAX_CHIP_LEGS; depth++) {
+		const grown = [];
+		for (const node of frontier) {
+			const entryCond = Object.assign({}, fieldCond(opts.field),
+				node.acc > 0 ? {foeChip: node.acc} : {});
+			party.forEach((p, mi) => {
+				if (node.used[mi]) return;
+				// Can this one FINISH the remaining fraction? Only meaningful
+				// once at least one chip leg exists: depth-0 kills are family 1.
+				if (node.legs.length) {
+					const fin = D.duelLines(engine, party, foeSets, mi, fi, entryCond, {})
+						.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
+					if (fin) {
+						push(node.legs.concat([{mon: p.species, moves: fin.moves}]),
+							node.legs.map(j => j.mon).join(' + ') + ' chip it to '
+							+ pctOf(1 - node.acc) + ', then ' + p.species
+							+ ' finishes for ' + pctOf(fin.cost),
+							node.est + fin.cost + 3 * (node.risk + fin.deathRisk)
+							+ 0.1 * node.legs.length);
+					}
+				}
+				// Or keep chipping. 'left' banks chip too: damage persists
+				// through their switching even though stat drops do not.
+				if (depth < MAX_CHIP_LEGS) {
+					for (const at of RETREATS) {
+						const chip = D.duelLines(engine, party, foeSets, mi, fi,
+							entryCond, {retreatAt: at})
+							.filter(l => l.outcome === 'retreat' || l.outcome === 'left')
+							.sort((a, b) => b.chip - a.chip)[0];
+						if (!chip || chip.chip < CHIP_MIN) continue;
+						const legs = node.legs.concat([
+							{mon: p.species, moves: chip.moves, until: {selfHp: at}}]);
+						const acc = node.acc + chip.chip;
+						if (acc >= 0.99) {
+							// The chip alone is lethal; no finisher needed.
+							push(legs, legs.map(j => j.mon).join(' + ')
+								+ ' chip it to death',
+								node.est + chip.cost + 3 * (node.risk + chip.deathRisk)
+								+ 0.1 * node.legs.length);
+							continue;
+						}
+						const used = Object.assign({}, node.used);
+						used[mi] = true;
+						grown.push({acc, legs, used,
+							est: node.est + chip.cost,
+							risk: node.risk + chip.deathRisk});
+					}
+				}
 			});
 		}
-	});
+		// Keep the few most promising part-built chains: most chip banked for
+		// least HP spent. The beam is what keeps generation from going
+		// combinatorial; pricing would drown long before correctness did.
+		grown.sort((a, b) => (b.acc - 3 * b.est - 3 * b.risk) - (a.acc - 3 * a.est - 3 * a.risk));
+		frontier = grown.slice(0, BEAM);
+		if (!frontier.length) break;
+	}
 
 	out.sort((a, b) => a.score - b.score);
 	if (!out.length) {

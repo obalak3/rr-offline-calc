@@ -23,7 +23,7 @@
 'use strict';
 const C = require('./candidates.js');
 const P = require('./policy.js');
-const {pricePath} = require('./paths.js');
+const {pricePath, survivesEntry} = require('./paths.js');
 
 function chooseAction(ctx, state, opts) {
 	const engine = ctx.engine, B = engine.B;
@@ -165,6 +165,12 @@ function chooseAction(ctx, state, opts) {
 	// committed to a line.
 	const incumbent = options.incumbent ? JSON.stringify(options.incumbent) : null;
 	const STICK = options.stick === undefined ? 0.75 : options.stick;
+	// Function-scoped: the no-kill fallback below uses these too, and when they
+	// lived inside the loop every fallback turn threw "SPEND is not defined"
+	// and the agent silently fell through to one-turn greedy scoring -- 24
+	// times in the live log, all on the hardest positions.
+	const TEMPO = options.tempo === undefined ? 0.4 : options.tempo;
+	const SPEND = options.spend === undefined ? 2 : options.spend;
 
 	let best = null;
 	const shortlist = [];
@@ -226,8 +232,6 @@ function chooseAction(ctx, state, opts) {
 		// Lilligant, which is one forbidden death instead of two; at 1.3 it
 		// collapses again into a wipe. The metric was the cap James set --
 		// win, losing nobody but Lilligant -- not the score.
-		const TEMPO = options.tempo === undefined ? 0.4 : options.tempo;
-		const SPEND = options.spend === undefined ? 2 : options.spend;
 		let here = spend + illegal.length * 6 + spent.length * SPEND
 			+ 4 * r.deathRisk + TEMPO * (r.turns || 0);
 		if (incumbent && JSON.stringify(cand.jobs) === incumbent) here -= STICK;
@@ -296,10 +300,48 @@ function chooseAction(ctx, state, opts) {
 
 	// The first action of the winning path, taken from the same policy code
 	// that would have executed it, so the choice and the pricing cannot drift.
-	const plan = {};
-	plan[state.foe.team[fi].set.species] = best.cand.jobs;
-	const action = P.planAction(engine, state, plan, P.newProgress());
-	return action ? {action, path: best} : null;
+	//
+	// AND IT MUST SURVIVE ITS OWN FIRST TURN. pricePath refuses lethal-entry
+	// switches INSIDE a path, but the action returned here is derived fresh
+	// from the current state, so a switch that walks the incoming Pokemon into
+	// the predicted hit could still be played -- which is how Lilligant, the
+	// answer to Pawmot, was fed to Pawmot's Drain Punch as an "enabler". This
+	// check used to live in agent.js as an external veto; James's standard is
+	// that this stuff is internal to the AI, and internal means here: the
+	// planner walks its shortlist in score order and returns the best line
+	// whose first action is not a death on arrival.
+	const theirsNow = predictFoe(engine, state);
+	const firstAction = item => {
+		const plan = {};
+		plan[state.foe.team[fi].set.species] = item.cand.jobs;
+		return P.planAction(engine, state, plan, P.newProgress());
+	};
+	const ranked = shortlist.slice().sort((a, b) => a.here - b.here);
+	if (best && !ranked.some(x => x.cand === best.cand)) ranked.unshift(best);
+	else if (best) ranked.splice(ranked.findIndex(x => x.cand === best.cand), 1),
+		ranked.unshift(best);
+	for (const item of ranked) {
+		const action = firstAction(item);
+		if (!action) continue;
+		if (action.type === 'switch'
+			&& !survivesEntry(engine.B, state, action.index, theirsNow)) continue;
+		return {action, path: item === best ? best
+			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
+				r: item.r, illegal: item.illegal}};
+	}
+	return null;
+}
+
+/** Their argmax action from this position, for the entry-survival check. */
+function predictFoe(engine, state) {
+	try {
+		const sc = engine.sandbox.RRAI.scoreAll(state, 'foe',
+			{checkBadMove: true, checkGoodMove: true}, {});
+		if (!sc.length) return null;
+		let bs = -Infinity;
+		sc.forEach(e => { if (e.score > bs) bs = e.score; });
+		return sc.find(e => e.score === bs).action;
+	} catch (e) { return null; }
 }
 
 module.exports = {chooseAction};

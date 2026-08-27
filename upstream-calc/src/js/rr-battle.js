@@ -597,6 +597,14 @@ var RRBattle = (function () {
 					if (data && data.split === "Status") continue;
 				}
 				var info = moveData(mon.set.moves[i]);
+				// Fake Out and First Impression are legal only on the way in.
+				// Execution already refuses them (the firstTurnOnly check in
+				// runMove), but leaving them in the LEGAL list meant anything
+				// trusting legality could plan a move that then does nothing.
+				if (info && info.effect && (info.effect.firstTurnOnly ||
+					info.effect.kind === "firstTurnOnly") && mon.turnsOut > 0) {
+					continue;
+				}
 				var pivots = info && info.effect && info.effect.kind === "selfSwitch" &&
 					info.split !== "Status";
 				if (pivots) {

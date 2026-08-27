@@ -274,4 +274,4 @@ function sample(branches) {
 	return branches[branches.length - 1].state;
 }
 
-module.exports = {pricePath};
+module.exports = {pricePath, survivesEntry};

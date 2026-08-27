@@ -417,6 +417,27 @@ function tick_inner()
 
 	local scr = screen()
 
+	-- LATCH THE BODY COUNT WHILE THE BATTLE IS STILL UP. A lost fight ends in
+	-- a whiteout that HEALS the party before the nobattle read happens, so
+	-- every loss read as "neither side is wiped" and was silently dropped --
+	-- two full collapses against Pawmot (turns 2685-2697, 2725-2737) left no
+	-- row at all and the record claimed 11-0. The last in-battle read is the
+	-- honest ending; keep it, and let the recorder fall back to it.
+	if scr ~= "nobattle" and _RR.beat % 30 == 0 then
+		local lm, lt = 0, 0
+		local lmine, ltheirs = {}, {}
+		for i = 0, 5 do
+			local mh = emu:read16(PARTY + i * P_SIZE + P_HP)
+			local th = emu:read16(FOE_PARTY + i * P_SIZE + P_HP)
+			if mh > 0 then lm = lm + 1 end
+			if th > 0 then lt = lt + 1 end
+			lmine[#lmine+1] = mh .. "/" .. emu:read16(PARTY + i * P_SIZE + P_MAX)
+			ltheirs[#ltheirs+1] = th .. "/" .. emu:read16(FOE_PARTY + i * P_SIZE + P_MAX)
+		end
+		_RR.latch = {ml = lm, tl = lt,
+			mine = table.concat(lmine, " "), theirs = table.concat(ltheirs, " ")}
+	end
+
 	if phase == "wait" then
 		-- PUT THE UI BACK WHERE IT BELONGS. Waiting only ever asks a question
 		-- from the action menu or a forced party screen, so being parked
@@ -471,6 +492,18 @@ function tick_inner()
 				-- health with the opponent half hurt, which is not an outcome
 				-- of anything -- three such rows landed in the file and would
 				-- have been counted in any win rate computed from it.
+				--
+				-- BUT A WHITEOUT HEALS THE PARTY before this read, so every
+				-- LOSS used to arrive here as UNCLEAR and vanish. The latch
+				-- taken while the battle was still up is the honest ending.
+				if res == "UNCLEAR" and _RR.latch
+					and (_RR.latch.ml == 0 or _RR.latch.tl == 0) then
+					ml, tl = _RR.latch.ml, _RR.latch.tl
+					mine = {_RR.latch.mine}
+					theirs = {_RR.latch.theirs}
+					res = (tl == 0 and ml > 0) and "WIN" or "LOSS"
+					say("recording from the in-battle latch (post-battle read was healed)")
+				end
 				if res == "UNCLEAR" then
 					say("not recording: neither side is wiped (" .. ml .. " v " .. tl .. ")")
 					return
@@ -546,6 +579,9 @@ function tick_inner()
 				if file ~= "" and pcall(function() emu:loadStateFile(file) end) then
 					_RR.fights = (_RR.fights or 0) + 1
 					_RR.recorded = false
+					-- The latch belongs to the fight that just ended; carrying
+					-- it into the next one would record a stale ending.
+					_RR.latch = nil
 					_RR.saveName = file:match("[^/]+$")
 					say("restarted (" .. _RR.fights .. ") with " .. file:match("[^/]+$"))
 					os.remove(DIR .. "state.json")
