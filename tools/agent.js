@@ -241,33 +241,39 @@ function buildState(obs) {
 	// all. Their party is now visible, so each slot is matched to a real set by
 	// level and max HP against the trainer data -- the same way our own side is
 	// resolved.
+	// THEIR PARTY IS IN TRAINER-DATA ORDER, so slot i is set i. No matching
+	// needed, and matching actively broke things: it paired each slot by level
+	// and max HP, and our data computes Bellibolt at 133 HP where the game says
+	// 125, so Bellibolt matched NOTHING and fell back to cloning whoever was
+	// active. Their team came out as Pincurchin, Vikavolt, MANECTRIC 125/102,
+	// Pawmot, Manectric-Mega -- Bellibolt gone, one Pokemon holding more HP
+	// than its own maximum. The active index then pointed at a clone, the
+	// predictor returned nothing, and the planner re-planned the same broken
+	// position forever.
 	let foeTeam = null;
-	if (obs.foeparty && obs.foeparty.length) {
-		const b = battleOf(obs);
-		const known = b ? (H.foeSets(b) || []) : [];
-		const pool = known.slice();
+	const bt = battleOf(obs);
+	const known = bt ? (H.foeSets(bt) || []) : [];
+	if (obs.foeparty && obs.foeparty.length && known.length) {
 		foeTeam = [];
-		obs.foeparty.forEach(row => {
-			if (!row.maxhp) return;                 // empty slot: they have fewer
-			let pick = -1;
-			for (let i = 0; i < pool.length; i++) {
-				if (!pool[i]) continue;
-				const probe = B.createState([pool[i]], [foeSet], {});
-				if (pool[i].level === row.level && probe.me.team[0].maxHP === row.maxhp) {
-					pick = i; break;
-				}
-			}
-			if (pick >= 0) { foeTeam.push(pool[pick]); pool[pick] = null; }
-			else foeTeam.push(Object.assign({}, foeSet));   // unknown: fall back
+		obs.foeparty.forEach((row, i) => {
+			if (!row.maxhp) return;               // empty slot: they carry fewer
+			foeTeam.push(known[i] || Object.assign({}, foeSet));
 		});
-	}
-	if (!foeTeam || !foeTeam.length) {
-		foeTeam = [foeSet];
-		for (let i = 0; i < 5; i++) foeTeam.push(Object.assign({}, foeSet));
 	}
 	const st = B.createState(mySets, foeTeam, {});
 	// Put THEIR active where it really is, and apply what we can see of them.
-	const activeFoe = foeTeam.findIndex(f => f && f.species === speciesName(obs.foe.species));
+	// THEIR ACTIVE, matched on the base name too. A mega arrives as its base
+	// form, so RAM says "Manectric" while the set is "Manectric-Mega" -- the
+	// exact match returned -1, the active index silently stayed at 0, and we
+	// modelled a FAINTED Pincurchin as the Pokemon in front of us. The
+	// predictor then returned nothing at all ("they will: none") and the
+	// planner was pricing a position that did not exist.
+	const rawName = speciesName(obs.foe.species);
+	const baseOf = n => String(n || '').split('-')[0];
+	let activeFoe = foeTeam.findIndex(f => f && f.species === rawName);
+	if (activeFoe < 0) {
+		activeFoe = foeTeam.findIndex(f => f && baseOf(f.species) === baseOf(rawName));
+	}
 	if (activeFoe >= 0) st.foe.active = activeFoe;
 	(obs.foeparty || []).forEach((row, i) => {
 		const m = st.foe.team[i];
@@ -292,6 +298,12 @@ function buildState(obs) {
 		me.fainted = true;
 	}
 	me.status = statusOf(obs.me.status); foe.status = statusOf(obs.foe.status);
+	// CONFUSION, from status2. Without it the model could not see confusion it
+	// had itself applied, so Confuse Ray kept looking useful and got spammed
+	// into an already-confused target.
+	const confusionOf = w => (w || 0) & 0x7;
+	if (confusionOf(obs.me.status2)) me.volatiles.confusion = confusionOf(obs.me.status2);
+	if (confusionOf(obs.foe.status2)) foe.volatiles.confusion = confusionOf(obs.foe.status2);
 	for (let i = 1; i < STAT_ORDER.length; i++) {
 		me.boosts[STAT_ORDER[i]] = (obs.me.stages[i] || 6) - 6;
 		foe.boosts[STAT_ORDER[i]] = (obs.foe.stages[i] || 6) - 6;
@@ -718,7 +730,11 @@ setInterval(() => {
 	console.log('  they will: ' + theirAction
 		+ '   [byte ' + byteSays + (d.src.stale ? ' STALE, ignored' : '')
 		+ ' | model ' + modelSays + ']');
-	console.log('  ' + (plannerSaid ? 'PLAN: ' + plannerSaid.path.cand.why : 'no plan found, falling back to one-turn scoring'));
+	console.log('  ' + (plannerSaid
+		? 'PLAN: ' + plannerSaid.path.cand.why
+			+ '   [this kill ' + plannerSaid.path.here.toFixed(2)
+			+ ', rest of the fight ' + plannerSaid.path.ahead.toFixed(2) + ']'
+		: 'no plan found, falling back to one-turn scoring'));
 	console.log('  we play: ' + ourAction
 		+ (d.best.unknownTarget
 			? '   (they are switching, so this lands on whoever comes in)'
@@ -770,6 +786,28 @@ setInterval(() => {
 		} catch (e) { /* a status move has no band */ }
 	}
 
+	// ARCHIVE THE POSITION. Every turn becomes a replayable case for the
+	// mistake finder: what the position was, what we played, and what we
+	// expected. Without this a game is watched once and gone, and finding
+	// mistakes means somebody sitting there for hours.
+	try {
+		const dir = path.join(DIR, 'turns');
+		if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
+		fs.writeFileSync(path.join(dir, 'turn' + String(obs.turn).padStart(5, '0') + '.json'),
+			JSON.stringify({obs,
+				played: ourAction,
+				// The switch TARGET by name, not by index. "switch 2" cannot be
+				// compared against a recommendation, so the mistake finder was
+				// treating every switch as agreeing with every other switch.
+				playedMon: d.best.action.type === 'switch'
+					? (st.me.team[d.best.action.index]
+						&& st.me.team[d.best.action.index].set.species) || null
+					: (st.me.team[st.me.active] && st.me.team[st.me.active].set.species) || null,
+				predicted: theirAction,
+				plan: plannerSaid ? plannerSaid.path.cand.why : null,
+				planJobs: plannerSaid ? plannerSaid.path.cand.jobs : null}) + '\n');
+	} catch (e) { /* archiving must never break play */ }
+
 	awaiting = {
 		turn: obs.turn, us, them, ourAction, theirAction, predOur, predTheir,
 		rolls, critRolls, foeRolls, foeCrit,
@@ -796,21 +834,16 @@ setInterval(() => {
 	const slot = d.best.action.type === 'switch'
 		? d.best.action.index
 		: st.me.team[st.me.active].set.moves.indexOf(d.best.action.move);
-	// THE BATTLE PARTY SCREEN IS NOT IN PARTY ORDER. It shows the ACTIVE
-	// Pokemon first, then the rest in party order -- confirmed by screenshot:
-	// with Lanturn (party index 2) active, the grid read Lanturn, Diggersby,
-	// Mienshao, Lilligant, Breloom, Victreebel.
+	// THE DISPLAY IS THE CURRENT PARTY ORDER, so no conversion is needed.
 	//
-	// So a party index is not a screen position, and navigating to "slot 5"
-	// landed on whoever happened to sit there. The game said so in as many
-	// words -- "Lanturn is already in battle!" -- which is also the bounce
-	// James reported weeks ago: clicking Lanturn, failing, clicking again.
-	//
-	// The cursor always starts at display 0, the active Pokemon, so `from` is
-	// always 0 and the target is converted to its DISPLAY position here.
-	const order = [st.me.active].concat(
-		st.me.team.map((m, i) => i).filter(i => i !== st.me.active));
-	const displaySlot = Math.max(0, order.indexOf(slot));
+	// Switching in Gen 3 SWAPS party slots, so the order in gPlayerParty is not
+	// the order the run started with -- photographed mid-fight it read Mienshao,
+	// Diggersby, Victreebel, Lilligant, Lanturn. Our sets are built from
+	// obs.party in that same live order, so a switch index already IS a display
+	// slot. The conversion added here earlier assumed "active first, then party
+	// order", which was true of the one screenshot it was derived from and not
+	// in general, and it sent the cursor to the wrong Pokemon.
+	const displaySlot = slot;
 	fs.writeFileSync(CMD, JSON.stringify({
 		turn: obs.turn,
 		action: d.best.action.type === 'switch' ? 'switch' : 'move',

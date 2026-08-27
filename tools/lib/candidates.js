@@ -278,7 +278,40 @@ function candidatesFor(ctx, fi, options) {
 		}
 	});
 
-	// 3. CHIP CHAINS. The unit of a plan is not one of ours against one of
+	// 3. ABSORB PIVOTS. Switch a Pokemon in that is IMMUNE to what they are
+	//    throwing, take the free turn, and -- if the ability heals -- come out
+	//    of it better off than we went in.
+	//
+	//    James asked why the planner never cycles Lanturn against an Electric
+	//    attacker to regain HP, and the answer was that it could not: every
+	//    candidate is "who kills this and what has to happen first", so a line
+	//    whose payoff is HP GAINED rather than damage dealt had no shape to be
+	//    expressed in. The lever was in the catalog all along -- "Volt Absorb
+	//    voids Electric and heals" -- but conditionSpace only builds candidates
+	//    from levers that change THEIR state, so anything helping our own side
+	//    was silently dropped. Intimidate cycling worked and absorb cycling did
+	//    not, for no better reason than which side the effect lands on.
+	const absorbers = LEVERS.filter(l => l.via === 'absorb-ability' && l.absorbs);
+	absorbers.forEach(l => {
+		const theirTypes = new Set((foe.moves || []).map(m => {
+			const d = ctx.engine.sandbox.RR_MOVE_EFFECTS.moves[m];
+			return d && d.split !== 'Status' ? d.type : null;
+		}).filter(Boolean));
+		if (!theirTypes.has(l.absorbs)) return;      // nothing here to absorb
+		party.forEach((p, mi) => {
+			if (p.species === l.mon) return;
+			const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field), {})
+				.find(x => x.outcome === 'kill');
+			if (!line) return;
+			push([{mon: l.mon, moves: [], until: {entered: true}},
+				{mon: p.species, moves: line.moves}],
+				l.mon + ' absorbs ' + l.absorbs + (l.heals ? ' and heals' : '')
+				+ ', then ' + p.species + ' kills for ' + pctOf(line.cost),
+				line.cost + 3 * line.deathRisk - (l.heals ? 0.25 : 0.1));
+		});
+	});
+
+	// 4. CHIP CHAINS. The unit of a plan is not one of ours against one of
 	//    theirs; on some fights that unit is simply wrong. Nothing on this team
 	//    beats Bellibolt alone, because Parabolic Charge heals it faster than
 	//    most of us hit -- but one of us takes it to 1 HP and anybody finishes.

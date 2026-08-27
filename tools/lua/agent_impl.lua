@@ -51,6 +51,10 @@ local S_ACTION, S_MOVES, S_PARTY, S_BUSY = 0x0802E439, 0x0802EA11, 0x08030685, 0
 local MAIN_CB, CB_BATTLE = 0x030030F0, 0x080123E5
 
 -- BattlePokemon, Gen 3 layout.
+-- status2 holds the VOLATILES -- confusion among them -- and was never read.
+-- The agent spammed Confuse Ray into an already-confused Manectric because the
+-- model could not see the confusion it had just applied.
+local O_ST2 = 0x50
 local O_SP, O_MOVES, O_STAGES, O_AB, O_PP, O_HP, O_LV, O_MAX, O_ITEM, O_ST1 =
 	0x00, 0x0C, 0x18, 0x20, 0x24, 0x28, 0x2A, 0x2C, 0x2E, 0x4C
 -- The battler's REAL stats, in order atk, def, spe, spa, spd. Reading these
@@ -135,11 +139,11 @@ local function battler(base)
 	for i = 0, 4 do stats[i+1] = emu:read16(base + O_STATS + i*2) end
 	return string.format(
 		'{"species":%d,"level":%d,"hp":%d,"maxhp":%d,"ability":%d,"item":%d,'
-		.. '"status":%d,"moves":[%s],"pp":[%s],"stages":[%s],"stats":[%s]}',
+		.. '"status":%d,"status2":%d,"moves":[%s],"pp":[%s],"stages":[%s],"stats":[%s]}',
 		emu:read16(base + O_SP), emu:read8(base + O_LV),
 		emu:read16(base + O_HP), emu:read16(base + O_MAX),
 		emu:read8(base + O_AB), emu:read16(base + O_ITEM),
-		emu:read32(base + O_ST1),
+		emu:read32(base + O_ST1), emu:read32(base + O_ST2),
 		table.concat(mv, ","), table.concat(pp, ","), table.concat(st, ","),
 		table.concat(stats, ","))
 end
@@ -802,7 +806,16 @@ function tick_inner()
 		if swFrom == nil then swFrom = emu:read16(MON + O_SP) end
 		local nowSp = emu:read16(MON + O_SP)
 		local id = emu:read8(SCREEN_ID)
-		if id ~= 8 and id ~= 9 then
+		-- Photograph the moment it claims success, because "left the party
+		-- screen" keeps being satisfied by a transient state while the active
+		-- Pokemon never actually changes.
+		-- id 6 is the submenu OPEN, photographed: the party screen with
+		-- Shift/Summary/Cancel still up. Treating it as "left the party screen"
+		-- declared the switch committed while the menu was still sitting there,
+		-- so the agent moved on, the active never changed, and it re-planned the
+		-- same switch forever.
+		if id ~= 6 and id ~= 8 and id ~= 9 then
+			shot("committed_id" .. id)
 			say("switch committed (left the party screen, id=" .. id .. ")")
 			swFrom, swFails = nil, 0
 			emu:setKeys(0)
@@ -887,6 +900,7 @@ function tick_inner()
 			return
 		end
 		if scr == "party" then
+			if timer < 3 then shot("settle_saw_party") end
 			-- Our Pokemon fainted mid-turn and the game wants a replacement.
 			-- Settle has nothing to say about that; it is a new question.
 			emu:setKeys(0)
