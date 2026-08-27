@@ -99,7 +99,16 @@ function buildState(obs) {
 	const mySets = party.map(p => p.species === mineName
 		? setFromBattler(obs.me, p) : p);
 	const activeIndex = Math.max(0, mySets.findIndex(p => p.species === mineName));
-	const st = B.createState(mySets, [foeSet], {});
+	// THEIR BENCH HAS TO EXIST FOR THEIR SWITCH TO BE LEGAL. We can only see
+	// their active Pokemon, so the side used to be built with exactly one --
+	// and then, the moment they committed to a switch, every action we tried
+	// to simulate threw, because the destination slot did not exist. The agent
+	// reported "no legal action found" and stood there. Placeholders make the
+	// switch representable; they are NOT a claim about what is coming in, which
+	// is why nothing credits a kill on a switch turn.
+	const bench = [];
+	for (let i = 0; i < 5; i++) bench.push(Object.assign({}, foeSet));
+	const st = B.createState(mySets, [foeSet].concat(bench), {});
 	st.me.active = activeIndex;
 
 	// Apply everything observed, so the simulation starts from the real
@@ -146,6 +155,15 @@ function decide(st, obs) {
 	const theirs = foeAction(st, obs);
 	const legal = B.legalActions(st, 'me');
 	const rows = [];
+	// WHEN THEY SWITCH, WE ARE NOT HITTING WHO WE CAN SEE. Only their active
+	// Pokemon is modelled -- their bench is genuinely unknown to us -- so a
+	// committed switch cannot be simulated properly, and simulating it as a
+	// no-op is worse than not simulating it: the first live turn had them
+	// switching a 25 HP Voltorb out, and all three of our attacks scored a
+	// KILL on a Pokemon that was leaving. Our move will land on whatever comes
+	// in instead, and nothing here knows what that is, so no kill is claimed
+	// and the damage number is a proxy rather than a prediction.
+	const theySwitch = theirs && theirs.type === 'switch';
 	for (const a of legal) {
 		if (!theirs) break;
 		let out;
@@ -155,16 +173,32 @@ function decide(st, obs) {
 		if (!out || !out.length) continue;
 		const after = out[0].state;
 		const myIdx = st.me.active;
-		const foeDead = after.foe.team[0].fainted;
+		// Measured across the WHOLE side, not against the Pokemon that was
+		// standing there when the turn began. On a switch turn our move lands
+		// on whoever comes in, so damage read against the departing Pokemon is
+		// always zero -- which made every action score identically and the
+		// choice arbitrary, Detect included. Summing the side covers both the
+		// stay case and the switch case without special-casing either.
+		const sideLoss = (before, now) => {
+			let lost = 0, cap = 0;
+			for (let i = 0; i < before.team.length; i++) {
+				lost += Math.max(0, before.team[i].curHP - now.team[i].curHP);
+				cap += before.team[i].maxHP;
+			}
+			return cap ? lost / (before.team[0].maxHP || cap) : 0;
+		};
+		const foeDead = after.foe.team[st.foe.active].fainted;
 		const mineDead = after.me.team[myIdx].fainted;
-		const theirLoss = (st.foe.team[0].curHP - after.foe.team[0].curHP)
-			/ st.foe.team[0].maxHP;
+		const theirLoss = sideLoss(st.foe, after.foe);
 		const myLoss = (st.me.team[myIdx].curHP - after.me.team[myIdx].curHP)
 			/ st.me.team[myIdx].maxHP;
+		const credited = foeDead && !theySwitch;
 		rows.push({
 			action: a,
-			score: (foeDead ? 100 : 0) - (mineDead ? 200 : 0) + theirLoss * 10 - myLoss * 8,
-			foeDead, mineDead, theirLoss, myLoss
+			score: (credited ? 100 : 0) - (mineDead ? 200 : 0)
+				+ theirLoss * (theySwitch ? 4 : 10) - myLoss * 8,
+			foeDead: credited, mineDead, theirLoss, myLoss,
+			unknownTarget: theySwitch
 		});
 	}
 	rows.sort((x, y) => y.score - x.score);
@@ -192,16 +226,28 @@ setInterval(() => {
 		if (awaiting) {
 			const res = readJSON(RESULT);
 			if (res && res.turn === awaiting.turn) {
-				const ourDmg = awaiting.foeHP - res.foe.hp;
-				const theirDmg = awaiting.myHP - res.me.hp;
+				// A different Pokemon is standing there now, so the HP
+				// difference is meaningless -- it compares two Pokemon. The
+				// first live turn logged our damage as MINUS SIX because
+				// Voltorb died and something with more HP replaced it. What we
+				// actually learn from a kill is a lower bound: at least the
+				// HP it had left.
+				const foeSwapped = res.foe.species !== awaiting.foeSpecies;
+				const meSwapped = res.me.species !== awaiting.meSpecies;
+				const ourDmg = foeSwapped ? awaiting.foeHP : awaiting.foeHP - res.foe.hp;
+				const theirDmg = meSwapped ? awaiting.myHP : awaiting.myHP - res.me.hp;
 				fs.appendFileSync(PRED, [awaiting.turn, awaiting.us, awaiting.them,
 					awaiting.ourAction, awaiting.theirAction,
-					awaiting.predOur, awaiting.predTheir, ourDmg, theirDmg,
+					awaiting.predOur, awaiting.predTheir,
+					(foeSwapped ? '>=' : '') + ourDmg,
+					(meSwapped ? '>=' : '') + theirDmg,
 					awaiting.rng, awaiting.draws.join(',')].join('\t') + '\n');
-				const ok = (d, p) => (d === p ? 'exact' : 'off by ' + (d - p));
+				const ok = (d, p, part) => part ? 'at least ' + d
+					: (d === p ? 'exact' : 'off by ' + (d - p));
 				console.log('  turn ' + awaiting.turn + ' resolved: our damage '
-					+ ourDmg + ' (' + ok(ourDmg, awaiting.predOur) + '), theirs '
-					+ theirDmg + ' (' + ok(theirDmg, awaiting.predTheir) + ')');
+					+ ourDmg + ' (' + ok(ourDmg, awaiting.predOur, foeSwapped)
+					+ '), theirs ' + theirDmg + ' ('
+					+ ok(theirDmg, awaiting.predTheir, meSwapped) + ')');
 				awaiting = null;
 			}
 		}
@@ -226,13 +272,16 @@ setInterval(() => {
 		+ them + ' (' + obs.foe.hp + ')');
 	console.log('  they have committed to: ' + theirAction);
 	console.log('  we play: ' + ourAction
-		+ '   expecting to deal ' + predOur + ' and take ' + predTheir);
+		+ (d.best.unknownTarget
+			? '   (they are switching, so this lands on whoever comes in)'
+			: '   expecting to deal ' + predOur + ' and take ' + predTheir));
 	d.all.slice(0, 4).forEach(r => console.log('     ' + String(r.score.toFixed(1)).padStart(7)
 		+ '  ' + (r.action.type === 'switch' ? 'switch ' + r.action.index : r.action.move)));
 
 	awaiting = {
 		turn: obs.turn, us, them, ourAction, theirAction, predOur, predTheir,
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
+		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
 		draws: draws(obs.rng, 8).map(v => (v >>> 16))
 	};
 

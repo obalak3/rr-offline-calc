@@ -50,11 +50,6 @@ local P_SIZE, P_STATUS, P_LEVEL, P_HP, P_MAX = 100, 0x50, 0x54, 0x56, 0x58
 
 local KEY_A, KEY_B = 1, 2
 
-if _RR_AGENT_ACTIVE then
-	console:error("agent: already running. Quit mGBA and reload.")
-	return
-end
-_RR_AGENT_ACTIVE = true
 pcall(function() os.execute("mkdir -p '" .. DIR .. "'") end)
 
 -- ------------------------------------------------------------------ reading
@@ -120,6 +115,7 @@ end
 
 local function writeState(kind)
 	turn = turn + 1
+	_RR_TURN = turn
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
@@ -155,6 +151,7 @@ local function readCommand()
 	end
 	local slot = tonumber(body:match('"slot"%s*:%s*(%d+)'))
 	if not act or not slot then return nil end
+	say("read command: " .. body:gsub("%s+$", ""))
 	return {action = act, slot = slot}
 end
 
@@ -296,7 +293,10 @@ local function tick()
 		end
 		if scr ~= "party" then phase, timer = "settle", 0; return end
 		if timer > 180 then
-			say("sw_confirm: stuck on the party screen; the slot may be empty or fainted")
+			say("sw_confirm: stuck on the party screen; backing out and re-asking")
+			emu:setKeys(KEY_B)
+			os.remove(DIR .. "state.json")
+			lastSig = ""
 			phase, timer = "wait", 0
 		end
 		return
@@ -316,19 +316,31 @@ local function tick()
 			end
 		end
 		if timer > 60 * 90 then
-			say("settle: nothing resolved in 90s; standing by")
-			emu:setKeys(0); phase, timer = "wait", 0
+			say("settle: nothing resolved in 90s; re-asking")
+			emu:setKeys(0)
+			os.remove(DIR .. "state.json")
+			lastSig = ""
+			phase, timer = "wait", 0
 		end
 		return
 	end
 end
 
+-- The turn counter lives in a global so it survives a hot reload; restarting
+-- the numbering mid-fight would make the planner's answers stop matching the
+-- questions they were answers to.
+_RR_TURN = _RR_TURN or 0
+turn = _RR_TURN
+
 -- LOAD THE FIGHT OURSELVES. James keeps save states parked at the exact
 -- decision point, so the agent should not need him to navigate to one: it
--- reads a filename out of load.txt at startup and loads it. That also makes
+-- reads a filename out of load.txt at startup and loads it. Only on a FIRST
+-- load, not on a hot reload -- otherwise every code change would restart the
+-- fight from the save. That also makes
 -- the loop restartable without a human -- lose a fight, reload, play it again
 -- -- which is what a calibration run needs to be able to do unattended.
-local ldf = io.open(DIR .. "load.txt", "r")
+local ldf = (not _RR_LOADED_ONCE) and io.open(DIR .. "load.txt", "r") or nil
+_RR_LOADED_ONCE = true
 if ldf then
 	local file = (ldf:read("*a") or ""):gsub("%s+$", "")
 	ldf:close()
@@ -341,6 +353,9 @@ if ldf then
 	end
 end
 
-callbacks:add("frame", tick)
-say("started. screen=" .. screen() .. "  waiting for a decision point")
-console:log("agent: talking to " .. DIR)
+say("implementation live. screen=" .. screen())
+
+-- Handed back to the bootstrap, which owns the only frame callback. Reloading
+-- this file swaps the logic without stacking another callback, which is the
+-- whole point: mGBA cannot remove a callback once added.
+return {tick = tick}
