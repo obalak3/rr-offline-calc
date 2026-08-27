@@ -333,6 +333,14 @@ function buildState(obs) {
 	outCount.foeKey = foeKey;
 	if (st.me.team[activeIndex]) st.me.team[activeIndex].turnsOut = outCount.me;
 	if (st.foe.team[st.foe.active]) st.foe.team[st.foe.active].turnsOut = outCount.foe;
+	// ENTRY, STATED EXPLICITLY. policy.js gates its use-it-or-lose-it entry move
+	// on `justEntered`, and nothing in the codebase ever SET it -- the flag was
+	// read in one place and written in none, so Fake Out was never once offered
+	// on a switch-in. outCount.me is 0 exactly on the first decision after the
+	// active changed, which is the turn the move works.
+	if (st.me.team[activeIndex] && outCount.me === 0) {
+		st.me.team[activeIndex].volatiles.justEntered = true;
+	}
 	// Carry the protect chain across the rebuild, so a second Detect is priced
 	// as the coin flip it really is instead of a free turn.
 	if (st.me.team[activeIndex] && protectRun.key === meKey && protectRun.chain > 0) {
@@ -678,8 +686,20 @@ if (process.argv[2] === '--probe') {
 	if (!obs) { console.log('no state.json'); process.exit(1); }
 	const st = buildState(obs);
 	if (!st) { console.log('buildState returned null'); process.exit(1); }
+	// TURNSOUT COMES FROM THE ARCHIVED TURN, not from a fresh rebuild. Without
+	// this the probe reported entry-only moves (Fake Out, First Impression) as
+	// legal on positions where the live agent had been out for several turns
+	// and they were not, which is enough to make the probe recommend a move the
+	// agent could never have played.
+	if (obs.turnsOut !== undefined && st.me.team[st.me.active]) {
+		st.me.team[st.me.active].turnsOut = obs.turnsOut;
+	}
+	if (obs.foeTurnsOut !== undefined && st.foe.team[st.foe.active]) {
+		st.foe.team[st.foe.active].turnsOut = obs.foeTurnsOut;
+	}
 	const act = st.me.team[st.me.active];
 	console.log('active index ' + st.me.active + ' = ' + act.set.species
+		+ '  turnsOut ' + act.turnsOut
 		+ '  hp ' + act.curHP + '/' + act.maxHP + '  fainted=' + act.fainted);
 	console.log('its moves: ' + JSON.stringify(act.set.moves) + '  pp ' + JSON.stringify(act.pp));
 	console.log('team: ' + st.me.team.map((m, i) =>
@@ -696,6 +716,47 @@ if (process.argv[2] === '--probe') {
 		+ '  (stale=' + d.src.stale + ')');
 	console.log('ranked: ' + JSON.stringify(d.all.map(r =>
 		(r.action.move || ('switch ' + r.action.index)) + '=' + r.score.toFixed(2))));
+
+	// WHY THE PLANNER SAID NOTHING. "no plan found" was the single most common
+	// line in the log on the hardest positions, and the log never said which of
+	// the several ways to produce it had happened.
+	const C = require('./lib/candidates.js');
+	const {pricePath} = require('./lib/paths.js');
+	const pctx = planCtx(obs);
+	const fi = st.foe.active;
+	const fld = {terrain: st.field.terrain, terrainTurns: st.field.terrainTurns};
+	let ideas = [];
+	try { ideas = C.candidatesFor(pctx, fi, {field: fld}); }
+	catch (e) { console.log('candidatesFor THREW: ' + e.message); }
+	console.log('\ncandidates generated: ' + ideas.length);
+	const hp = {}, dead = [], foeDead = [];
+	st.me.team.forEach(m => { hp[m.set.species] = m.curHP / m.maxHP; if (m.fainted) dead.push(m.set.species); });
+	st.foe.team.forEach((m, i) => { if (m.fainted) foeDead.push(i); });
+	const entry = {hp, dead, foeDead, field: fld,
+		active: st.me.team[st.me.active].set.species,
+		turnsOut: st.me.team[st.me.active].turnsOut};
+	const tally = {};
+	ideas.slice(0, 25).forEach(cand => {
+		if (!cand.jobs.length) { tally['empty jobs'] = (tally['empty jobs'] || 0) + 1; return; }
+		if (cand.jobs.every(j => dead.includes(j.mon))) { tally['all its mons dead'] = (tally['all its mons dead'] || 0) + 1; return; }
+		let r;
+		try { r = pricePath(pctx, fi, cand.jobs, entry, {expendable: pctx.expendable || []}); }
+		catch (e) { tally['pricePath threw: ' + e.message] = (tally['pricePath threw: ' + e.message] || 0) + 1; return; }
+		const k = r.kills ? 'KILLS'
+			: ('outcome=' + r.outcome + (r.outcome === 'stuck'
+				? (r.blockedEntries ? ' (entry blocked: switch-in would die)'
+					: ' (planAction returned nothing)') : ''));
+		tally[k] = (tally[k] || 0) + 1;
+	});
+	console.log('what the top 25 candidates do from HERE:');
+	Object.keys(tally).sort((a, b) => tally[b] - tally[a])
+		.forEach(k => console.log('   ' + String(tally[k]).padStart(3) + '  ' + k));
+	const R2 = require('./lib/replan.js');
+	let pick = null;
+	try { pick = R2.chooseAction(pctx, st, {}); } catch (e) { console.log('chooseAction THREW: ' + e.message); }
+	console.log('chooseAction -> ' + (pick
+		? JSON.stringify(pick.action) + '   ' + pick.path.cand.why
+		: 'NULL  (this is what prints "no plan found")'));
 	process.exit(0);
 }
 
@@ -740,7 +801,7 @@ function sourceStamp() {
 	}).join('|');
 }
 const STAMP_AT_START = sourceStamp();
-let staleAnnounced = false;
+let staleAnnounced = false, staleShown = false;
 function checkStale() {
 	if (sourceStamp() === STAMP_AT_START) return false;
 	if (!staleAnnounced) {
@@ -982,10 +1043,13 @@ setInterval(() => {
 
 	console.log('\nturn ' + obs.turn + '  ' + us + ' (' + obs.me.hp + ') vs '
 		+ them + ' (' + obs.foe.hp + ')');
-	if (checkStale()) {
-		console.log('  *** STALE: source files changed since this process started.'
-			+ ' It is STILL RUNNING THE OLD CODE. Restart the agent before'
-			+ ' believing anything below. Results are marked ' + VERSION + '-STALE.');
+	// ONCE per process, not every turn. Printing it on every decision turned a
+	// useful warning into a flood.
+	if (checkStale() && !staleShown) {
+		staleShown = true;
+		console.log('  *** STALE: source changed since this process started; it is'
+			+ ' running the OLD code. Restart the agent. Rows marked '
+			+ VERSION + '-STALE. (said once)');
 	}
 	console.log('  they will: ' + theirAction
 		+ '   [byte ' + byteSays + (d.src.stale ? ' STALE, ignored' : '')

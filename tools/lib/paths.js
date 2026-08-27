@@ -160,6 +160,15 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		scored.forEach(e => { if (e.score > bs) bs = e.score; });
 		const theirs = scored.filter(e => e.score === bs)[0].action;
 
+		// The same entry signal the live agent supplies, so a priced line and a
+		// played line agree about when an entry-only move is available. The
+		// engine keeps turnsOut at 0 for the whole of a Pokemon's first turn
+		// out and refuses the move afterwards, so this matches what will
+		// actually be legal.
+		{
+			const a = st.me.team[st.me.active];
+			if (a) a.volatiles.justEntered = (a.turnsOut || 0) === 0;
+		}
 		st.replacementChooser = chooser;
 		let mine = P.planAction(engine, st, plan, prog);
 		if (mine && mine.type === 'switch' && !survivesEntry(B, st, mine.index, theirs)) {
