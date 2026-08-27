@@ -99,6 +99,14 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 			if (i >= 0) st.me.team[i].status = en.status[name];
 		}
 	}
+	// THEIR DEAD STAY DEAD. Each leg is built from a fresh state, so their
+	// whole team came back to life every time -- and since the replacement is
+	// now simulated rather than assumed, the simulation happily handed back a
+	// Pokemon we had already killed. One branch reached round five "facing"
+	// Manectric-Mega with Manectric-Mega in its own kill list.
+	(en.foeDead || []).forEach(i => {
+		if (st.foe.team[i]) { st.foe.team[i].fainted = true; st.foe.team[i].curHP = 0; }
+	});
 	if (en.foeChip) {
 		st.foe.team[fi].curHP = Math.max(1, Math.round(st.foe.team[fi].maxHP * (1 - en.foeChip)));
 	}
@@ -170,8 +178,16 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 
 		let out;
 		try {
+			// OUR damage at the median, THEIRS at the high roll. Planning both
+			// at the median produces lines with no margin at all -- the
+			// order-aware plan ended legs with Pokemon on 5% and 6%, and any
+			// adverse roll killed them: 30 episodes, 1 win, six deaths a game.
+			// A plan should assume its own damage is typical and that the
+			// damage it takes is the worst of the band, which is the half of
+			// the honest-dice fix that was identified hours ago and never done.
 			out = B.step(st, mine, theirs, median
-				? {mode: 'maxroll', risks: {roll: 'median'}}
+				? {mode: 'maxroll', risks: {roll: 'median',
+					foeRoll: (options.pessimism === false) ? 'median' : 'max'}}
 				: {mode: 'odds', forkBudget: 3});
 		} catch (e) { outcome = 'error'; break; }
 		if (!out || !out.length) { outcome = 'error'; break; }

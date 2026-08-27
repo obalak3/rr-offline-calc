@@ -134,3 +134,51 @@ the search cannot currently express is the likely gap:
 
 The next question worth asking is which of those three, added alone, makes a
 line appear.
+
+## A STATIC PLAN CANNOT SURVIVE REAL DICE — three experiments
+
+Two real bugs were found and fixed in the combination search along the way:
+
+1. It walked their ROSTER order. Their replacement is chosen by matchup: 40/40
+   they send Pawmot second, where the roster says Vikavolt. `pricePath` now
+   keeps their real order and SIMULATES who arrives after a kill.
+2. Their dead came back to life. Each leg was priced from a fresh state, so the
+   replacement simulation handed back Pokemon we had already killed -- one
+   branch reached round five "facing" Manectric-Mega with Manectric-Mega in its
+   own kill list. Their fainted are now carried between legs.
+
+With both fixed, the search finds complete zero-loss combinations again. They
+still do not survive:
+
+    plan                                  real-dice result (30-40 episodes)
+    median rolls, roster order            won 0/30,  all six dead
+    median rolls, real order              won 1/30,  all six dead
+    pessimistic damage taken, real order  won 0/40,  all six dead
+
+Reading damage taken at the high roll -- the other half of the honest-dice fix
+-- did not help. Two opposite dice assumptions both produce plans that die, so
+the dice model is not what is wrong.
+
+**The trace says what is.** The Pawmot leg was priced with Lilligant arriving
+healthy. In play she arrives at 32%, because real dice moved the whole
+trajectory, and the plan executes anyway:
+
+    T6  Lanturn -> Lilligant      Pawmot Drain Punch   Lilligant enters at 32%
+    T7  Lilligant Baby-Doll Eyes  Pawmot Ice Punch     Lilligant DIES
+
+A fixed policy table has no way to notice the position has drifted from the one
+it was priced against. Every leg after the first is priced against a predicted
+state, and predictions decay.
+
+**This is what James said at the outset:** "you are giving plans right now but
+they will break, and you will need to recalibrate in a fight. Or you will need
+to expertly bring in a pokemon. Or you will need to recalculate a path to kill
+the pokemon." That is now a measured result rather than an intuition.
+
+### What follows
+
+The planner should not produce a script. It should re-price paths FROM THE
+CURRENT POSITION every turn, which is what `pricePath` already takes an entry
+state for. The combination search then answers "is there still a way through
+from here", not "here is the sequence". The live agent's per-turn loop is the
+right shape; it just has a greedy chooser where the path planner belongs.

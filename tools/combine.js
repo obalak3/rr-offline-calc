@@ -109,6 +109,7 @@ beam.forEach(n => { n.activeFoe = 0; n.killed = []; });
 
 for (let round = 0; round < foeSets.length; round++) {
 	const next = [];
+	const prevBeam = beam;
 	beam.forEach(node => {
 		if (node.killed.length >= foeSets.length) { next.push(node); return; }
 		const fi = node.activeFoe;
@@ -120,7 +121,7 @@ for (let round = 0; round < foeSets.length; round++) {
 			if (cand.jobs.every(j => node.dead.includes(j.mon))) continue;
 			const r = pricePath(ctx, fi, cand.jobs, {
 				hp: node.hp, dead: node.dead, active: node.active,
-				field: node.field, turn: node.turn
+				field: node.field, turn: node.turn, foeDead: node.killed
 			}, {expendable: EXPENDABLE});
 			if (!r.kills) continue;
 			const illegal = r.dead.filter(n => !EXPENDABLE.includes(n));
@@ -161,6 +162,17 @@ for (let round = 0; round < foeSets.length; round++) {
 			.filter((v, i, a) => a.indexOf(v) === i).join('/') : '') + ')');
 	if (!beam.length) {
 		console.log('\nNO FEASIBLE COMBINATION from the order they actually play.');
+		// Say WHY, from the positions that were actually reached. "Nothing
+		// found" without the state it failed from is not a diagnosis.
+		const lastAlive = prevBeam.slice(0, 3);
+		lastAlive.forEach((n, i) => {
+			console.log('\n  surviving branch #' + (i + 1) + ' faced '
+				+ (n.activeFoe >= 0 ? foeSets[n.activeFoe].species : '(nobody)')
+				+ ' on turn ' + n.turn + ' with:');
+			console.log('    ' + Object.keys(n.hp).map(k =>
+				k + ' ' + (n.dead.includes(k) ? 'DEAD' : pct(n.hp[k]))).join(', '));
+			console.log('    killed so far: ' + n.steps.map(x => x.foe).join(', '));
+		});
 		process.exit(1);
 	}
 	if (done === beam.length) break;
@@ -169,6 +181,16 @@ beam = beam.filter(n => n.killed.length >= foeSets.length);
 if (!beam.length) {
 	console.log('\nNO COMBINATION kills their whole team in the order they play it.');
 	process.exit(1);
+}
+
+// The chosen combination as a POLICY TABLE, so it can be replayed with real
+// dice. combine.js searches at the MEDIAN roll, which is the right reading for
+// "what normally happens" and the wrong one for "does this hold up".
+if (process.env.EMIT_PLAN && beam.length) {
+	const plan = {};
+	beam[0].steps.forEach(s => { plan[s.foe] = s.cand.jobs; });
+	require('fs').writeFileSync(process.env.EMIT_PLAN, JSON.stringify(plan, null, 1));
+	console.log('\nplan written to ' + process.env.EMIT_PLAN);
 }
 
 console.log('\n' + beam.length + ' complete combinations survive the cap.\n');
