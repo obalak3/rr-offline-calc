@@ -71,6 +71,33 @@ end
 pcall(function() os.execute("mkdir -p '" .. DIR .. "'") end)
 
 -- ------------------------------------------------------------------ reading
+-- THE MAP COMPLETES ITSELF FROM REAL PLAY. The screens in docs/SCREEN-MAP.md
+-- are the ones deliberately visited while mapping, and a real turn passes
+-- through more than that -- 0x08030611 turned up mid-settle and is nowhere in
+-- the map. Rather than keep patching one unnamed state at a time, every
+-- controller value that has no name is recorded once, with what was happening
+-- when it appeared. That turns the gap into a list instead of a surprise.
+-- Forward-declared: noteUnknown below is defined before the logger is, and
+-- called it as a global -- which is nil -- so every unrecognised screen threw.
+-- That was the silent killer of an overnight run: the bootstrap pauses the
+-- implementation on the first throw and its errors only reach the console.
+local say
+local seenUnknown = {}
+local function noteUnknown(c)
+	if seenUnknown[c] then return end
+	seenUnknown[c] = true
+	local f = io.open(DIR .. "unknown_screens.tsv", "a")
+	if f then
+		f:write(string.format("0x%08X\t%s\tus_hp=%d\tfoe_hp=%d\tid=%d\n",
+			c, phase or "?", emu:read16(MON + O_HP),
+			emu:read16(MON + SIZE + O_HP), emu:read8(SCREEN_ID)))
+		f:close()
+	end
+	if say then
+		say(string.format("NEW SCREEN 0x%08X seen during %s -- recorded", c, phase or "?"))
+	end
+end
+
 local function screen()
 	if emu:read32(MAIN_CB) ~= CB_BATTLE then return "nobattle" end
 	local c = emu:read32(CTRL_ME)
@@ -81,6 +108,18 @@ local function screen()
 		return emu:read8(SCREEN_ID) == 9 and "party_submenu" or "party"
 	end
 	if c == S_BUSY   then return "busy"   end
+	-- THE SECOND OPINION. The controller pointer is the primary map, but it
+	-- takes values that mapping never visited -- 0x08032C4D turned up with
+	-- SCREEN_ID reading 7, which is the move list, so the agent was staring at
+	-- a menu it could have named from a byte it was already reading. Falling
+	-- back to the secondary indicator turns an unknown screen into a known one
+	-- instead of a stall.
+	noteUnknown(c)
+	local id = emu:read8(SCREEN_ID)
+	if id == 1 then return "action" end
+	if id == 7 then return "moves"  end
+	if id == 8 then return "party"  end
+	if id == 9 then return "party_submenu" end
 	return string.format("unknown:0x%08X", c)
 end
 
@@ -141,7 +180,7 @@ local function persist()
 	_RR.unstick = unstick
 end
 local log = io.open(DIR .. "agent.log", "a")
-local function say(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
+say = function(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
 
 local function positionSignature()
 	return emu:read16(MON + O_SP) .. "/" .. emu:read16(MON + O_HP) .. "/"
@@ -195,7 +234,20 @@ local frame = 0
 local function tick()
 	local ok, err = pcall(tick_inner)
 	persist()
-	if not ok then error(err) end
+	if not ok then
+		-- NEVER RE-RAISE. The bootstrap pauses the implementation permanently
+		-- the first time a tick throws, and its errors only reach the console
+		-- -- so one bad frame silently ends an overnight run with no trace in
+		-- any log file. Record it and carry on: a single broken frame is not a
+		-- reason to stop playing.
+		local f = io.open(DIR .. "errors.log", "a")
+		if f then f:write(os.date() .. "  " .. tostring(err) .. "\n"); f:close() end
+		if not _RR.lastErr or _RR.lastErr ~= tostring(err) then
+			_RR.lastErr = tostring(err)
+			say("tick error (recorded, continuing): " .. tostring(err))
+		end
+		emu:setKeys(0)
+	end
 end
 
 function tick_inner()
@@ -332,94 +384,102 @@ function tick_inner()
 	-- somewhere unexpected stops the agent instead of compounding.
 	timer = timer + 1
 
+	-- PRESS UNTIL THE SCREEN CHANGES, rather than pressing once and hoping.
+	-- Each of these steps used to fire a single A and move on, so a press that
+	-- did not register left the agent parked in a half-open menu with nothing
+	-- to retry it -- the live run sat in the move list for five thousand frames
+	-- doing exactly that. The screen itself is the acknowledgement: keep
+	-- pressing while it has not changed, and advance the moment it has.
 	if phase == "mv_open" then
-		-- Already in the move list is not a failure, it is a shortcut. The
-		-- first live run tripped here because James still had the controls and
-		-- had opened FIGHT himself between the ask and the answer: the agent
-		-- refused to press into a screen it did not expect, which is right,
-		-- and then gave up, which is not. Being further along than expected is
-		-- the one surprise that needs no recovery.
 		if scr == "moves" then phase, timer = "mv_pick", 0; return end
 		if scr ~= "action" then
-			if timer > 240 then
+			if timer > 300 then
 				say("mv_open: expected the action menu, saw " .. scr .. "; re-asking")
-				os.remove(DIR .. "state.json")
-				lastSig = ""
-				phase = "wait"
+				os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
 			end
 			return
 		end
 		emu:write8(ACTION_CURSOR, 0)                       -- FIGHT
-		emu:setKeys(timer <= 6 and KEY_A or 0)
-		if timer > 60 then phase, timer = "mv_pick", 0 end
+		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
+		if timer > 600 then
+			say("mv_open: FIGHT never opened the move list; re-asking")
+			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
+		end
 		return
 	end
 
 	if phase == "mv_pick" then
 		if scr ~= "moves" then
-			if timer > 180 then
-				attempts = attempts + 1
-				say("mv_pick: the move list did not open (saw " .. scr .. "), retrying")
-				phase, timer = (attempts < 3) and "mv_open" or "wait", 0
-			end
+			-- The move list closed, which means the move was taken.
+			if timer > 4 then phase, timer = "settle", 0; return end
 			return
 		end
 		emu:write8(MOVE_CURSOR, want.slot)
-		emu:setKeys(timer <= 6 and KEY_A or 0)
-		if timer > 60 then phase, timer = "settle", 0 end
+		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
+		if timer % 300 == 0 then
+			say("mv_pick: still in the move list at slot " .. want.slot
+				.. " after " .. timer .. " frames, cursor reads "
+				.. emu:read8(MOVE_CURSOR))
+		end
+		if timer > 900 then
+			say("mv_pick: the move would not commit; re-asking")
+			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
+		end
 		return
 	end
 
 	if phase == "sw_open" then
-		if scr ~= "action" and scr ~= "party" then
-			if timer > 240 then
+		if scr == "party" or scr == "party_submenu" then
+			phase, timer = "sw_pick", 0; return
+		end
+		if scr ~= "action" then
+			if timer > 300 then
 				say("sw_open: expected a menu, saw " .. scr .. "; re-asking")
 				os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
 			end
 			return
 		end
-		if scr == "party" then phase, timer = "sw_pick", 0; return end
 		emu:write8(ACTION_CURSOR, 2)                       -- POKEMON
-		emu:setKeys(timer <= 6 and KEY_A or 0)
-		if timer > 90 then phase, timer = "sw_pick", 0 end
+		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
+		if timer > 600 then
+			say("sw_open: POKEMON never opened the party screen; re-asking")
+			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
+		end
 		return
 	end
 
 	if phase == "sw_pick" then
-		if scr ~= "party" then
-			if timer > 240 then
-				attempts = attempts + 1
-				say("sw_pick: the party screen did not open (saw " .. scr .. "), retrying")
-				phase, timer = (attempts < 3) and "sw_open" or "wait", 0
-			end
-			return
-		end
 		-- 7 is the Cancel button, not a Pokemon. Writing the slot directly
 		-- avoids the 2x3 grid entirely; a DOWN-only walk cannot reach the
 		-- right-hand column at all, which is why earlier attempts kept
 		-- re-selecting the same Pokemon.
+		if scr == "party_submenu" then phase, timer = "sw_confirm", 0; return end
+		if scr ~= "party" then
+			if timer > 4 then phase, timer = "settle", 0; return end
+			return
+		end
 		emu:write8(PARTY_IDX, want.slot)
-		emu:setKeys(timer <= 6 and KEY_A or 0)
-		if timer > 90 then phase, timer = "sw_confirm", 0 end
+		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
+		if timer > 900 then
+			say("sw_pick: slot " .. want.slot .. " would not select; re-asking")
+			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
+		end
 		return
 	end
 
 	if phase == "sw_confirm" then
 		-- On a voluntary switch a submenu opens -- Shift / Summary / Cancel,
-		-- cursor already on Shift, so one A does it. On a FORCED switch, after
-		-- one of ours has fainted, there is no submenu at all.
-		if scr == "party_submenu" then
-			emu:setKeys(timer <= 6 and KEY_A or 0)
-			if timer > 40 then phase, timer = "settle", 0 end
+		-- cursor already on Shift, so A takes it. A FORCED switch, after one of
+		-- ours has fainted, has no submenu at all and never reaches here.
+		if scr ~= "party_submenu" then
+			if timer > 4 then phase, timer = "settle", 0; return end
 			return
 		end
-		if scr ~= "party" then phase, timer = "settle", 0; return end
-		if timer > 180 then
-			say("sw_confirm: stuck on the party screen; backing out and re-asking")
+		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
+		if timer > 600 then
+			say("sw_confirm: the submenu would not take Shift; re-asking")
 			emu:setKeys(KEY_B)
-			os.remove(DIR .. "state.json")
-			lastSig = ""
-			phase, timer = "wait", 0
+			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
 		end
 		return
 	end
@@ -430,8 +490,29 @@ function tick_inner()
 		-- agent kept re-opening the move list it had just come back from, never
 		-- saw the action menu again, and declared that nothing had resolved
 		-- after ninety seconds. It was undoing its own turn.
-		local advancing = (scr == "busy") and (timer % 40 < 4)
-		emu:setKeys(advancing and KEY_A or 0)
+		-- Advance whenever the game is NOT showing a menu we own. Restricting
+		-- this to the single known "busy" value was too narrow: a resolving
+		-- turn passes through controller states the map does not name, so the
+		-- text never got advanced and the turn never finished -- the agent sat
+		-- re-asking the same position forever. Anything that is not one of our
+		-- menus is either a message or an animation, and A is right for both.
+		-- Being inside a battle is already guaranteed; "nobattle" is handled
+		-- well before here and presses nothing.
+		if scr == "nobattle" then
+			-- The fight ended while we were settling. Stop pressing IMMEDIATELY:
+			-- settle was mashing A for five thousand frames at an overworld it
+			-- knows nothing about, which is how an agent starts a conversation
+			-- with an NPC by accident.
+			emu:setKeys(0)
+			phase, timer = "wait", 0
+			return
+		end
+		local ourMenu = (scr == "action") or (scr == "moves")
+			or (scr == "party") or (scr == "party_submenu")
+		emu:setKeys((not ourMenu) and (timer % 30 < 4) and KEY_A or 0)
+		if timer % 300 == 0 then
+			say("settle: " .. scr .. " after " .. timer .. " frames")
+		end
 		if scr == "action" or scr == "party" then
 			if positionSignature() ~= lastSig then
 				local f = io.open(DIR .. "result.json", "w")
