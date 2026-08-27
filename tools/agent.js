@@ -71,6 +71,43 @@ function statusOf(word) {
 
 const STAT_ORDER = ['hp', 'atk', 'def', 'spe', 'spa', 'spd', 'acc', 'eva'];
 
+/**
+ * Recover a move whose NAME is not enough, from the trainer database.
+ *
+ * "Hidden Power" is one move ID whose type comes from hidden IVs, so a set
+ * rebuilt out of RAM says only "Hidden Power" and the calculator prices it as
+ * the default type. Measured cost: Bellibolt's Hidden Power did 48 against a
+ * predicted band of 20-24 -- exactly 2.00x, super effective -- and 13 on
+ * another turn, about half, resisted. Both are simply the wrong type.
+ *
+ * The trainer data already knows: it lists Hidden Power Grass for Bellibolt and
+ * Hidden Power Ice for Pincurchin. The offline planner reads that file and has
+ * always been correct here; only the live reconstruction lost it. So when a
+ * species and level match exactly one trainer set, its move names are used to
+ * resolve the ambiguous ones.
+ */
+const trainerSetCache = {};
+function trainerSetFor(species, level) {
+	const key = species + '|' + level;
+	if (trainerSetCache[key] !== undefined) return trainerSetCache[key];
+	let found = null, count = 0;
+	try {
+		for (const seg of engine.TRAINERS.segments) {
+			for (const b of (seg.battles || [])) {
+				for (const m of (b.team || [])) {
+					if (m.species !== species) continue;
+					if (m.level && m.level.type === 'fixed' && m.level.value !== level) continue;
+					count++;
+					if (!found) found = m;
+				}
+			}
+		}
+	} catch (e) { /* fall through to null */ }
+	trainerSetCache[key] = (count === 1 || (found && count > 1
+		&& /Hidden Power/.test((found.moves || []).join(' ')))) ? found : null;
+	return trainerSetCache[key];
+}
+
 function setFromBattler(b, known) {
 	const name = speciesName(b.species);
 	if (!name) return null;
@@ -85,7 +122,15 @@ function setFromBattler(b, known) {
 		evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0},
 		ivs: {hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31}
 	};
-	const out = Object.assign({}, base, {moves: moves.length ? moves : base.moves});
+	let resolved = moves;
+	if (!known && moves.some(m => m === 'Hidden Power')) {
+		const t = trainerSetFor(name, b.level);
+		if (t && t.moves) {
+			resolved = moves.map(m => m !== 'Hidden Power' ? m
+				: (t.moves.find(x => /^Hidden Power/.test(x)) || m));
+		}
+	}
+	const out = Object.assign({}, base, {moves: resolved.length ? resolved : base.moves});
 	if (b.stats && b.stats.length === 5) {
 		out.rawStats = {atk: b.stats[0], def: b.stats[1], spe: b.stats[2],
 			spa: b.stats[3], spd: b.stats[4]};
