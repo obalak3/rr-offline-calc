@@ -305,3 +305,212 @@ What this changes:
 Also measured: the decision byte read 45 frames after commit is EXACT (21/21).
 At 100 frames it is 19/21, because the value moves on to the next decision.
 Forty-five frames is the window.
+
+## 2026-08-27 -- switching, finally measured end to end
+
+Switches landed on the intended Pokemon **17 / 17** (previously 3 / 126, then
+0 / 23). Three separate bugs, each of which alone was enough to break it:
+
+1. **The party screen is a two-column grid and DOWN only walks one column.**
+   Logged live, the cursor byte cycled `0 -> 2 -> 4 -> 7 -> 0`: the left column
+   and then Cancel. Every odd slot -- the whole right column -- was unreachable,
+   so a switch to one of them could never happen however long it pressed.
+2. **Screen ids were being used to decide the switch had committed.** Id 9 was
+   read as the submenu when it is the list, so the agent confirmed on whoever
+   was highlighted, which is the active, and the game answered "already in
+   battle". The flow no longer consults screen ids at all; the active Pokemon
+   changing is the only evidence accepted.
+3. **The party is renumbered mid-fight.** A Pokemon coming in is swapped toward
+   slot 0, seen directly as the 98 and the 102 trading RAM slots between two
+   consecutive reads. An index computed by the planner could therefore name
+   somebody else by the time A was pressed.
+
+**Display position equals the RAM slot.** Measured by logging the six max HP
+values in the *same tick* as the screenshot, each being a unique fingerprint:
+screen showed 112, 139, 98, 102, 95, 108 down the two columns and RAM held
+`0:112 1:139 2:98 3:102 4:95 5:108`. Identity, nothing swapped.
+
+Four different mappings were derived before this, each by holding a screenshot
+next to a RAM read taken moments apart, and they contradicted each other
+because the thing being measured moves between those moments. **Two
+observations of a changing system have to come from the same instant to be
+compared at all.** That is the transferable lesson here, not the mapping.
+
+The fix that makes it robust rather than merely correct: the command now
+carries the target's **max HP and level as a fingerprint**, and the actuator
+resolves it against live gPlayerParty at the moment of the press instead of
+trusting the index. Staleness is now visible in the log rather than silent
+("slot 3 is stale, 102 max HP is really in slot 0").
+
+Open, and now the largest gap: **39% of decisions get no plan at all**
+(54 PLAN vs 35 "no plan found" over 400 logged decisions) and fall back to
+one-turn scoring, which is the greedy behaviour the planner was built to
+replace.
+
+## 2026-08-27 -- the target was met once, and why the agent kept switching
+
+**WIN over Surge (ss5) losing nobody but Lilligant**, recorded live:
+`61/98 112/112 15/139 0/102 95/95 6/108` against their side wiped. One of
+three wins so far; the other two cost three and two Pokemon. So the cap is
+reachable by this agent, not yet reliably.
+
+Outcomes are now recorded at all (`~/rr-agent/results.tsv`). 239 fights had
+been played without recording a single result, so "is it any good" had no
+answer and changes were judged on whether individual clicks looked sensible.
+
+**The switching was a missing tempo cost, diagnosed by James.** 69 of 120
+decisions were switches, one run 41 deep. Followed offline, the planner
+ping-ponged Lanturn and Lilligant for twelve consecutive turns while Pincurchin
+stood untouched at 95 HP. The engine was fine -- a switch does take the hit on
+the ARRIVING Pokemon, measured at 69 damage to Lanturn -- but the planner's
+only currency was HP, and **Lanturn has Volt Absorb, so switching it into an
+Electric move costs zero HP and was therefore free**. Nothing charged for the
+turn itself.
+
+Pricing a turn fixes it, and the value was swept by playing the whole fight out
+at each setting rather than chosen by taste:
+
+| tempo | result | casualties |
+|-------|--------|------------|
+| 0     | WIPED, 3 of theirs still standing | all six |
+| 0.12  | won | Diggersby, Breloom |
+| 0.25  | won | Diggersby, Breloom |
+| 0.4   | won | Lanturn, Lilligant |
+| 0.9   | won | Lanturn, Lilligant |
+| 1.3   | WIPED | all six |
+
+0.4 is now the default: one forbidden death instead of two. Judged against the
+cap, not against the score.
+
+**Pivoting is no longer treated as failure.** Requiring every line to end in a
+kill discarded 39 of Vikavolt's 48 lines, because its set is Volt Switch / Bug
+Buzz / Roost / Mud Shot and it leaves on its own. The planner reported no plan
+and fell through to greedy scoring on one of the two hardest members of the
+team. Vikavolt has gone from 8 no-plan / 0 plan to 0 / 2 in live play.
+
+**Open, and now the whole of the no-plan problem: Pawmot.** Every remaining
+"no plan found" is a Pawmot position (7+6+6+5+3 across five of ours). The
+killing lines against it want Lilligant's Baby-Doll Eyes or Sleep Powder, and
+Lilligant is the Pokemon the cap allows us to spend -- so by the time Pawmot is
+out, the answer to it is often already dead. Lines that do not need Lilligant
+exist but kill Mienshao. This is an ordering problem across the whole fight,
+which is what the lookahead is for.
+
+## 2026-08-27 -- Fake Out could not work in the simulation at all
+
+James: "Forcing fake out never makes you lose. YOU did something wrong." He was
+right twice over.
+
+**My rule was broken.** It keyed the entry turn off `turnsOut === 0`, but
+`B.createState` sets `turnsOut` to 0 for EVERY member, so in any state we build
+-- live or inside the planner -- the active reads as having just arrived and the
+rule fired on every single turn. That is what turned a won sweep into a wipe.
+
+**And the engine was wrong underneath it.** `turnsOut` was incremented at the
+end of every turn INCLUDING the one a Pokemon switched in on. Switch Mienshao in
+on turn N, end of turn N takes it to 1, and its first action on turn N+1 is
+refused as "not on the way in". Since Fake Out works on the first turn AFTER the
+user enters, **the switch-in Fake Out -- the entire point of the move -- was
+impossible to simulate**. The planner had been correctly refusing a move it had
+been told does nothing, which is why it opened with Rock Tomb 14 times out of 16.
+
+Fixed by not counting the arrival turn (`enteredThisTurn`). Verified three ways:
+a pivoting Mienshao now flinches on its first action, the turn after correctly
+fails, and a LEAD still flinches on turn 1 (no regression).
+
+Effect on the whole fight, at the measured settings (depth 5):
+
+| | before | after |
+|---|---|---|
+| tempo 0.4 casualties | Lanturn, Lilligant | **Lanturn only** |
+| turns | 60 | 42 |
+| turns with no plan | 32 | 14 |
+
+Forcing the move is now indistinguishable from letting the search choose it, so
+the override stays off (ENTRY_MOVE=1 to re-measure).
+
+**The lesson is the one James applied**: a result that is impossible on domain
+grounds -- "forcing a free flinch cannot lose you the game" -- is evidence of a
+bug in the measurement, not a surprising discovery about the game. I had taken
+the sweep at face value and written the finding up as real.
+
+Still open: Lanturn dies, which the cap forbids; and the live predictor answers
+"they will: none" against Pawmot while the same call offline returns Thunder
+Punch, so plans there are built against an opponent that does nothing.
+
+## 2026-08-27 (later) -- what the live log says, and two method failures
+
+**Predictor tie-break.** Our AI port scores by category, not magnitude: a move
+that KOs gets a flat +9 and how far past lethal it goes never enters the score.
+Against a Victreebel that both moves kill, Thunder Punch (39 damage) and Ice
+Punch (80) both scored 109 and we answered the weaker one, every time, while the
+game used Ice Punch. Ties now break on damage. Accuracy on Pawmot since turn
+2600: 31% -> 47%.
+
+**Planned turns were predicting nothing at all.** The planner branch built its
+decision with `all: []` and `theirs: null`, so on every planned turn the log read
+"they will: none" and "expecting to deal 0 and take 0". The plan was being
+computed against an opponent that does nothing, which is how Lilligant walked
+into Mach Punch: probing that exact position, the one-turn scoring ranked every
+move at -61.39 because Lilligant dies and switching at -2.45. It knew. Nobody
+asked it.
+
+**Plan shapes, measured on 200 live plans**: 194 two-leg, 6 solo duels. Every
+family in candidates.js ends with one designated Pokemon duelling the foe to
+death. James: "there is almost never a killing line. There is a multiple moves
+doing chip damage which ends up killing line." The generator cannot express that.
+This is the outstanding piece of work.
+
+### Two method failures worth keeping
+
+1. **I took an impossible result at face value.** Forcing Fake Out turned a won
+   sweep into a total wipe and I wrote that up as a finding. James: "Forcing fake
+   out never makes you lose. YOU did something wrong." He was right -- the rule
+   keyed off `turnsOut === 0`, which `B.createState` sets for EVERY member, so it
+   fired on every turn. A result that is impossible on domain grounds is evidence
+   the measurement is broken.
+
+2. **I substituted a convenient reproduction for the reported observation.**
+   James said twice that Victreebel was healthy (108 HP) at the start of the
+   Pawmot encounter. I kept analysing it at 29 HP because that was the position I
+   had already reproduced, and drew conclusions from it. When the probe was
+   finally run at 97/108 it ranked Leaf Storm 5.46 above every switch and
+   predicted Ice Punch correctly -- the opposite of what I had been claiming.
+
+## 2026-08-27 (evening) -- the record was counting one trajectory seven times, and Bellibolt's EVs were wrong
+
+**The "Mienshao + Lilligant in 7 of 11" distribution is mostly one repeated
+trajectory.** Seven consecutive results.tsv rows (1787858051..1787860347, ~250s
+apart) end with the byte-identical HP vector `0/98 112/112 82/139 0/102 95/95
+62/108`: the reload loop replaying a near-deterministic fight. The conclusion
+survives -- the modal trajectory kills Mienshao -- but it is ~5 distinct
+outcomes, not 11 samples, and rows from different code versions were
+indistinguishable. Fixed: agent.js writes the git hash to version.txt at
+startup and the Lua appends it as an 8th column on every result row. Given the
+determinism, 2-3 replays per change is enough; the loop was stopped until the
+chip-plan work lands.
+
+**The newest, worst row (1787863024, only Mienshao alive at 26/98) is not
+attributable.** Turns 2796-2843 of that fight are missing from the archive and
+there is a 34-minute silence before it (15:52 to 16:26), consistent with a
+stall or manual play rather than a visible crit fork. Ask James whether he
+touched the emulator around 16:00 rather than digging further.
+
+**Bellibolt: the sheet's 100 HP EVs are wrong; the game uses zero.** Computed
+max HP was 133 against a RAM ground truth of 125, and the 8 HP gap is exactly
+what 100 HP EVs contribute at L33. With zero EVs the ENTIRE stat line
+reproduces: HP 125 and [atk,def,spe,spa,spd] = [51,82,44,82,70] (turn02851,
+GBA stat order). All five Surge opponents now compute RAM-exact. Fixed as a
+RAM-verified corrections table consulted by `foeSets` in harness.js, keyed by
+trainer label + species so a regenerated data file keeps the fix.
+
+The handoff's companion claim "Pincurchin 99/95" did not reproduce: Pincurchin
+computes 95, which IS the RAM value; the 99 is Pawmot's max HP. One mon was
+wrong, not two.
+
+**Likely collateral resolution**: Lanturn's Scald landing 2-12% above its own
+band maximum, one of the two unexplained band misses above. If the foe's HP
+bar was converted to hit points using max 133 instead of 125, every observed
+damage against Bellibolt is inflated by 133/125 = 6.4%, pushing true max rolls
+past the predicted band. Plausible and cheap to check on the next live fight;
+not yet verified.

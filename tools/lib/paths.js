@@ -114,6 +114,21 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		const i = typeof en.active === 'number' ? en.active : idxOf(en.active);
 		if (i >= 0 && !st.me.team[i].fainted) st.me.active = i;
 	}
+	// AND HOW LONG THEY HAVE BEEN OUT. pricePath builds a fresh state, and a
+	// fresh state has turnsOut 0 for everyone, so the Pokemon on the field
+	// always looked like it had just arrived -- which made Fake Out legal on
+	// every turn of every priced line. The agent then played it four times in a
+	// row, each time expecting a flinch, which James watched it do. The entry
+	// descriptor has to carry this or the simulation is answering a different
+	// question than the one being asked.
+	if (en.turnsOut !== undefined) {
+		const a = st.me.team[st.me.active];
+		if (a) a.turnsOut = en.turnsOut;
+	}
+	if (en.foeTurnsOut !== undefined) {
+		const f = st.foe.team[st.foe.active];
+		if (f) f.turnsOut = en.foeTurnsOut;
+	}
 	// Whoever is out has already been out; entry abilities do not re-fire.
 	const startHP = {};
 	st.me.team.forEach(m => { startHP[m.set.species] = m.curHP; });

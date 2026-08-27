@@ -557,18 +557,35 @@ function label(battle) {
 	return (battle.title ? battle.title + ' ' : '') + battle.trainer;
 }
 
+/**
+ * RAM-verified corrections to the community sheet, applied by foeSets so every
+ * consumer (live agent, planner, benchmarks) sees the same team. Keyed by
+ * trainer label + species so a regenerated data file keeps the fix.
+ *
+ * LT. SURGE Bellibolt: the sheet says 100 HP EVs, which computes max HP 133.
+ * The game's RAM says 125, and zero EVs reproduces the entire stat line
+ * exactly -- HP 125 and [atk,def,spe,spa,spd] = [51,82,44,82,70] (turn02851,
+ * 2026-08-27). Every damage number against Bellibolt was ~6% low on HP.
+ */
+const STAT_CORRECTIONS = {
+	'GYM LEADER LT. SURGE|Bellibolt':
+		{evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}}
+};
+
 /** A trainer's team in the shape RRBattle.createState wants. */
 function foeSets(battle) {
 	const base = battle.__relativeBase || 0;
+	const who = label(battle);
 	return battle.team.map(function (m) {
 		// A relative level is an offset from the player's; resolve it against
 		// whatever base the caller assumed.
 		const level = m.level.type === 'fixed'
 			? m.level.value
 			: Math.max(5, base + (m.level.offset || 0));
+		const fix = STAT_CORRECTIONS[who + '|' + m.species] || {};
 		return {species: m.species, level: level, nature: m.nature,
 			ability: m.ability, item: m.item || '', moves: m.moves.slice(0, 4),
-			evs: m.evs, ivs: m.ivs};
+			evs: fix.evs || m.evs, ivs: fix.ivs || m.ivs};
 	});
 }
 

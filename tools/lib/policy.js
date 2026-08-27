@@ -94,6 +94,54 @@ function planAction(engine, state, plan, progress) {
 		return sw || null;
 	}
 
+	// AN ENTRY-ONLY MOVE IS USE-IT-OR-LOSE-IT. Fake Out is legal only on the
+	// turn its user arrives, so PP held back is PP thrown away, and it denies
+	// the opponent a whole turn -- the same currency the tempo cost charges us
+	// for. Measured over the live archive, Mienshao acted on 16 entry turns and
+	// played Rock Tomb 14 times and Fake Out once, because the candidate
+	// generator writes jobs like "Mienshao(Rock Tomb)" and never proposes it.
+	//
+	// Written against the EFFECT, not against Mienshao: any Pokemon holding a
+	// priority flinching move that only works on entry gets the same opening.
+	// It yields to an actual kill, since removing the Pokemon beats delaying
+	// it, and it is skipped when the target cannot be hit or cannot flinch.
+	const mine = state.me.team[state.me.active];
+	// TURNSOUT CANNOT DETECT ENTRY, which is what made the first attempt at
+	// this lose every sweep. B.createState sets turnsOut to 0 for EVERY member,
+	// so in any state we build -- live or inside the planner -- the active
+	// reads as having just arrived, and the rule fired on every single turn.
+	// In the real game Fake Out then answers "But it failed!" and the turn is
+	// gone. Worse, a Pokemon that genuinely switches in reads turnsOut 1, so
+	// the flag is backwards exactly when it matters.
+	//
+	// Entry is therefore tracked explicitly by whoever owns the sequence: the
+	// live agent compares the active against last turn, and pricePath marks the
+	// Pokemon it just brought in. The engine does not enforce the restriction
+	// either, so this is also what keeps us from planning an illegal move.
+	const justIn = mine && mine.volatiles && mine.volatiles.justEntered;
+	if (justIn) {
+		const entryMove = legal.find(a => a.type === 'move' && ENTRY_ONLY[a.move]);
+		if (entryMove) {
+			const foeNow = state.foe.team[state.foe.active];
+			let usable = false, killsNow = false;
+			try {
+				const r = B.damageRolls(state, 'me', entryMove.move);
+				usable = !!(r && !r.immune);
+				const kill = bestDamage(engine, state, legal);
+				if (kill) {
+					const kr = B.damageRolls(state, 'me', kill.move);
+					if (kr && !kr.immune) {
+						const band = kr.noCrit;
+						killsNow = band[Math.floor(band.length / 2)] * (kr.hits || 1)
+							>= foeNow.curHP;
+					}
+				}
+			} catch (e) { usable = false; }
+			const canFlinch = !/Inner Focus|Shield Dust/i.test(foeNow.set.ability || '');
+			if (usable && canFlinch && !killsNow) return entryMove;
+		}
+	}
+
 	const key = foeSpecies + '/' + ji;
 	const step = progress.step[key] || 0;
 	if (!job.moves || !job.moves.length) {
@@ -178,6 +226,9 @@ function jobDone(state, job, progress, foeSpecies, ji) {
  * slower, since a kill we do not live to land is not a kill; otherwise take the
  * damage. Reads at the median, like everything else in a plan.
  */
+// Moves that are legal only on the turn their user arrives.
+const ENTRY_ONLY = {'Fake Out': true, 'First Impression': true};
+
 function bestDamage(engine, state, legal) {
 	const B = engine.B;
 	const foe = state.foe.team[state.foe.active];

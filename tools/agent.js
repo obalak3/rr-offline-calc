@@ -229,7 +229,26 @@ function buildState(obs) {
 	// Anything unmatched keeps a slot so the indices still line up with the game.
 	const leftovers = roster.filter(Boolean);
 	const mySets = ordered.map(x => x || leftovers.shift() || party[0]);
-	const activeIndex = Math.max(0, mySets.findIndex(p => p.species === mineName));
+	// WHO IS OUT, FIXED BY FINGERPRINT INSIDE ONE SNAPSHOT. This was a species
+	// name lookup, and when it missed -- a mega arrives under its base name,
+	// and Math.max(0, -1) quietly answers 0 -- the model believed the active
+	// was whoever sat in slot 0. The planner then proposed switching to the
+	// Pokemon already on the field, which the game simply refuses, and the
+	// agent burned the turn on a party screen it could not leave.
+	//
+	// Level and max HP identify a party member unambiguously, and reading them
+	// from the SAME observation that reported the active means the two cannot
+	// disagree about a party order that moves during a fight -- the active is
+	// swapped into slot 0 when it comes in, seen live as the 98 and the 102
+	// trading places between two consecutive reads.
+	let activeIndex = (obs.party || []).findIndex(r =>
+		r.maxhp === obs.me.maxhp && r.hp === obs.me.hp && r.level === obs.me.level);
+	if (activeIndex < 0) {
+		activeIndex = (obs.party || []).findIndex(r => r.maxhp === obs.me.maxhp);
+	}
+	if (activeIndex < 0) {
+		activeIndex = Math.max(0, mySets.findIndex(p => p.species === mineName));
+	}
 	if (mySets[activeIndex]) mySets[activeIndex] = setFromBattler(obs.me, mySets[activeIndex]);
 	// THEIR REAL BENCH, read from gEnemyParty at 0x0202402C.
 	//
@@ -283,6 +302,25 @@ function buildState(obs) {
 		m.status = statusOf(row.status);
 	});
 	st.me.active = activeIndex;
+
+	// HOW LONG EACH SIDE HAS BEEN OUT, which nothing was telling the engine.
+	// B.createState sets turnsOut to 0 for every member, and the live agent
+	// rebuilds the state from scratch every turn, so the active always looked
+	// like it had JUST ARRIVED. The engine gates Fake Out on turnsOut > 0, so
+	// the move never failed and the agent spammed it -- James watched it happen.
+	//
+	// There is no RAM field for this, but it does not need one: the active
+	// changing is the entry, so counting decisions since it last changed is
+	// exact. Zero means "first action after coming in", which is when Fake Out
+	// works and after which it must fail.
+	const meKey = obs.me.maxhp + ':' + obs.me.species;
+	outCount.me = (meKey === outCount.meKey) ? outCount.me + 1 : 0;
+	outCount.meKey = meKey;
+	const foeKey = obs.foe.maxhp + ':' + obs.foe.species;
+	outCount.foe = (foeKey === outCount.foeKey) ? outCount.foe + 1 : 0;
+	outCount.foeKey = foeKey;
+	if (st.me.team[activeIndex]) st.me.team[activeIndex].turnsOut = outCount.me;
+	if (st.foe.team[st.foe.active]) st.foe.team[st.foe.active].turnsOut = outCount.foe;
 
 	// Apply everything observed, so the simulation starts from the real
 	// position rather than a fresh one.
@@ -350,10 +388,43 @@ function modelAction(st) {
 		// costing eight usable roll observations, and a fictional switch is
 		// also a prediction that can never be right.
 		const moves = scored.filter(e => e.action.type === 'move');
-		if (!moves.length) return null;
+		if (!moves.length) {
+			// WHY there is no prediction, not just that there is none. Against
+			// Pawmot the live agent reports "they will: none" and then plans
+			// while expecting to take 0, which is how Lilligant walks into Mach
+			// Punch and Mienshao is fed in behind it -- while the same call
+			// offline answers Thunder Punch. Silence here is what let that run
+			// for hundreds of turns.
+			const foe = st.foe.team[st.foe.active];
+			console.log('  [no prediction for ' + (foe && foe.set.species)
+				+ ': ' + scored.length + ' actions scored, types '
+				+ JSON.stringify(scored.map(e => e.action.type))
+				+ ', its moves ' + JSON.stringify(foe && foe.set.moves)
+				+ ', pp ' + JSON.stringify(foe && foe.pp) + ']');
+			return null;
+		}
 		let best = -Infinity;
 		moves.forEach(e => { if (e.score > best) best = e.score; });
-		return moves.filter(e => e.score === best)[0].action;
+		// TIES BREAK ON DAMAGE. Our scores are coarser than the real AI's, so
+		// several moves land on the same number and the first in move order was
+		// taken. Against a Victreebel at 29 HP, Thunder Punch and Ice Punch
+		// both score 109 because both KO, and we answered Thunder Punch every
+		// time while the game used Ice Punch -- the move that does 80 rather
+		// than 39 into a Grass type. Predicting the weaker of two lethal moves
+		// makes us plan around the wrong damage, so among equals, take the one
+		// that hits hardest.
+		const tied = moves.filter(e => e.score === best);
+		if (tied.length === 1) return tied[0].action;
+		let pick = tied[0], pickDmg = -1;
+		for (const e of tied) {
+			let d = 0;
+			try {
+				const r = B.damageRolls(st, 'foe', e.action.move);
+				if (r && !r.immune) d = r.noCrit[Math.floor(r.noCrit.length / 2)] * (r.hits || 1);
+			} catch (err) { d = 0; }
+			if (d > pickDmg) { pickDmg = d; pick = e; }
+		}
+		return pick.action;
 	} catch (e) { return null; }
 }
 
@@ -418,6 +489,13 @@ function greedyAction(st) {
 	return best || B.legalActions(st, 'me')[0];
 }
 
+// The plan currently being followed, kept across turns -- see the note on
+// sticking to a plan in replan.js.
+let lastPlan = {foe: null, jobs: null};
+
+// Decisions since each active last changed -- see buildState.
+const outCount = {me: 0, meKey: null, foe: 0, foeKey: null};
+
 function decide(st, obs) {
 	const src = foeAction(st, obs);
 	const theirs = src.chosen;
@@ -479,11 +557,58 @@ function decide(st, obs) {
 		const theirLoss = sideLoss(st.foe, after.foe);
 		const myLoss = sideLoss(st.me, after.me);
 		const credited = foeDead && !theySwitch;
+
+		// WHICH Pokemon died, not merely that one did. The cap on this fight is
+		// exact -- beat Surge losing nobody but Lilligant -- and a flat penalty
+		// says spending Mienshao is the same as spending the one Pokemon that
+		// is allowed to go. The first recorded win cost three: Mienshao,
+		// Lanturn and Lilligant.
+		const expendable = process.env.EXPENDABLE === undefined
+			? ['Lilligant'] : process.env.EXPENDABLE.split(',').filter(Boolean);
+		const diedNow = after.me.team.filter((m, i) =>
+			m.fainted && !st.me.team[i].fainted);
+		const lostSomeoneNeeded = diedNow.some(m => !expendable.includes(m.set.species));
+
+		// AND WHETHER WE ARE LEFT IN RANGE. Scoring only this turn means the
+		// death simply happens on the next one: an action that survives at 8 HP
+		// scores as a survival. Their best answer against whatever we leave
+		// standing is one more evaluation, and it is the difference between
+		// trading a Pokemon and keeping it.
+		let dyingNext = false;
+		const mineAfter = after.me.team[after.me.active];
+		if (mineAfter && !mineAfter.fainted && !expendable.includes(mineAfter.set.species)) {
+			let worst = 0;
+			for (const id of (obs.foe.moves || [])) {
+				const nm = moveName(id);
+				if (!nm) continue;
+				try {
+					const band = B.damageRolls(after, 'foe', nm);
+					if (band && band.length) worst = Math.max(worst, band[Math.floor(band.length / 2)]);
+				} catch (e) { /* a move we cannot price tells us nothing */ }
+			}
+			dyingNext = worst >= mineAfter.curHP;
+		}
+
 		rows.push({
 			action: a,
-			score: (credited ? 100 : 0) - (mineDead ? 200 : 0)
+			// A SWITCH IS NOT FREE HERE EITHER. The planner was taught this and
+			// the fallback was not, so on every "no plan found" turn the agent
+			// rotated Pokemon into Pawmot instead of hitting it -- Lanturn,
+			// Victreebel, Mienshao, Diggersby, Breloom, back to Mienshao --
+			// while Pawmot healed with Drain Punch: 58, 65, 43, 56, 71. Nothing
+			// in a one-turn score charges for making no progress, so a switch
+			// that leaves the opponent untouched scored as a clean zero and
+			// beat every attack that cost us HP.
+			//
+			// Small on purpose: it must not block the switches that matter,
+			// where staying is scored at -61 because the Pokemon dies.
+			score: (credited ? 100 : 0)
+				- (mineDead ? (lostSomeoneNeeded ? 200 : 60) : 0)
+				- (dyingNext ? 45 : 0)
+				- (a.type === 'switch' ? 2.5 : 0)
 				+ theirLoss * (theySwitch ? 4 : 10) - myLoss * 8,
 			foeDead: credited, mineDead, theirLoss, myLoss,
+			lostSomeoneNeeded, dyingNext,
 			unknownTarget: theySwitch
 		});
 	}
@@ -533,6 +658,15 @@ if (process.argv[2] === '--probe') {
 
 // ------------------------------------------------------------------- the loop
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
+// Tag every recorded result with the code that produced it. Rows from
+// different code versions were indistinguishable in results.tsv, so a change
+// to the planner could not be judged against the rows it actually produced.
+try {
+	const cp = require('child_process');
+	const hash = cp.execSync('git rev-parse --short HEAD', {cwd: __dirname}).toString().trim();
+	const dirty = cp.execSync('git status --porcelain', {cwd: __dirname}).toString().trim() ? '+' : '';
+	fs.writeFileSync(path.join(DIR, 'version.txt'), hash + dirty + '\n');
+} catch (e) { /* not fatal: the row just reads "?" */ }
 // The header is rewritten whenever the schema changes, not only when the file
 // is absent. Columns were added twice tonight and the header was not, so rows
 // carried twenty fields under an eighteen-field header -- every parse silently
@@ -686,12 +820,47 @@ setInterval(() => {
 	let d = null, plannerSaid = null;
 	if (!process.env.GREEDY && !process.env.NOPLAN) {
 		try {
-			const pick = R.chooseAction(planCtx(obs), st, {});
+			// The line we were already following, so it can defend itself against
+		// this turn's challengers instead of being re-derived from nothing.
+		const foeNow = st.foe.team[st.foe.active].set.species;
+		const pick = R.chooseAction(planCtx(obs), st,
+			{incumbent: lastPlan.foe === foeNow ? lastPlan.jobs : null});
+		if (pick && pick.path && pick.path.cand) {
+			lastPlan = {foe: foeNow, jobs: pick.path.cand.jobs};
+		}
 			if (pick && pick.action) {
 				plannerSaid = pick;
-				d = {best: {action: pick.action, foeDead: false, mineDead: false,
+				// THE PLAN STILL HAS TO SURVIVE THE TURN. This branch used to
+				// build its answer with `all: []` and `theirs: null`, so on a
+				// planned turn nothing was ever predicted -- which is why the
+				// log read "they will: none" and "expecting to deal 0 and take
+				// 0" against Pawmot, and why the plan happily walked Lilligant
+				// into Mach Punch. Probing that exact position offline, the
+				// one-turn scoring ranked every move at -61.39 because
+				// Lilligant dies, and switching at -2.45. It knew. Nobody asked.
+				const oneTurn = decide(st, obs);
+				let chosen = pick.action;
+				const same = (a, b) => a && b && a.type === b.type
+					&& (a.type === 'switch' ? a.index === b.index : a.move === b.move);
+				const mine = oneTurn.all.find(r => same(r.action, chosen));
+				if (mine && mine.mineDead && !mine.foeDead) {
+					// It dies this turn and does not take the opponent with it.
+					// A plan is a sequence, so losing the Pokemon it depends on
+					// costs the rest of the plan, not just this turn.
+					const alt = oneTurn.all.find(r => !r.mineDead);
+					if (alt && !same(alt.action, chosen)) {
+						console.log('  [plan would lose '
+							+ st.me.team[st.me.active].set.species
+							+ ' this turn; taking '
+							+ (alt.action.move || ('switch ' + alt.action.index))
+							+ ' instead]');
+						chosen = alt.action;
+						plannerSaid = null;
+					}
+				}
+				d = {best: {action: chosen, foeDead: false, mineDead: false,
 					theirLoss: 0, myLoss: 0, unknownTarget: false},
-					all: [], theirs: null, src: {byte: null, model: null, stale: false}};
+					all: oneTurn.all, theirs: oneTurn.theirs, src: oneTurn.src};
 			}
 		} catch (e) {
 			console.log('  [planner failed: ' + e.message + ']');
@@ -735,6 +904,8 @@ setInterval(() => {
 			+ '   [this kill ' + plannerSaid.path.here.toFixed(2)
 			+ ', rest of the fight ' + plannerSaid.path.ahead.toFixed(2) + ']'
 		: 'no plan found, falling back to one-turn scoring'));
+	console.log('  [turnsOut: us ' + st.me.team[st.me.active].turnsOut
+		+ ', them ' + (st.foe.team[st.foe.active] || {}).turnsOut + ']');
 	console.log('  we play: ' + ourAction
 		+ (d.best.unknownTarget
 			? '   (they are switching, so this lands on whoever comes in)'
@@ -834,20 +1005,46 @@ setInterval(() => {
 	const slot = d.best.action.type === 'switch'
 		? d.best.action.index
 		: st.me.team[st.me.active].set.moves.indexOf(d.best.action.move);
-	// THE DISPLAY IS THE CURRENT PARTY ORDER, so no conversion is needed.
+	// THE DISPLAY SLOT IS THE RAM SLOT. Measured, finally, the only way that
+	// settles it: the six max HP values logged in the SAME TICK as the
+	// screenshot, since each is a unique fingerprint. Screen read Diggersby
+	// 48/112, Lanturn 0/139, Mienshao 98/98, Lilligant 0/102, Breloom 0/95,
+	// Victreebel 0/108 down the two columns; RAM read 0:48/112 1:0/139 2:98/98
+	// 3:0/102 4:0/95 5:0/108. Identity, with nothing swapped.
 	//
-	// Switching in Gen 3 SWAPS party slots, so the order in gPlayerParty is not
-	// the order the run started with -- photographed mid-fight it read Mienshao,
-	// Diggersby, Victreebel, Lilligant, Lanturn. Our sets are built from
-	// obs.party in that same live order, so a switch index already IS a display
-	// slot. The conversion added here earlier assumed "active first, then party
-	// order", which was true of the one screenshot it was derived from and not
-	// in general, and it sent the cursor to the wrong Pokemon.
-	const displaySlot = slot;
+	// Four different mappings were derived before this, each from a screenshot
+	// held next to a RAM read taken a moment apart, and they contradicted each
+	// other because the party order moves between those moments. The lesson is
+	// the measurement method, not the answer: two observations of a changing
+	// thing have to come from the same instant to be compared at all.
+	//
+	// mySets is itself aligned to RAM order above by level and max HP, so the
+	// model index, the RAM slot and the display slot are all the same number.
+	// A FAINTED TARGET IS NEVER PLAYABLE. The game answers "X has no energy
+	// left to battle!" and sits on the party screen until the watchdog gives
+	// up, costing a turn. That is worth catching here even though the mapping
+	// is now right, because the cost of being wrong is silent and repeated.
+	if (d.best.action.type === 'switch') {
+		const tgt = st.me.team[slot];
+		if (!tgt || tgt.fainted || tgt.curHP <= 0) {
+			console.log('refusing to switch to slot ' + slot + ' -- '
+				+ (tgt ? tgt.set.species + ' is fainted' : 'no such Pokemon'));
+			return;
+		}
+	}
 	fs.writeFileSync(CMD, JSON.stringify({
 		turn: obs.turn,
 		action: d.best.action.type === 'switch' ? 'switch' : 'move',
-		slot: displaySlot,
+		slot: slot,
+		// THE TARGET AS A FINGERPRINT, not just an index. Every switching bug
+		// in this file has been an ordering bug: the party is renumbered when
+		// a Pokemon comes in, so an index computed here can name someone else
+		// by the time the actuator presses A. Max HP and level identify a party
+		// member uniquely, so the actuator can resolve them against the very
+		// RAM the screen is drawn from and refuse to commit if the slot it is
+		// sitting on is not the Pokemon that was chosen.
+		wantMax: st.me.team[slot] ? st.me.team[slot].maxHP : 0,
+		wantLevel: st.me.team[slot] ? st.me.team[slot].level : 0,
 		from: 0
 	}) + '\n');
 }, 250);

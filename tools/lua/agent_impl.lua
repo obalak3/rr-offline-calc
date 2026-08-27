@@ -211,6 +211,7 @@ local lastCur = _RR.lastCur or -1
 local cursorAt = _RR.cursorAt == nil and -1 or _RR.cursorAt
 local swFails = _RR.swFails or 0
 local swFrom = _RR.swFrom
+local confirmAt = _RR.confirmAt
 
 -- Written back on every tick; locals stay for readability and speed.
 local function persist()
@@ -223,6 +224,7 @@ local function persist()
 	_RR.cursorAt = cursorAt
 	_RR.swFails = swFails
 	_RR.swFrom = swFrom
+	_RR.confirmAt = confirmAt
 end
 local log = io.open(DIR .. "agent.log", "a")
 say = function(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
@@ -354,9 +356,12 @@ local function readCommand()
 	end
 	local slot = tonumber(body:match('"slot"%s*:%s*(%d+)'))
 	local from = tonumber(body:match('"from"%s*:%s*(%d+)'))
+	local wantMax = tonumber(body:match('"wantMax"%s*:%s*(%d+)'))
+	local wantLevel = tonumber(body:match('"wantLevel"%s*:%s*(%d+)'))
 	if not act or not slot then return nil end
 	say("read command: " .. body:gsub("%s+$", ""))
-	return {action = act, slot = slot, from = from}
+	return {action = act, slot = slot, from = from,
+		wantMax = wantMax, wantLevel = wantLevel}
 end
 
 local frame = 0
@@ -435,6 +440,56 @@ function tick_inner()
 			if unstick == 120 then
 				say("the battle is over. " .. (_RR.fights or 0) .. " fought so far")
 			end
+			-- WHO ACTUALLY WON. 239 fights had been played without recording
+			-- the outcome of a single one, so "is the agent any good" had no
+			-- answer and every change was being judged on how sensible the
+			-- individual clicks looked. The target is exact -- beat Surge
+			-- losing nobody but Lilligant -- and it cannot be pursued without
+			-- counting how often it happens.
+			--
+			-- Written once per battle, at the moment the ending is confirmed,
+			-- from the same read that confirms it. Max HP identifies each of
+			-- the six, so the casualties can be named afterwards.
+			if unstick == 120 and not _RR.recorded then
+				_RR.recorded = true
+				local mine, theirs = {}, {}
+				for i = 0, 5 do
+					mine[#mine+1] = emu:read16(PARTY + i * P_SIZE + P_HP)
+						.. "/" .. emu:read16(PARTY + i * P_SIZE + P_MAX)
+					theirs[#theirs+1] = emu:read16(FOE_PARTY + i * P_SIZE + P_HP)
+						.. "/" .. emu:read16(FOE_PARTY + i * P_SIZE + P_MAX)
+				end
+				local ml, tl = 0, 0
+				for i = 0, 5 do
+					if emu:read16(PARTY + i * P_SIZE + P_HP) > 0 then ml = ml + 1 end
+					if emu:read16(FOE_PARTY + i * P_SIZE + P_HP) > 0 then tl = tl + 1 end
+				end
+				local res = (tl == 0 and ml > 0) and "WIN"
+					or ((ml == 0) and "LOSS" or "UNCLEAR")
+				-- ONLY REAL ENDINGS ARE RECORDED. Outside a battle the party
+				-- reads are not meaningful and came back as all six at full
+				-- health with the opponent half hurt, which is not an outcome
+				-- of anything -- three such rows landed in the file and would
+				-- have been counted in any win rate computed from it.
+				if res == "UNCLEAR" then
+					say("not recording: neither side is wiped (" .. ml .. " v " .. tl .. ")")
+					return
+				end
+				-- Which code produced this row (agent.js writes version.txt
+				-- at startup). Without it, rows from different planner versions
+				-- are indistinguishable and no change can be judged.
+				local ver = "?"
+				local vf = io.open(DIR .. "version.txt", "r")
+				if vf then ver = vf:read("*l") or "?"; vf:close() end
+				local rf = io.open(DIR .. "results.tsv", "a")
+				if rf then
+					rf:write(string.format("%d\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+						os.time(), res, _RR.saveName or "?", ml, tl,
+						table.concat(mine, " "), table.concat(theirs, " "), ver))
+					rf:close()
+				end
+				say("RESULT " .. res .. " -- ours left " .. ml .. ", theirs left " .. tl)
+			end
 			-- Restart from the save, which is what makes a calibration run a
 			-- LOOP: play, finish, reload, play again, without anybody watching.
 			-- IS THE BATTLE REALLY OVER? "nobattle" only means the main-loop
@@ -490,6 +545,8 @@ function tick_inner()
 				local f = nil
 				if file ~= "" and pcall(function() emu:loadStateFile(file) end) then
 					_RR.fights = (_RR.fights or 0) + 1
+					_RR.recorded = false
+					_RR.saveName = file:match("[^/]+$")
 					say("restarted (" .. _RR.fights .. ") with " .. file:match("[^/]+$"))
 					os.remove(DIR .. "state.json")
 					os.remove(DIR .. "cmd.json")
@@ -602,7 +659,7 @@ function tick_inner()
 		want = readCommand()
 		if want then
 			say(string.format("turn %d: playing %s %d", turn, want.action, want.slot))
-			opened, moves, lastCur, cursorAt, swFrom = false, 0, -1, -1, nil
+			opened, moves, lastCur, cursorAt, swFrom, confirmAt = false, 0, -1, -1, nil, nil
 			phase, timer = (want.action == "switch") and "sw_open" or "mv_open", 0
 		elseif timer > 60 * 60 then
 			-- Ask again rather than giving up. The planner may simply not have
@@ -687,100 +744,133 @@ function tick_inner()
 	end
 
 	if phase == "sw_pick" then
-		-- NAVIGATE THE GRID, do not write the cursor and hope.
+		-- A DETERMINISTIC SEQUENCE, checked by outcome.
 		--
-		-- 0x0203B0A9 tracks the highlighted slot, but writing it only moves the
-		-- HIGHLIGHT: the game still confirms whichever Pokemon it believes is
-		-- selected, which is the one already in battle, so Shift fails and
-		-- drops back to the list. That is exactly the bounce James described --
-		-- "instead of moving to a different pokemon you are clicking lanturn,
-		-- trying to switch, fail, then click lanturn again".
+		-- This flow has been driven off SCREEN_ID values whose meanings I
+		-- inferred from single screenshots and got wrong more than once -- 9
+		-- was read as the submenu when it is the list, so the agent jumped
+		-- straight to confirming and pressed A on whoever was highlighted,
+		-- which is the ACTIVE Pokemon, and the game answered "already in
+		-- battle". Switches landed correctly 3 times in 126.
 		--
-		-- So the byte is read as a SENSOR and the cursor is moved with real
-		-- presses. The party screen is a 2x3 grid in party order: left column
-		-- holds slots 0, 2, 4 and right column 1, 3, 5, so column is slot % 2
-		-- and row is floor(slot / 2). One press per step, with a gap, because a
-		-- held direction is one press to the game no matter how long it lasts.
-		if scr == "party_submenu" then
-			-- ONLY TRUST A SUBMENU WE OPENED OURSELVES. The cursor byte is an
-			-- echo of the highlight, not the selection the game confirms, so
-			-- "the byte says slot 0" is not evidence the submenu belongs to
-			-- slot 0. Accepting one we found already open is how every switch
-			-- ended up Shifting the Pokemon already in battle: the submenu
-			-- closed, nothing switched, and the whole thing went round again.
-			if opened then
-				phase, timer = "sw_confirm", 0
-			else
-				emu:setKeys(timer % 24 < 6 and KEY_B or 0)
-				if timer % 120 == 0 then
-					say("sw_pick: closing a submenu I did not open")
+		-- So no screen ids here. The cursor byte tracks the highlight (proved
+		-- by dumping RAM before and after a press: it moved 0 -> 5, the only
+		-- small-index byte in 256KB that changed), and it starts on the active
+		-- because the active is displayed first. Navigate until it reads the
+		-- target, then press A twice with a real gap -- once to open the
+		-- submenu, once to take Shift -- and let the ACTIVE POKEMON CHANGING be
+		-- the only evidence that it worked.
+		if swFrom == nil then swFrom = emu:read16(MON + O_SP) end
+		if emu:read16(MON + O_SP) ~= swFrom and emu:read16(MON + O_SP) ~= 0 then
+			say("switch done: active changed")
+			swFrom, swFails = nil, 0
+			emu:setKeys(0)
+			phase, timer = "settle", 0
+			return
+		end
+		if timer < 50 then emu:setKeys(0); return end
+		local cur = emu:read8(PARTY_IDX)
+		-- RESOLVE THE TARGET HERE, AGAINST LIVE RAM. The index the planner
+		-- computed can be stale: coming in swaps the arriving Pokemon into slot
+		-- 0, so the numbering shifts during the fight and a slot decided one
+		-- read earlier can name somebody else. Max HP is unique across the six,
+		-- so matching on it picks the intended Pokemon no matter how the party
+		-- has been renumbered, and it is read from the same gPlayerParty the
+		-- screen itself is drawn from -- display position was measured to equal
+		-- the RAM slot exactly, with the six HP values logged in the same tick
+		-- as the screenshot that showed them.
+		local target = want.slot
+		if want.wantMax and want.wantMax > 0 then
+			local found = nil
+			for i = 0, 5 do
+				local b = PARTY + i * P_SIZE
+				if emu:read16(b + P_MAX) == want.wantMax
+					and emu:read16(b + P_HP) > 0
+					and (not want.wantLevel or emu:read8(b + P_LEVEL) == want.wantLevel) then
+					found = i; break
 				end
 			end
-			return
-		end
-		if scr ~= "party" then
-			if timer > 4 then phase, timer = "settle", 0; return end
-			return
-		end
-		-- Track the cursor OURSELVES from a known start. The battle party
-		-- screen opens with the ACTIVE Pokemon highlighted, and the planner
-		-- tells us which slot that is. The cursor byte reads 0 on open
-		-- regardless, which is why the agent kept believing it had already
-		-- arrived at slot 0 and confirmed whatever was genuinely selected.
-		-- LET THE SCREEN FINISH DRAWING FIRST. The shot taken two frames into
-		-- this phase came back completely BLACK: the party screen is still
-		-- fading in, and every direction press issued during that fade is
-		-- swallowed. The cursor therefore never left the active Pokemon, and
-		-- the A that followed opened the submenu on it -- which is why the game
-		-- kept answering "Lanturn is already in battle!".
-		if timer < 50 then emu:setKeys(0); return end
-		if timer == 50 then shot("sw1_partylist") end
-		if cursorAt < 0 then cursorAt = want.from or 0 end
-		local cur = cursorAt
-		local target = want.slot
-		local step = (timer - 50) % 24
-		if cur == target then
-			-- On the right Pokemon: confirm it, and REMEMBER that this submenu
-			-- is ours. Also record whether the cursor ever moved -- if presses
-			-- are not registering at all, that is a different problem and the
-			-- log should say so rather than looking like a stuck menu.
-			if not opened and timer % 24 == 2 then shot("sw2_on_target") end
-			if not opened then
-				say("sw_pick: at slot " .. target .. " after " .. moves
-					.. " presses (started " .. tostring(want.from)
-					.. ", byte reads " .. emu:read8(PARTY_IDX) .. "), confirming")
+			if found and found ~= target then
+				say("sw_pick: slot " .. target .. " is stale, "
+					.. want.wantMax .. " max HP is really in slot " .. found)
 			end
+			if not found then
+				say("sw_pick: nobody alive with " .. want.wantMax
+					.. " max HP; dropping the switch")
+				swFrom, opened, confirmAt = nil, false, nil
+				os.remove(DIR .. "state.json"); lastSig = ""
+				phase, timer = "wait", 0
+				return
+			end
+			target = found
+		end
+		if cur ~= target then
+			-- IT IS A TWO-COLUMN GRID AND DOWN ONLY WALKS ONE COLUMN. Logged
+			-- live, the cursor cycled 0 -> 2 -> 4 -> 7 -> 0: the left column
+			-- and then Cancel. Every odd slot -- the entire right column -- was
+			-- unreachable, so any switch to one of them could never happen no
+			-- matter how long it pressed.
+			--
+			-- So: RIGHT/LEFT to cross columns, DOWN/UP to change row, and the
+			-- cursor byte to check each step actually landed.
+			local step = (timer - 50) % 20
+			local key = KEY_DOWN
+			if cur > 5 then
+				key = KEY_UP                       -- sitting on Cancel
+			else
+				local ccol, crow = cur % 2, math.floor(cur / 2)
+				local tcol, trow = target % 2, math.floor(target / 2)
+				if ccol ~= tcol then key = (tcol > ccol) and KEY_RIGHT or KEY_LEFT
+				elseif crow > trow then key = KEY_UP
+				else key = KEY_DOWN end
+			end
+			emu:setKeys(step < 5 and key or 0)
+			if step == 5 then moves = moves + 1 end
+			if timer > 900 then
+				say("sw_pick: cursor stuck at " .. cur .. ", wanted " .. target)
+				swFails = swFails + 1
+				swFrom = nil
+				os.remove(DIR .. "state.json"); lastSig = ""
+				phase, timer = "wait", 0
+			end
+			return
+		end
+		-- on target: A, gap, A, then wait for the active to change
+		if not opened then
 			opened = true
-			emu:setKeys(step < 6 and KEY_A or 0)
-		elseif cur > 5 then
-			-- Sitting on Cancel; step back into the grid before navigating.
-			emu:setKeys(step < 6 and KEY_UP or 0)
+			confirmAt = timer
+			-- THE MAPPING, MEASURED IN ONE TICK. Four different display->RAM
+			-- mappings have been derived by holding a screenshot next to a RAM
+			-- read, and they contradicted each other because Gen 3 SWAPS party
+			-- slots when you switch: the two readings were taken moments apart
+			-- and the order moved in between. Max HP is a unique fingerprint
+			-- for each of the six, so logging it in the SAME tick as the shot
+			-- makes the mapping readable off the picture with nothing to guess.
+			local fp = {}
+			for i = 0, 5 do
+				local b = PARTY + i * P_SIZE
+				fp[#fp+1] = i .. ":" .. emu:read16(b + P_HP) .. "/" .. emu:read16(b + P_MAX)
+			end
+			say("sw_pick: on target slot " .. target .. " after " .. moves
+				.. " presses | cursor=" .. cur .. " | active="
+				.. emu:read16(MON + O_HP) .. "/" .. emu:read16(MON + O_MAX)
+				.. " | RAM " .. table.concat(fp, " "))
+			shot("map_cursor" .. cur)
+		end
+		local since = timer - (confirmAt or timer)
+		if since < 8 then emu:setKeys(KEY_A)
+		elseif since < 70 then emu:setKeys(0)
+		elseif since < 78 then emu:setKeys(KEY_A)
 		else
-			local curCol, curRow = cur % 2, math.floor(cur / 2)
-			local tgtCol, tgtRow = target % 2, math.floor(target / 2)
-			local key = 0
-			if curCol ~= tgtCol then
-				key = (tgtCol > curCol) and KEY_RIGHT or KEY_LEFT
-			elseif curRow < tgtRow then key = KEY_DOWN
-			elseif curRow > tgtRow then key = KEY_UP
+			emu:setKeys(0)
+			if since > 400 then
+				say("sw_pick: pressed twice on slot " .. target .. " and nothing switched")
+				shot("failed_slot" .. target)
+				swFails = swFails + 1
+				swFrom, opened, confirmAt = nil, false, nil
+				os.remove(DIR .. "state.json"); lastSig = ""
+				phase, timer = "wait", 0
 			end
-			emu:setKeys(step < 6 and key or 0)
-			-- One press per cycle, and we advance our own model of where the
-			-- cursor is as we issue it.
-			if step == 6 and key ~= 0 then
-				if key == KEY_RIGHT then cursorAt = cursorAt + 1
-				elseif key == KEY_LEFT then cursorAt = cursorAt - 1
-				elseif key == KEY_DOWN then cursorAt = cursorAt + 2
-				elseif key == KEY_UP then cursorAt = cursorAt - 2 end
-				moves = moves + 1
-			end
-		end
-		if timer % 120 == 0 then
-			say("sw_pick: cursor at " .. cur .. ", want " .. target)
-		end
-		if timer > 900 then
-			say("sw_pick: could not reach slot " .. target .. "; re-asking")
-			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
 		end
 		return
 	end
@@ -837,7 +927,14 @@ function tick_inner()
 		-- guessed at.
 		local slot = timer % 90
 		emu:setKeys(slot < 15 and KEY_A or 0)
-		if slot == 25 then shot("after_press_" .. timer) end
+		-- Photograph the whole confirmation, with the screen id in the name, so
+		-- the failing frame can be identified rather than inferred. Switches
+		-- land on the intended Pokemon 3 times out of 126.
+		for _, at in ipairs({5, 20, 40, 70, 95, 130, 180}) do
+			if timer == at then
+				shot(string.format("cf%03d_id%d", at, emu:read8(SCREEN_ID)))
+			end
+		end
 		if timer % 90 == 0 and timer > 0 then
 			say("sw_confirm: still species " .. nowSp .. " after " .. timer .. " frames")
 		end

@@ -1038,6 +1038,7 @@ var RRBattle = (function () {
 			if (index >= 0) {
 				side.active = index;
 				side.team[index].turnsOut = 0;
+				side.team[index].volatiles.enteredThisTurn = true;
 				side.switchCooldown = 1;
 				applyHazards(state, key);
 				applyEntryAbility(state, key);
@@ -1059,6 +1060,7 @@ var RRBattle = (function () {
 		outgoing.toxicCounter = outgoing.status === "tox" ? 1 : 0;
 		side.active = index;
 		side.team[index].turnsOut = 0;
+		side.team[index].volatiles.enteredThisTurn = true;
 		// CFRU's ShouldSwitch bails immediately on switchingCooldown, so a
 		// Pokemon that just came in will not be pulled straight back out.
 		side.switchCooldown = 1;
@@ -1805,7 +1807,17 @@ var RRBattle = (function () {
 				mon.volatiles.protecting = false;
 				mon.volatiles.flinched = false;
 				mon.volatiles.moved = false;
-				mon.turnsOut++;
+				// THE TURN A POKEMON SWITCHED IN DOES NOT COUNT. This counter gates Fake
+				// Out and First Impression, and it was incremented at the end of every
+				// turn including the one the Pokemon arrived on: switch Mienshao in on
+				// turn N, the end of turn N takes it to 1, and its first action on turn
+				// N+1 is refused as "not on the way in". Fake Out works on the first turn
+				// AFTER the user enters, so the pivot that is the entire point of
+				// carrying the move could not be simulated at all -- the planner was
+				// correctly refusing a move it had been told does nothing. Caught by
+				// James, who plays this matchup and knew the sweep result was impossible.
+				if (mon.volatiles.enteredThisTurn) mon.volatiles.enteredThisTurn = false;
+				else mon.turnsOut++;
 				if (mon.volatiles.taunt > 0) mon.volatiles.taunt--;
 				if (mon.volatiles.encore > 0) mon.volatiles.encore--;
 				return;
@@ -1893,7 +1905,17 @@ var RRBattle = (function () {
 			mon.volatiles.protecting = false;
 			mon.volatiles.flinched = false;
 			mon.volatiles.moved = false;
-			mon.turnsOut++;
+			// THE TURN A POKEMON SWITCHED IN DOES NOT COUNT. This counter gates Fake
+			// Out and First Impression, and it was incremented at the end of every
+			// turn including the one the Pokemon arrived on: switch Mienshao in on
+			// turn N, the end of turn N takes it to 1, and its first action on turn
+			// N+1 is refused as "not on the way in". Fake Out works on the first turn
+			// AFTER the user enters, so the pivot that is the entire point of
+			// carrying the move could not be simulated at all -- the planner was
+			// correctly refusing a move it had been told does nothing. Caught by
+			// James, who plays this matchup and knew the sweep result was impossible.
+			if (mon.volatiles.enteredThisTurn) mon.volatiles.enteredThisTurn = false;
+			else mon.turnsOut++;
 			if (mon.volatiles.taunt > 0) mon.volatiles.taunt--;
 			if (mon.volatiles.encore > 0) mon.volatiles.encore--;
 		});
