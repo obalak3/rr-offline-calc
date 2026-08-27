@@ -360,7 +360,7 @@ if (!fs.existsSync(PRED)) {
 	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
-		+ 'rng_before\tdraws\trolls\tcrit_rolls\n');
+		+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\n');
 }
 
 let lastTurn = 0, awaiting = null;
@@ -447,7 +447,8 @@ setInterval(() => {
 					(foeSwapped ? '>=' : '') + ourDmg,
 					(meSwapped ? '>=' : '') + theirDmg,
 					awaiting.rng, awaiting.draws.join(','),
-					awaiting.rolls.join(','), awaiting.critRolls].join('\t') + '\n');
+					awaiting.rolls.join(','), awaiting.critRolls,
+					awaiting.foeRolls.join(','), awaiting.foeCrit].join('\t') + '\n');
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));
 				console.log('  turn ' + awaiting.turn + ' resolved: our damage '
@@ -503,6 +504,23 @@ setInterval(() => {
 	// names which roll happened, and that number can be checked directly
 	// against draw #4 % 16. That is the experiment that settles the draw
 	// ordering rather than gesturing at it.
+	// THEIR band too. Only two of twenty-two rows are usable for the draw
+	// search, because our attacks mostly KILL and a kill gives a lower bound
+	// rather than an exact roll. The damage we TAKE is almost always exact --
+	// we rarely faint in these fights -- so logging the opponent's damage band
+	// roughly doubles the usable observations per turn from the same play.
+	let foeRolls = [], foeCrit = '';
+	if (d.theirs && d.theirs.type === 'move') {
+		try {
+			const fr = B.damageRolls(st, 'foe', d.theirs.move);
+			if (fr && !fr.immune) {
+				const h = fr.hits || 1;
+				foeRolls = fr.noCrit.map(v => v * h);
+				foeCrit = fr.crit[fr.crit.length - 1] * h;
+			}
+		} catch (e) { /* status move, no band */ }
+	}
+
 	let rolls = [], critRolls = '';
 	if (d.best.action.type === 'move') {
 		try {
@@ -517,7 +535,7 @@ setInterval(() => {
 
 	awaiting = {
 		turn: obs.turn, us, them, ourAction, theirAction, predOur, predTheir,
-		rolls, critRolls,
+		rolls, critRolls, foeRolls, foeCrit,
 		byteSays, modelSays, stale: d.src.stale,
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
 		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
