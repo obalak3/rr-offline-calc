@@ -260,13 +260,25 @@ end
 local DUMPS = os.getenv("HOME") .. "/rr-agent/aidump/"
 local dumpCount = 0
 local function dumpForScoreHunt()
-	if dumpCount >= 30 then return end
+	if dumpCount >= 120 then return end
 	dumpCount = dumpCount + 1
+	_RR.dumpCount = dumpCount
 	local tag = string.format("t%03d", turn)
-	for _, r in ipairs({{n = "ew", b = 0x02020000, l = 0x8000},
+	-- ALL of EWRAM, not an eighth of it. The window was 0x02020000..0x02028000,
+	-- 32KB of a 256KB region -- and the decision bytes we already rely on live
+	-- at 0x02000091, outside it entirely. Searching there for the AI's score
+	-- array and finding nothing said very little.
+	for _, r in ipairs({{n = "ew", b = 0x02000000, l = 0x40000},
 			{n = "iw", b = 0x03000000, l = 0x8000}}) do
 		local f = io.open(DUMPS .. tag .. "." .. r.n .. ".bin", "wb")
-		if f then f:write(emu:readRange(r.b, r.l)); f:close() end
+		if f then
+			-- read in chunks; one 256KB readRange can be unhappy
+			local step = 0x8000
+			for off = 0, r.l - step, step do
+				f:write(emu:readRange(r.b + off, step))
+			end
+			f:close()
+		end
 	end
 end
 
