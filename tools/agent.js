@@ -363,6 +363,21 @@ if (process.argv[2] === '--probe') {
 
 // ------------------------------------------------------------------- the loop
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
+// The header is rewritten whenever the schema changes, not only when the file
+// is absent. Columns were added twice tonight and the header was not, so rows
+// carried twenty fields under an eighteen-field header -- every parse silently
+// dropped the last two, which is why forty-four opponent bands read as zero.
+const PRED_HEADER = 'turn\tus\tthem\tour_action\ttheir_predicted\t'
+	+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
+	+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
+	+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\n';
+if (fs.existsSync(PRED)) {
+	const first = fs.readFileSync(PRED, 'utf8').split('\n')[0] + '\n';
+	if (first !== PRED_HEADER) {
+		const body = fs.readFileSync(PRED, 'utf8').split('\n').slice(1).join('\n');
+		fs.writeFileSync(PRED, PRED_HEADER + body);
+	}
+}
 if (!fs.existsSync(PRED)) {
 	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
