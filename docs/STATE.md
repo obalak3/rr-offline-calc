@@ -1,5 +1,30 @@
 # Where this stands — 2026-08-24 (end of day)
 
+> **2026-08-26 NIGHT — TWO THINGS CHANGED, READ THESE FIRST.**
+>
+> **1. The AI's upcoming decision is readable out of a quicksave.** Verified
+> 32/32 on harness-labeled states. `0x02000091` holds its chosen TARGET — on a
+> move turn that is the MOVE SLOT (0-3), on a switch turn the DESTINATION PARTY
+> INDEX — and `0x0200005B` is the action flag (1 switch, 0 move). Mirrors at
+> `0x020235C6` and `0x03000B81`. James called this against my conclusion: I had
+> run three hand probes, found nothing, and said the AI decides after the player
+> commits; he said "I bet it is somewhere there... a bit might point to the
+> first slot," and the powered dataset found it immediately. CAVEAT: all 32
+> labels are Surge-side; confirm on another fight before trusting it
+> universally. Harness: `tools/lua/label_decisions.lua`, driven by CURSOR
+> WRITES — `gActionSelectionCursor = 0x02023FF8`, party cursor `0x0203B0A9`
+> which holds the slot index itself. RR's party screen is a 2x3 GRID (left
+> column slots 0,2,4), which is why every DOWN-only walk failed.
+>
+> **2. The next build is specified in full: `docs/PLAN-LINE-PLANNER.md`.**
+> The advisor's remaining failure is the ASSIGNMENT layer, not tactics — it
+> spends Victreebel, the only Pawmot answer, sweeping a Pincurchin that Breloom
+> kills just as dead. The plan is James's: per-foe kill lines priced in HP%, a
+> budget-feasible assignment under his cap, and a POLICY TABLE keyed on their
+> active Pokemon so their switching controls only the ORDER. That doc carries
+> the build order, the acceptance bar, and the traps. Start there, not here.
+
+
 > **2026-08-26 evening, JAMES'S CALL: the advisor's input is now LUA MEMORY
 > READING, not the screen reader.** The screen-reader direction was chosen
 > before anyone knew mGBA ships Lua scripting; with that known, pixels lose on
