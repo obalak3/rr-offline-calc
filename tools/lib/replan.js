@@ -320,14 +320,26 @@ function chooseAction(ctx, state, opts) {
 	if (best && !ranked.some(x => x.cand === best.cand)) ranked.unshift(best);
 	else if (best) ranked.splice(ranked.findIndex(x => x.cand === best.cand), 1),
 		ranked.unshift(best);
+	// WHAT WOULD STAYING HAVE COST? A switch hands the opponent a free move, so
+	// one taken for a hair's advantage is a needless switch -- and needless
+	// switches, not the deliberate absorb pivot, are what make the agent look
+	// like it is dithering. This does not change the choice; it records the
+	// margin so the next one can be judged from the log instead of guessed at.
+	let stay = null;
+	for (const item of ranked) {
+		const a = firstAction(item);
+		if (a && a.type !== 'switch') { stay = {score: item.here, why: item.cand.why}; break; }
+	}
 	for (const item of ranked) {
 		const action = firstAction(item);
 		if (!action) continue;
 		if (action.type === 'switch'
 			&& !survivesEntry(engine.B, state, action.index, theirsNow)) continue;
-		return {action, path: item === best ? best
+		const path = item === best ? best
 			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
-				r: item.r, illegal: item.illegal}};
+				r: item.r, illegal: item.illegal};
+		return {action, path, stay,
+			margin: (stay && action.type === 'switch') ? (stay.score - item.here) : null};
 	}
 	return null;
 }

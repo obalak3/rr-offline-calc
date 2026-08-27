@@ -997,6 +997,13 @@ setInterval(() => {
 		: 'no plan found, falling back to one-turn scoring'));
 	console.log('  [turnsOut: us ' + st.me.team[st.me.active].turnsOut
 		+ ', them ' + (st.foe.team[st.foe.active] || {}).turnsOut + ']');
+	if (plannerSaid && plannerSaid.margin !== null && plannerSaid.margin !== undefined) {
+		// A small margin means the switch bought almost nothing; a negative one
+		// means it lost to staying and was taken for a later leg of the plan.
+		console.log('  [switch margin ' + plannerSaid.margin.toFixed(2)
+			+ ' vs staying in' + (plannerSaid.stay ? ' (' + plannerSaid.stay.why + ')' : '')
+			+ (plannerSaid.margin < 0.5 ? '  <-- NEEDLESS?' : '') + ']');
+	}
 	console.log('  we play: ' + ourAction
 		+ (d.best.unknownTarget
 			? '   (they are switching, so this lands on whoever comes in)'
