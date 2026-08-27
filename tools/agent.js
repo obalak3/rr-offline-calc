@@ -257,7 +257,19 @@ function decide(st, obs) {
 		let out;
 		try {
 			out = B.step(st, a, theirs, {mode: 'maxroll', risks: {roll: 'median'}});
-		} catch (e) { continue; }
+		} catch (e) {
+			// Swallowing this silently is how every move on a Pokemon vanished
+			// from the options while the switches stayed: the planner reported
+			// four switches at 0.0 and no moves at all, and nothing said why.
+			if (!decide.warned) { decide.warned = {}; }
+			const key = (a.move || ('switch ' + a.index)) + ': ' + e.message;
+			if (!decide.warned[key]) {
+				decide.warned[key] = true;
+				console.log('  [dropped ' + (a.move || ('switch ' + a.index))
+					+ ' -- ' + e.message + ']');
+			}
+			continue;
+		}
 		if (!out || !out.length) continue;
 		const after = out[0].state;
 		const myIdx = st.me.active;
@@ -276,10 +288,16 @@ function decide(st, obs) {
 			return cap ? lost / (before.team[0].maxHP || cap) : 0;
 		};
 		const foeDead = after.foe.team[st.foe.active].fainted;
-		const mineDead = after.me.team[myIdx].fainted;
+		// OUR loss is measured across the side too, for exactly the reason
+		// theirs is. Reading it against the Pokemon that started the turn made
+		// SWITCHING FREE: that Pokemon is safely on the bench afterwards and
+		// perfectly healthy, while the hit lands on whoever came in and never
+		// appears in the score. Every switch scored 0.00, every attack scored
+		// negative, and the agent switched fourteen turns in a row.
+		const mineDead = after.me.team.some((m, i) =>
+			m.fainted && !st.me.team[i].fainted);
 		const theirLoss = sideLoss(st.foe, after.foe);
-		const myLoss = (st.me.team[myIdx].curHP - after.me.team[myIdx].curHP)
-			/ st.me.team[myIdx].maxHP;
+		const myLoss = sideLoss(st.me, after.me);
 		const credited = foeDead && !theySwitch;
 		rows.push({
 			action: a,
@@ -293,6 +311,32 @@ function decide(st, obs) {
 	return {best: rows[0], all: rows, theirs, src};
 }
 
+// A one-shot probe, so a bad position can be reproduced offline instead of
+// reasoned about from a log. `node tools/agent.js --probe` rebuilds whatever is
+// in state.json and prints what the planner sees.
+if (process.argv[2] === '--probe') {
+	const obs = readJSONSync(STATE);
+	if (!obs) { console.log('no state.json'); process.exit(1); }
+	const st = buildState(obs);
+	if (!st) { console.log('buildState returned null'); process.exit(1); }
+	const act = st.me.team[st.me.active];
+	console.log('active index ' + st.me.active + ' = ' + act.set.species
+		+ '  hp ' + act.curHP + '/' + act.maxHP + '  fainted=' + act.fainted);
+	console.log('its moves: ' + JSON.stringify(act.set.moves) + '  pp ' + JSON.stringify(act.pp));
+	console.log('team: ' + st.me.team.map((m, i) =>
+		i + ':' + m.set.species + (m.fainted ? '(X)' : '') + ' ' + m.curHP).join('  '));
+	console.log('legal actions: ' + JSON.stringify(B.legalActions(st, 'me')));
+	// Trip the staleness detector the way a running session does, so the probe
+	// exercises the MODEL path and not just the byte path.
+	let d = decide(st, obs);
+	for (let i = 0; i < 6; i++) d = decide(st, obs);
+	console.log('foe action used: ' + JSON.stringify(d.theirs)
+		+ '  (stale=' + d.src.stale + ')');
+	console.log('ranked: ' + JSON.stringify(d.all.map(r =>
+		(r.action.move || ('switch ' + r.action.index)) + '=' + r.score.toFixed(2))));
+	process.exit(0);
+}
+
 // ------------------------------------------------------------------- the loop
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
 if (!fs.existsSync(PRED)) {
@@ -304,6 +348,10 @@ if (!fs.existsSync(PRED)) {
 
 let lastTurn = 0, awaiting = null;
 console.log('agent: watching ' + DIR + '. Load tools/lua/agent.lua in mGBA.');
+
+function readJSONSync(p) {
+	try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
+}
 
 function readJSON(p) {
 	try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
