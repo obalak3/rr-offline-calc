@@ -324,7 +324,19 @@ function buildState(obs) {
 
 	// Apply everything observed, so the simulation starts from the real
 	// position rather than a fresh one.
-	const me = st.me.team[activeIndex], foe = st.foe.team[0];
+	// THE ACTIVE FOE, NOT SLOT ZERO. This read `st.foe.team[0]` while
+	// `st.foe.active` was being resolved correctly a few lines above, so every
+	// per-turn observation of the opponent -- current HP, status, confusion,
+	// PP and STAT STAGES -- was written onto their FIRST Pokemon instead of
+	// the one standing in front of us.
+	//
+	// That is why Lilligant kept clicking Baby-Doll Eyes until it died. The
+	// job says "until their attack is at most -1"; the -1 landed on
+	// Pincurchin's boost table, Pawmot always read at neutral attack, the
+	// handover never fired, and the enabler stood there instead of switching
+	// out. James described the symptom exactly: it was supposed to switch out
+	// after the Baby-Doll Eyes instead of dying to Mach Punch.
+	const me = st.me.team[activeIndex], foe = st.foe.team[st.foe.active];
 	me.curHP = obs.me.hp; foe.curHP = obs.foe.hp;
 	// A FORCED SWITCH: our Pokemon has fainted and the game is asking who comes
 	// in. Setting HP to zero was not enough -- nothing marked it fainted, so
@@ -631,7 +643,11 @@ function decide(st, obs) {
 // reasoned about from a log. `node tools/agent.js --probe` rebuilds whatever is
 // in state.json and prints what the planner sees.
 if (process.argv[2] === '--probe') {
-	const obs = readJSONSync(STATE);
+	// An explicit path replays an ARCHIVED turn (~/rr-agent/turns/turnNNNNN.json,
+	// whose obs field is the observation); with no path it reads the live state.
+	const arg = process.argv[3];
+	let obs = readJSONSync(arg || STATE);
+	if (obs && obs.obs) obs = obs.obs;
 	if (!obs) { console.log('no state.json'); process.exit(1); }
 	const st = buildState(obs);
 	if (!st) { console.log('buildState returned null'); process.exit(1); }
@@ -891,7 +907,10 @@ setInterval(() => {
 	const theirAction = describe(d.theirs);
 	const byteSays = describe(d.src.byte);
 	const modelSays = describe(d.src.model);
-	const predOur = Math.round(d.best.theirLoss * st.foe.team[0].maxHP);
+	// Against the ACTIVE foe's max HP. Slot zero's max HP turned every
+	// predicted-damage number, and so every recorded damage band, into a
+	// fraction of the wrong Pokemon.
+	const predOur = Math.round(d.best.theirLoss * st.foe.team[st.foe.active].maxHP);
 	const predTheir = Math.round(d.best.myLoss * st.me.team[st.me.active].maxHP);
 
 	console.log('\nturn ' + obs.turn + '  ' + us + ' (' + obs.me.hp + ') vs '
