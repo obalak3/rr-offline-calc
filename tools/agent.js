@@ -505,7 +505,13 @@ setInterval(() => {
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
 		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
 		foePP: obs.foe.pp.slice(), foeMoves: obs.foe.moves.slice(),
-		draws: draws(obs.rng, 8).map(v => (v >>> 16))
+		// SIXTY-FOUR DRAWS, not eight. The seed is read at the action menu and
+		// the game consumes an unknown number of values before our damage roll
+		// -- turn order, accuracy, the opponent's own move, secondary effects.
+		// With a window of eight, two of six rows had NO draw position that
+		// could explain their roll, so the search had nowhere to succeed. The
+		// window has to be wider than the uncertainty it is searching.
+		draws: draws(obs.rng, 64).map(v => (v >>> 16))
 	};
 
 	const slot = d.best.action.type === 'switch'
