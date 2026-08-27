@@ -224,3 +224,44 @@ What remains, in rough order of suspicion:
 THIS IS THE TOP PRIORITY. Until a strategy that James can execute wins in
 simulation, no planner result from this repo means anything -- including every
 number reported earlier tonight.
+
+### Narrowing it — and a correction
+
+I claimed above that the 24% move-fidelity gap was the prime suspect. **It is
+not.** Measured directly, with a foe that plays argmax only some of the time:
+
+    foe argmax 100% of turns   greedy won 0/20
+    foe argmax  90%            greedy won 0/20
+    foe argmax  76%  (measured) greedy won 0/20
+    foe argmax  60%            greedy won 7/20
+
+At the fidelity we actually measured, the fight is still unwinnable for greedy.
+The gap only starts to matter well below what the real AI does.
+
+I also over-stated "every strategy loses, therefore the simulation is wrong".
+Greedy losing proves greedy is weak. So the test was repeated with the strongest
+player available -- the advisor at lookahead 3 with `assumePrediction`, which
+gives it PERFECT knowledge of the opponent's next action, better information than
+any human has:
+
+    strong player, perfect prediction, 3-ply    won 0/6, lost 6.0/6
+
+Four independent implementations -- greedy, static plan, per-turn re-planning,
+and a deep search with perfect prediction -- all lose six Pokemon. That is much
+better evidence than the greedy result alone.
+
+And the trainer data is NOT the problem. The moves the agent watched these
+Pokemon use live match the file exactly: Vikavolt's Bug Buzz and Mud Shot,
+Bellibolt's Hidden Power, Pawmot's Drain Punch.
+
+So what is left:
+
+1. **Items.** Nothing in this repo can use a potion, and a real run has them.
+   This is now the leading candidate and it has never been modelled.
+2. **The team.** `realTeam()` reads the CURRENT save. James has restarted runs
+   more than once tonight; the six Pokemon simulated may not be the six he beat
+   Surge with, at the levels he beat it at.
+
+Both are cheap to test and neither was tested tonight. Until one of them closes
+the gap, treat every Surge number in this repo as measuring a fight that may not
+be the one being played.
