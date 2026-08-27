@@ -343,7 +343,7 @@ if (!fs.existsSync(PRED)) {
 	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
-		+ 'rng_before\tdraws\n');
+		+ 'rng_before\tdraws\trolls\tcrit_rolls\n');
 }
 
 let lastTurn = 0, awaiting = null;
@@ -429,7 +429,8 @@ setInterval(() => {
 					awaiting.predOur, awaiting.predTheir,
 					(foeSwapped ? '>=' : '') + ourDmg,
 					(meSwapped ? '>=' : '') + theirDmg,
-					awaiting.rng, awaiting.draws.join(',')].join('\t') + '\n');
+					awaiting.rng, awaiting.draws.join(','),
+					awaiting.rolls.join(','), awaiting.critRolls].join('\t') + '\n');
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));
 				console.log('  turn ' + awaiting.turn + ' resolved: our damage '
@@ -479,8 +480,27 @@ setInterval(() => {
 	d.all.slice(0, 4).forEach(r => console.log('     ' + String(r.score.toFixed(1)).padStart(7)
 		+ '  ' + (r.action.type === 'switch' ? 'switch ' + r.action.index : r.action.move)));
 
+	// THE WHOLE DAMAGE BAND, so the roll INDEX can be recovered from the actual
+	// damage. Comparing a single median prediction against reality only ever
+	// says "close" or "not close"; with all sixteen values, the actual damage
+	// names which roll happened, and that number can be checked directly
+	// against draw #4 % 16. That is the experiment that settles the draw
+	// ordering rather than gesturing at it.
+	let rolls = [], critRolls = '';
+	if (d.best.action.type === 'move') {
+		try {
+			const r = B.damageRolls(st, 'me', d.best.action.move);
+			if (r && !r.immune) {
+				const hits = r.hits || 1;
+				rolls = r.noCrit.map(v => v * hits);
+				critRolls = r.crit[r.crit.length - 1] * hits;
+			}
+		} catch (e) { /* a status move has no band */ }
+	}
+
 	awaiting = {
 		turn: obs.turn, us, them, ourAction, theirAction, predOur, predTheir,
+		rolls, critRolls,
 		byteSays, modelSays, stale: d.src.stale,
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
 		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
