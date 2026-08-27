@@ -95,13 +95,28 @@ let beam = [{
 	turn: 1
 }];
 
-foeSets.forEach((foe, fi) => {
+// FOLLOW THE ORDER THEY ACTUALLY CHOOSE. This used to walk their roster and
+// charge each leg against the HP spent by the legs before it -- but the
+// opponent picks its replacement by MATCHUP, so the sequence priced was not the
+// sequence played. Measured 40/40 on this fight: after the lead faints they
+// send Pawmot, where the roster says Vikavolt. The plan therefore budgeted for
+// the hardest Pokemon arriving fourth when it arrives second, and the whole
+// thing lost 30/30 under real dice while claiming to lose nobody.
+//
+// Now each branch tracks who is ACTUALLY on the field, and pricePath reports
+// who arrives after a kill, so different branches can follow different orders.
+beam.forEach(n => { n.activeFoe = 0; n.killed = []; });
+
+for (let round = 0; round < foeSets.length; round++) {
 	const next = [];
 	beam.forEach(node => {
+		if (node.killed.length >= foeSets.length) { next.push(node); return; }
+		const fi = node.activeFoe;
+		if (fi < 0 || node.killed.includes(fi)) return;
+		const foe = foeSets[fi];
 		const priced = [];
 		for (const cand of ideasFor(fi, node.field)) {
 			if (!cand.jobs.length) continue;
-			// A path whose Pokemon are all dead is not a path from here.
 			if (cand.jobs.every(j => node.dead.includes(j.mon))) continue;
 			const r = pricePath(ctx, fi, cand.jobs, {
 				hp: node.hp, dead: node.dead, active: node.active,
@@ -109,7 +124,7 @@ foeSets.forEach((foe, fi) => {
 			}, {expendable: EXPENDABLE});
 			if (!r.kills) continue;
 			const illegal = r.dead.filter(n => !EXPENDABLE.includes(n));
-			if (illegal.length) continue;          // the cap is a constraint
+			if (illegal.length) continue;
 			priced.push({cand, r});
 		}
 		priced.sort((a, b) => cost(a.r) - cost(b.r));
@@ -119,51 +134,41 @@ foeSets.forEach((foe, fi) => {
 				dead: node.dead.concat(r.dead),
 				active: r.active,
 				steps: node.steps.concat([{foe: foe.species, cand, r}]),
+				spent: node.spent + cost(r),
+				risk: 1 - (1 - node.risk) * (1 - r.deathRisk),
 				field: r.field,
 				turn: node.turn + r.turns,
-				spent: node.spent + cost(r),
-				risk: 1 - (1 - node.risk) * (1 - r.deathRisk)
+				killed: node.killed.concat([fi]),
+				// Who they send next, taken from the simulation.
+				activeFoe: r.nextFoe
 			});
 		});
 	});
 	next.sort((a, b) => (a.spent + 4 * a.risk) - (b.spent + 4 * b.risk));
-	// Keep the beam DIVERSE by who is left standing on the field. Position is
-	// half of what makes a path available: Lilligant can sleep Pawmot from the
-	// field and cannot sleep it after eating a switch-in hit on the way, so a
-	// branch that merely ends with her out front is worth carrying even when it
-	// is not the cheapest. A beam sorted on price alone throws that away and
-	// then reports that no sleep line exists.
 	const byActive = {}, diverse = [];
 	next.forEach(n => {
-		if (byActive[n.active]) return;
-		byActive[n.active] = true;
+		const k = n.active + '/' + n.activeFoe;
+		if (byActive[k]) return;
+		byActive[k] = true;
 		diverse.push(n);
 	});
 	beam = diverse.slice(0, Math.ceil(BEAM / 2))
 		.concat(next.filter(n => !diverse.includes(n))).slice(0, BEAM);
-	console.log('  after ' + foe.species + ': ' + next.length
-		+ ' surviving combinations, keeping ' + beam.length
-		+ (beam.length ? '   (turn ' + beam[0].turn
-			+ (beam[0].field.terrainTurns > 0
-				? ', ' + beam[0].field.terrain + ' terrain ' + beam[0].field.terrainTurns + ' left'
-				: ', no terrain') + ')' : ''));
+	const done = beam.filter(n => n.killed.length >= foeSets.length).length;
+	console.log('  round ' + (round + 1) + ': ' + next.length + ' branches, keeping '
+		+ beam.length + (beam.length ? '   (next up: ' + beam.map(n =>
+			n.activeFoe >= 0 ? foeSets[n.activeFoe].species : 'done')
+			.filter((v, i, a) => a.indexOf(v) === i).join('/') : '') + ')');
 	if (!beam.length) {
-		console.log('\nNO FEASIBLE COMBINATION. Nothing that kills ' + foe.species
-			+ ' from any reachable position stays inside the cap.');
+		console.log('\nNO FEASIBLE COMBINATION from the order they actually play.');
 		process.exit(1);
 	}
-});
-
-// The chosen combination, as a POLICY TABLE, so it can be replayed with real
-// dice. combine.js searches at the MEDIAN roll -- that is the right reading for
-// "what normally happens" and the wrong one for "does this hold up". Step 4 of
-// docs/PLAN-LINE-PLANNER.md says every candidate plan gets rollout-verified
-// before it is believed, and that step has never been run on this output.
-if (process.env.EMIT_PLAN && beam.length) {
-	const plan = {};
-	beam[0].steps.forEach(s => { plan[s.foe] = s.cand.jobs; });
-	require('fs').writeFileSync(process.env.EMIT_PLAN, JSON.stringify(plan, null, 1));
-	console.log('\nplan written to ' + process.env.EMIT_PLAN);
+	if (done === beam.length) break;
+}
+beam = beam.filter(n => n.killed.length >= foeSets.length);
+if (!beam.length) {
+	console.log('\nNO COMBINATION kills their whole team in the order they play it.');
+	process.exit(1);
 }
 
 console.log('\n' + beam.length + ' complete combinations survive the cap.\n');

@@ -107,3 +107,30 @@ it can be simulated rather than guessed.
 Everything I said earlier about a zero-loss Surge line should be read with this
 attached. The line was real at median rolls in the order it assumed; that order
 does not happen.
+
+## The planner, fixed to follow their real order
+
+`pricePath` no longer rotates their team, and it now REPORTS who arrives after a
+kill by simulating the replacement. `combine.js` follows that instead of walking
+the roster, so different branches follow different orders -- which is correct,
+because their choice depends on who we have out.
+
+The honest answer that falls out:
+
+    NO FEASIBLE COMBINATION from the order they actually play
+
+at BEAM=12 and again at BEAM=30 / PER_NODE=12 / LIMIT=10. It is not search
+width. Both runs reach ROUND 4 with branches alive and die at round 5: four of
+their five can be killed inside the cap, and the last one beats whatever is left.
+
+This is a better answer than the one it replaces -- a plan that claimed zero
+losses and lost 30/30 -- but "not found" is not "impossible", and it should not
+be read as the fight being unwinnable. James beats it losing one Pokemon. What
+the search cannot currently express is the likely gap:
+
+- ITEMS. No potion, no revive, nothing from the bag. A real run has them.
+- Voluntary switching mid-leg, which the executor also cannot perform.
+- Candidate shapes are still a handful of intents per foe, capped by LIMIT.
+
+The next question worth asking is which of those three, added alone, makes a
+line appear.

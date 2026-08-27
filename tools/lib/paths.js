@@ -50,11 +50,19 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	const en = entry || {};
 	const expendable = options.expendable || [];
 
-	// Rotate their team so the target leads, keeping the bench so they can
-	// still choose to leave -- a path that they walk out of is a real outcome
-	// and needs to be visible, not simulated away.
-	const foeTeam = ctx.foeSets.slice(fi).concat(ctx.foeSets.slice(0, fi));
-	let st = B.createState(ctx.party, foeTeam, options.stateOpts || {});
+	// THEIR TEAM STAYS IN ITS REAL ORDER. It used to be rotated so the target
+	// led, which made the target's entry ability fire -- but it also meant
+	// every leg was priced in a fight whose Pokemon are in a different order
+	// from the real one, and the combination search then walked that fictional
+	// order. Their replacement is chosen by MATCHUP, not by roster position:
+	// measured 40/40, Surge sends Pawmot second where the roster says Vikavolt.
+	//
+	// So the real order is kept and the target's entry ability is applied by
+	// hand. That also makes the lead's ability fire, which is correct -- in the
+	// real fight Pincurchin did lead and its terrain is up.
+	let st = B.createState(ctx.party, ctx.foeSets, options.stateOpts || {});
+	st.foe.active = fi;
+	if (fi !== 0) B.applyEntryAbility(st, 'foe');
 
 	// THE FIELD IS CARRIED, not re-derived. Rotating their team so the target
 	// leads means the LEAD's entry ability fires, so a leg against their fourth
@@ -92,7 +100,7 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		}
 	}
 	if (en.foeChip) {
-		st.foe.team[0].curHP = Math.max(1, Math.round(st.foe.team[0].maxHP * (1 - en.foeChip)));
+		st.foe.team[fi].curHP = Math.max(1, Math.round(st.foe.team[fi].maxHP * (1 - en.foeChip)));
 	}
 	if (en.active !== undefined) {
 		const i = typeof en.active === 'number' ? en.active : idxOf(en.active);
@@ -118,9 +126,9 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	let outcome = 'stall', turns = 0, survive = 1, blocked = 0;
 
 	for (let t = 0; t < cap; t++) {
-		const target = st.foe.team[0];
+		const target = st.foe.team[fi];
 		if (target.fainted) { outcome = 'kill'; break; }
-		if (st.foe.active !== 0) { outcome = 'left'; break; }
+		if (st.foe.active !== fi) { outcome = 'left'; break; }
 		if (st.me.team.every(m => m.fainted)) { outcome = 'wiped'; break; }
 
 		const scored = RRAI.scoreAll(st, 'foe', FLAGS, {});
@@ -177,10 +185,10 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 			they: theirs.type === 'switch'
 				? '-> ' + before.foe.team[theirs.index].set.species : theirs.move,
 			us: st.me.team.map(m => m.fainted ? 'X' : Math.round(100 * m.curHP / m.maxHP)).join('/'),
-			them: Math.round(100 * st.foe.team[0].curHP / st.foe.team[0].maxHP)
+			them: Math.round(100 * st.foe.team[fi].curHP / st.foe.team[fi].maxHP)
 		});
 	}
-	if (outcome === 'stall' && st.foe.team[0].fainted) outcome = 'kill';
+	if (outcome === 'stall' && st.foe.team[fi].fainted) outcome = 'kill';
 
 	// The spend vector: what this path actually cost, per Pokemon. Negative
 	// entries are real and are not a bug -- absorb abilities, drain moves and
@@ -205,7 +213,10 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		active: st.me.team[st.me.active].set.species,
 		field: {terrain: st.field.terrain, terrainTurns: st.field.terrainTurns,
 			weather: st.field.weather, weatherTurns: st.field.weatherTurns},
-		foeLeft: st.foe.team[0].curHP / st.foe.team[0].maxHP,
+		foeLeft: st.foe.team[fi].curHP / st.foe.team[fi].maxHP,
+		// Who they send next, simulated rather than assumed from the roster.
+		nextFoe: st.foe.team[st.foe.active] && !st.foe.team[st.foe.active].fainted
+			? st.foe.active : -1,
 		deathRisk: 1 - survive,
 		blockedEntries: blocked,
 		state: st,
