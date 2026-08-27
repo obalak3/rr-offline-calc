@@ -415,7 +415,8 @@ if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
 const PRED_HEADER = 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 	+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 	+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
-	+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\n';
+	+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\t'
+	+ 'foe_status_after\tme_status_after\n';
 if (fs.existsSync(PRED)) {
 	const first = fs.readFileSync(PRED, 'utf8').split('\n')[0] + '\n';
 	if (first !== PRED_HEADER) {
@@ -427,7 +428,8 @@ if (!fs.existsSync(PRED)) {
 	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
-		+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\n');
+		+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\t'
+	+ 'foe_status_after\tme_status_after\n');
 }
 
 let lastTurn = 0, awaiting = null;
@@ -515,7 +517,9 @@ setInterval(() => {
 					(meSwapped ? '>=' : '') + theirDmg,
 					awaiting.rng, awaiting.draws.join(','),
 					awaiting.rolls.join(','), awaiting.critRolls,
-					awaiting.foeRolls.join(';'), awaiting.foeCrit].join('\t') + '\n');
+					awaiting.foeRolls.join(';'), awaiting.foeCrit,
+					statusOf(res.foe.status) || '', statusOf(res.me.status) || ''
+					].join('\t') + '\n');
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));
 				console.log('  turn ' + awaiting.turn + ' resolved: our damage '
@@ -616,6 +620,13 @@ setInterval(() => {
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
 		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
 		foePP: obs.foe.pp.slice(), foeMoves: obs.foe.moves.slice(),
+		// END-OF-TURN RESIDUAL IS INSIDE THE DAMAGE NUMBER. Damage is measured
+		// as HP before minus HP after across the WHOLE turn, so a burn or
+		// poison tick is counted as part of the hit. That is exactly why
+		// Lanturn's Scald read 45 against a band whose maximum is 40: forty of
+		// move damage plus five of burn. Recording the status on both sides
+		// lets residual be separated instead of inflating the move.
+		foeStatusBefore: obs.foe.status,
 		// SIXTY-FOUR DRAWS, not eight. The seed is read at the action menu and
 		// the game consumes an unknown number of values before our damage roll
 		// -- turn order, accuracy, the opponent's own move, secondary effects.
