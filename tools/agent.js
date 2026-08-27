@@ -279,6 +279,18 @@ function buildState(obs) {
 			foeTeam.push(known[i] || Object.assign({}, foeSet));
 		});
 	}
+	// NEVER HAND createState A NULL TEAM. When the position is not a fight we
+	// have trainer data for -- the boot screen, a wild battle, any fight before
+	// the rotation has loaded its save -- `known` is empty, foeTeam stayed null
+	// and createState threw, which killed the whole agent PROCESS rather than
+	// skipping one turn. The emulator then sat asking a planner that was no
+	// longer running. Fall back to what we can actually see: the Pokemon in
+	// front of us, one slot per occupied slot of their party.
+	if (!foeTeam || !foeTeam.length) {
+		const n = (obs.foeparty || []).filter(r => r && r.maxhp).length || 1;
+		foeTeam = [];
+		for (let i = 0; i < n; i++) foeTeam.push(Object.assign({}, foeSet));
+	}
 	const st = B.createState(mySets, foeTeam, {});
 	// Put THEIR active where it really is, and apply what we can see of them.
 	// THEIR ACTIVE, matched on the base name too. A mega arrives as its base
@@ -673,16 +685,56 @@ if (process.argv[2] === '--probe') {
 }
 
 // ------------------------------------------------------------------- the loop
+// A THROW ON ONE TURN MUST NOT END THE RUN. The agent died mid-session on a
+// position it could not build, and the emulator went on asking a planner that
+// was no longer there -- which reads exactly like the game being stuck.
+process.on('uncaughtException', function (e) {
+	console.log('[uncaught, continuing] ' + (e && e.stack || e));
+});
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
 // Tag every recorded result with the code that produced it. Rows from
 // different code versions were indistinguishable in results.tsv, so a change
 // to the planner could not be judged against the rows it actually produced.
+let VERSION = '?';
 try {
 	const cp = require('child_process');
 	const hash = cp.execSync('git rev-parse --short HEAD', {cwd: __dirname}).toString().trim();
 	const dirty = cp.execSync('git status --porcelain', {cwd: __dirname}).toString().trim() ? '+' : '';
-	fs.writeFileSync(path.join(DIR, 'version.txt'), hash + dirty + '\n');
+	VERSION = hash + dirty;
+	fs.writeFileSync(path.join(DIR, 'version.txt'), VERSION + '\n');
 } catch (e) { /* not fatal: the row just reads "?" */ }
+
+// THE AGENT MUST NOTICE ITS OWN CODE IS STALE.
+//
+// This is a long-running process: editing a file under tools/ changes nothing
+// until it is restarted, and there is no way to tell from the log which code
+// produced a turn. Hours went into a fix that was never running, and results
+// were read as if it were. Now the source files it actually loaded are
+// fingerprinted at startup, checked every turn, and a change is announced on
+// every decision AND stamped into version.txt -- so the results row the Lua
+// writes carries "-STALE" and cannot be quoted as evidence for the new code.
+const WATCHED = ['tools/agent.js', 'tools/lib/replan.js', 'tools/lib/candidates.js',
+	'tools/lib/paths.js', 'tools/lib/policy.js', 'tools/lib/duels.js',
+	'tools/lib/harness.js', 'tools/lib/enablers.js',
+	'upstream-calc/src/js/rr-battle.js', 'upstream-calc/src/js/rr-ai.js'];
+const repoRoot = path.join(__dirname, '..');
+function sourceStamp() {
+	return WATCHED.map(rel => {
+		try { return rel + ':' + fs.statSync(path.join(repoRoot, rel)).mtimeMs; }
+		catch (e) { return rel + ':?'; }
+	}).join('|');
+}
+const STAMP_AT_START = sourceStamp();
+let staleAnnounced = false;
+function checkStale() {
+	if (sourceStamp() === STAMP_AT_START) return false;
+	if (!staleAnnounced) {
+		staleAnnounced = true;
+		try { fs.writeFileSync(path.join(DIR, 'version.txt'), VERSION + '-STALE\n'); }
+		catch (e) { /* nothing to do */ }
+	}
+	return true;
+}
 // The header is rewritten whenever the schema changes, not only when the file
 // is absent. Columns were added twice tonight and the header was not, so rows
 // carried twenty fields under an eighteen-field header -- every parse silently
@@ -915,6 +967,11 @@ setInterval(() => {
 
 	console.log('\nturn ' + obs.turn + '  ' + us + ' (' + obs.me.hp + ') vs '
 		+ them + ' (' + obs.foe.hp + ')');
+	if (checkStale()) {
+		console.log('  *** STALE: source files changed since this process started.'
+			+ ' It is STILL RUNNING THE OLD CODE. Restart the agent before'
+			+ ' believing anything below. Results are marked ' + VERSION + '-STALE.');
+	}
 	console.log('  they will: ' + theirAction
 		+ '   [byte ' + byteSays + (d.src.stale ? ' STALE, ignored' : '')
 		+ ' | model ' + modelSays + ']');

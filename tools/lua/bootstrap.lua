@@ -71,7 +71,12 @@ callbacks:add("frame", function()
 	-- Check for a new implementation twice a second. Cheap, and it means a fix
 	-- lands without anybody touching the emulator.
 	if frame % 30 == 0 then
-		local stamp = readAll(STAMP)
+		-- WATCH THE FILE ITSELF, not only the stamp. Editing agent_impl.lua and
+		-- forgetting to touch ~/rr-agent/reload left the emulator running code
+		-- that no longer existed on disk, with nothing in any log to say so.
+		-- The stamp still works and is still honoured; this just removes the
+		-- step a person has to remember.
+		local stamp = (readAll(STAMP) or "") .. "|" .. #(readAll(IMPL) or "")
 		if stamp ~= lastStamp then
 			lastStamp = stamp
 			reload()
