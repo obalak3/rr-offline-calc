@@ -37,6 +37,8 @@ const PRED = path.join(DIR, 'predictions.tsv');
 
 const engine = H.loadEngine();
 const B = engine.B;
+const RRAI = engine.sandbox.RRAI;
+const AI_FLAGS = {checkBadMove: true, checkGoodMove: true};
 const dex = H.loadDex();
 const party = H.realTeam();
 
@@ -170,12 +172,52 @@ function buildState(obs) {
 	return st;
 }
 
-/** What the opponent has already committed to, read rather than predicted. */
-function foeAction(st, obs) {
+/**
+ * What the opponent will do -- read from RAM, or modelled, whichever is trusted.
+ *
+ * THE DECISION BYTE DOES NOT GENERALISE. It was validated 32/32, but every one
+ * of those labels came from Surge-side states, and this is the cross-fight
+ * check that never happened. On the Lokix fight it reads "SWITCH 3" on turn
+ * after turn across completely different positions -- an unchanging value is
+ * not a decision, it is a leftover -- and both logged rows where it predicted a
+ * switch, the opponent actually used Knock Off.
+ *
+ * So it is no longer trusted blindly. A reading that repeats across a changed
+ * position is treated as stale, and the ported AI model answers instead. Both
+ * are recorded either way, so the log measures which is right rather than
+ * assuming.
+ */
+let lastByte = null, byteRepeats = 0;
+
+function modelAction(st) {
+	try {
+		const scored = RRAI.scoreAll(st, 'foe', AI_FLAGS, {});
+		if (!scored.length) return null;
+		let best = -Infinity;
+		scored.forEach(e => { if (e.score > best) best = e.score; });
+		return scored.filter(e => e.score === best)[0].action;
+	} catch (e) { return null; }
+}
+
+function byteAction(obs) {
 	if (obs.ai_action === 1) return {type: 'switch', index: obs.ai_target};
 	const mv = moveName(obs.foe.moves[obs.ai_target]);
 	if (!mv) return null;
 	return {type: 'move', index: obs.ai_target, move: mv};
+}
+
+function foeAction(st, obs) {
+	const sig = obs.ai_action + ':' + obs.ai_target;
+	if (sig === lastByte) byteRepeats++; else { byteRepeats = 0; lastByte = sig; }
+	const fromByte = byteAction(obs);
+	const fromModel = modelAction(st);
+	// Three identical readings across three different positions means the byte
+	// is not being written in this fight.
+	const stale = byteRepeats >= 3;
+	return {
+		chosen: (stale || !fromByte) ? fromModel : fromByte,
+		byte: fromByte, model: fromModel, stale: stale
+	};
 }
 
 // The battle generator, solved: mul 0x41C64E6D, add 12345.
@@ -188,7 +230,8 @@ function draws(seed, n) {
 }
 
 function decide(st, obs) {
-	const theirs = foeAction(st, obs);
+	const src = foeAction(st, obs);
+	const theirs = src.chosen;
 	const legal = B.legalActions(st, 'me');
 	const rows = [];
 	// WHEN THEY SWITCH, WE ARE NOT HITTING WHO WE CAN SEE. Only their active
@@ -238,14 +281,14 @@ function decide(st, obs) {
 		});
 	}
 	rows.sort((x, y) => y.score - x.score);
-	return {best: rows[0], all: rows, theirs};
+	return {best: rows[0], all: rows, theirs, src};
 }
 
 // ------------------------------------------------------------------- the loop
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
 if (!fs.existsSync(PRED)) {
 	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_predicted\t'
-		+ 'their_actual\tpredictor_ok\t'
+		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
 		+ 'rng_before\tdraws\n');
 }
@@ -318,6 +361,7 @@ setInterval(() => {
 				fs.appendFileSync(PRED, [awaiting.turn, awaiting.us, awaiting.them,
 					awaiting.ourAction, awaiting.theirAction,
 					theirActual, predictorOK,
+					awaiting.byteSays, awaiting.modelSays, awaiting.stale ? 'stale' : '',
 					awaiting.predOur, awaiting.predTheir,
 					(foeSwapped ? '>=' : '') + ourDmg,
 					(meSwapped ? '>=' : '') + theirDmg,
@@ -351,14 +395,19 @@ setInterval(() => {
 	const us = speciesName(obs.me.species), them = speciesName(obs.foe.species);
 	const ourAction = d.best.action.type === 'switch'
 		? 'switch ' + d.best.action.index : d.best.action.move;
-	const theirAction = d.theirs.type === 'switch'
-		? 'switch ' + d.theirs.index : d.theirs.move;
+	const describe = a => !a ? 'none'
+		: (a.type === 'switch' ? 'switch ' + a.index : a.move);
+	const theirAction = describe(d.theirs);
+	const byteSays = describe(d.src.byte);
+	const modelSays = describe(d.src.model);
 	const predOur = Math.round(d.best.theirLoss * st.foe.team[0].maxHP);
 	const predTheir = Math.round(d.best.myLoss * st.me.team[st.me.active].maxHP);
 
 	console.log('\nturn ' + obs.turn + '  ' + us + ' (' + obs.me.hp + ') vs '
 		+ them + ' (' + obs.foe.hp + ')');
-	console.log('  they have committed to: ' + theirAction);
+	console.log('  they will: ' + theirAction
+		+ '   [byte ' + byteSays + (d.src.stale ? ' STALE, ignored' : '')
+		+ ' | model ' + modelSays + ']');
 	console.log('  we play: ' + ourAction
 		+ (d.best.unknownTarget
 			? '   (they are switching, so this lands on whoever comes in)'
@@ -368,6 +417,7 @@ setInterval(() => {
 
 	awaiting = {
 		turn: obs.turn, us, them, ourAction, theirAction, predOur, predTheir,
+		byteSays, modelSays, stale: d.src.stale,
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
 		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
 		foePP: obs.foe.pp.slice(), foeMoves: obs.foe.moves.slice(),
