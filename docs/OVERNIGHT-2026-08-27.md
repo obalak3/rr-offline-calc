@@ -265,3 +265,46 @@ So what is left:
 Both are cheap to test and neither was tested tonight. Until one of them closes
 the gap, treat every Surge number in this repo as measuring a fight that may not
 be the one being played.
+
+### Items do not explain it either, and the fight is CLOSE
+
+    greedy with 0 potions   won 0/20
+    greedy with 2 potions   won 0/20
+    greedy with 4 potions   won 0/20
+    greedy with 8 potions   won 0/20
+
+Eight free 60 HP heals change nothing, so the leading candidate from the last
+section is dead too.
+
+But the magnitude finally got measured, and it reframes everything above:
+
+    greedy killed 2 of their 5   in 11 of 20 episodes
+    greedy killed 3 of their 5   in  7 of 20
+    greedy killed 4 of their 5   in  2 of 20
+
+This is not a blowout. A weak player gets two to four kills and runs out of
+Pokemon. The distance between that and winning is one or two kills.
+
+### The honest conclusion, in both directions
+
+I have twice tonight said "the simulation is the problem" and once said "the
+fidelity gap explains it", and neither is supported. What IS supported:
+
+- The opponent's sets are right (live observation matches the trainer file).
+- Damage is right (median actual/band-max 0.92 ours, 0.91 theirs).
+- Their replacement order is right (40/40 Pawmot second).
+- Move-prediction fidelity of 76% does not make the fight winnable at 100%.
+- Items do not make it winnable.
+- Four player implementations lose, but three of them are weak and the fourth
+  (advisor, perfect prediction, 3-ply) has known bugs and only 6 episodes.
+
+So the fight is TIGHT and our players are not good enough, and I cannot
+currently distinguish that from the environment being slightly too hard. The one
+untested difference is the TEAM: `realTeam()` reads the current save, and the run
+has been restarted more than once. That is a question for James, not another
+experiment: was this the team, at these levels, when he beat Surge losing one?
+
+What would settle it without asking: have the live agent play Surge from ss5 and
+see how many kills it gets in the REAL game with the same greedy policy. If the
+real fight yields more kills than the simulated one from the same play, the
+environment is too hard. That is the first thing to run when mGBA is back.
