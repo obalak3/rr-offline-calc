@@ -375,7 +375,28 @@ function advise(state, obs, opts, engine, session) {
 	let best = planHi.best;
 	let repeats = 0;
 	if (session) {
-		const sig = signature(obs);
+		// PROFITABLE LOOPS ARE EXEMPT. The guard exists for the oscillation
+		// disease -- 21 switches on Lt. Surge, each undoing the last, gaining
+		// nothing. But James's lure is ALSO a loop by signature: Gyarados
+		// baits Thunder Punch, Lanturn absorbs it, Gyarados re-enters for
+		// another Intimidate, repeat until Scald wins the race. At T11 of the
+		// Gyarados line the evaluator correctly ranked the Lanturn absorb #1
+		// and the guard, blind to profit, demoted it into a Breloom that Ice
+		// Punch threatens and that cannot touch Pawmot. James: "it literally
+		// does not make any sense."
+		//
+		// The difference between the disease and the lure is measurable at
+		// the signature itself: a profitable cycle CHANGES the position --
+		// their HP down, our HP up, a stat stage shifted, PP spent -- so its
+		// signature drifts, while the disease returns to the same signature
+		// exactly. Including boosts and both sides' exact HP in the signature
+		// makes the disease still loop (and still get caught) while the lure
+		// registers as new positions, because Intimidate moved atk and the
+		// absorb moved HP. If a lure ever truly changes nothing, it gains
+		// nothing, and the guard SHOULD break it.
+		const boosts = (obs && obs.foe && obs.foe.boosts) ? JSON.stringify(obs.foe.boosts) : '';
+		const sig = signature(obs) + '|' + boosts
+			+ '|' + (obs && obs.me ? obs.me.hp : '') + '|' + (obs && obs.foe ? obs.foe.barPx : '');
 		repeats = session.seen.get(sig) || 0;
 		session.seen.set(sig, repeats + 1);
 		if (repeats > 0 && planHi.entries && planHi.entries.length) {
