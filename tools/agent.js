@@ -220,9 +220,24 @@ function readJSON(p) {
 	try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
 }
 
+/**
+ * Is this question already answered?
+ *
+ * Keying on the turn number alone was wrong. A hot reload restarts the
+ * counter, so a genuinely new question arrives labelled "turn 1", the planner
+ * sees a number it has already answered, and both halves wait forever. What
+ * actually decides it is whether an answer for THIS question is sitting on
+ * disk: the agent deletes the command file whenever it asks, so a missing or
+ * stale command file means the question is open, whatever it is numbered.
+ */
+function alreadyAnswered(obs) {
+	const cmd = readJSON(CMD);
+	return !!(cmd && cmd.turn === obs.turn);
+}
+
 setInterval(() => {
 	const obs = readJSON(STATE);
-	if (!obs || obs.turn === lastTurn) {
+	if (!obs || alreadyAnswered(obs)) {
 		if (awaiting) {
 			const res = readJSON(RESULT);
 			if (res && res.turn === awaiting.turn) {

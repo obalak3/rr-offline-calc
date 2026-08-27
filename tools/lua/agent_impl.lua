@@ -38,6 +38,18 @@ local RNG           = 0x020386D0
 
 local S_ACTION, S_MOVES, S_PARTY, S_BUSY = 0x0802E439, 0x0802EA11, 0x08030685, 0x0802E3B5
 
+-- IS A BATTLE EVEN RUNNING. The agent had no concept that a fight can END, so
+-- when one did it went on reading gBattleMons -- which keeps the corpse of the
+-- last battler -- and reported a live position from stale memory: "them hp=0,
+-- us hp=98", forever, while mashing A at an overworld that would happily walk
+-- it into an NPC conversation.
+--
+-- 0x030030F0 is the main-loop callback. It holds the SAME ROM pointer across
+-- all ten in-battle snapshots -- action menu, move list, party screen,
+-- animation and text alike -- and a different one once the battle is over,
+-- which is exactly the signature of a main loop rather than a screen.
+local MAIN_CB, CB_BATTLE = 0x030030F0, 0x080123E5
+
 -- BattlePokemon, Gen 3 layout.
 local O_SP, O_MOVES, O_STAGES, O_AB, O_PP, O_HP, O_LV, O_MAX, O_ITEM, O_ST1 =
 	0x00, 0x0C, 0x18, 0x20, 0x24, 0x28, 0x2A, 0x2C, 0x2E, 0x4C
@@ -49,11 +61,18 @@ local O_STATS = 0x02
 local P_SIZE, P_STATUS, P_LEVEL, P_HP, P_MAX = 100, 0x50, 0x54, 0x56, 0x58
 
 local KEY_A, KEY_B = 1, 2
+-- Set by the presence of a file, so it can be flipped without a reload.
+local RESTART = false
+do
+	local f = io.open(os.getenv("HOME") .. "/rr-agent/restart", "r")
+	if f then f:close(); RESTART = true end
+end
 
 pcall(function() os.execute("mkdir -p '" .. DIR .. "'") end)
 
 -- ------------------------------------------------------------------ reading
 local function screen()
+	if emu:read32(MAIN_CB) ~= CB_BATTLE then return "nobattle" end
 	local c = emu:read32(CTRL_ME)
 	if c == S_ACTION then return "action" end
 	if c == S_MOVES  then return "moves"  end
@@ -101,8 +120,26 @@ local function party()
 end
 
 -- ------------------------------------------------------------------ the loop
-local turn, phase, timer, pending, want = 0, "wait", 0, nil, nil
-local lastSig, attempts = "", 0
+-- ALL PROGRESS LIVES IN A GLOBAL, so that a hot reload does not amputate an
+-- action halfway through. The bootstrap can swap this file in at any moment --
+-- including between writing FIGHT to the action cursor and writing the move
+-- slot -- and the first live load proved it: the implementation reloaded
+-- immediately after "playing move 1", reset phase to "wait", and abandoned the
+-- press it was in the middle of. Reloading has to be invisible to a turn in
+-- flight or it is not safe to iterate while the agent is playing.
+_RR = _RR or {turn = 0, phase = "wait", timer = 0, pending = nil,
+	want = nil, lastSig = "", attempts = 0}
+local turn, phase, timer, pending, want = _RR.turn, _RR.phase, _RR.timer, _RR.pending, _RR.want
+local lastSig, attempts = _RR.lastSig, _RR.attempts
+local unstick = _RR.unstick or 0
+
+-- Written back on every tick; locals stay for readability and speed.
+local function persist()
+	_RR.turn, _RR.phase, _RR.timer = turn, phase, timer
+	_RR.pending, _RR.want = pending, want
+	_RR.lastSig, _RR.attempts = lastSig, attempts
+	_RR.unstick = unstick
+end
 local log = io.open(DIR .. "agent.log", "a")
 local function say(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
 
@@ -115,7 +152,6 @@ end
 
 local function writeState(kind)
 	turn = turn + 1
-	_RR_TURN = turn
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
@@ -157,12 +193,98 @@ end
 
 local frame = 0
 local function tick()
+	local ok, err = pcall(tick_inner)
+	persist()
+	if not ok then error(err) end
+end
+
+function tick_inner()
 	frame = frame + 1
 	if frame % 4 ~= 0 and phase == "wait" then return end
 
 	local scr = screen()
 
 	if phase == "wait" then
+		-- PUT THE UI BACK WHERE IT BELONGS. Waiting only ever asks a question
+		-- from the action menu or a forced party screen, so being parked
+		-- anywhere else means standing there forever -- which is exactly what
+		-- happened when a reload landed mid-press and left the move list open
+		-- with nobody intending to choose a move. Backing out is safe: B in the
+		-- move list returns to the action menu, and B in the submenu closes it.
+		if scr == "moves" or scr == "party_submenu" then
+			unstick = (unstick or 0) + 1
+			emu:setKeys(unstick % 20 < 4 and KEY_B or 0)
+			if unstick % 60 == 0 then
+				say("recovering: parked on " .. scr .. " with nothing to do, backing out")
+			end
+			return
+		end
+		if scr == "nobattle" then
+			-- Outside a battle the agent presses NOTHING. It has no map of the
+			-- overworld and no business acting there.
+			emu:setKeys(0)
+			unstick = (unstick or 0) + 1
+			if unstick == 120 then
+				say("the battle is over. " .. (_RR.fights or 0) .. " fought so far")
+			end
+			-- Restart from the save, which is what makes a calibration run a
+			-- LOOP: play, finish, reload, play again, without anybody watching.
+			if unstick > 240 and RESTART then
+				local f = io.open(DIR .. "load.txt", "r")
+				local file = f and (f:read("*a") or ""):gsub("%s+$", "") or ""
+				if f then f:close() end
+				if file ~= "" and pcall(function() emu:loadStateFile(file) end) then
+					_RR.fights = (_RR.fights or 0) + 1
+					say("restarted the fight (" .. _RR.fights .. ")")
+					os.remove(DIR .. "state.json")
+					os.remove(DIR .. "cmd.json")
+					lastSig, unstick = "", 0
+				end
+			end
+			return
+		end
+		if scr == "busy" then
+			-- A message is up and nobody is going to advance it. The settle
+			-- phase presses A while busy, but a reload or a recovery can leave
+			-- us WAITING while the game holds on text -- and then both sides
+			-- wait for each other forever. Whoever is idle has to keep the
+			-- game moving.
+			unstick = (unstick or 0) + 1
+			emu:setKeys(unstick % 30 < 4 and KEY_A or 0)
+			if unstick % 240 == 0 then
+				-- Report what is actually there. "Busy" that never ends is not
+				-- a message -- it is a screen the map does not cover, and
+				-- pressing A blindly at an unknown screen is the exact thing
+				-- this agent is built not to do.
+				say(string.format(
+					"waiting: busy for %d frames. ctrl=0x%08X id=%d  us sp=%d hp=%d  them sp=%d hp=%d",
+					unstick, emu:read32(CTRL_ME), emu:read8(SCREEN_ID),
+					emu:read16(MON + O_SP), emu:read16(MON + O_HP),
+					emu:read16(MON + SIZE + O_SP), emu:read16(MON + SIZE + O_HP)))
+			end
+			-- Stop pressing after a while. If A has not moved it in twenty
+			-- seconds, it is not a message and mashing is doing something else.
+			if unstick > 1200 then emu:setKeys(0) end
+			-- Dump RAM once, LABELLED as whatever this is, so it can be diffed
+			-- against the in-battle snapshots already on disk. The agent has no
+			-- idea a battle can END; if this is the overworld then gBattleMons
+			-- is just stale and every reading above is meaningless. Finding the
+			-- flag that says "in battle" is the same measurement that produced
+			-- the screen map, and needs nobody's help.
+			if unstick > 1260 and not _RR_DUMPED then
+				_RR_DUMPED = true
+				local dir = os.getenv("HOME") .. "/rr-screen-corpus/screens/"
+				for _, r in ipairs({{n = "ew", b = 0x02020000, l = 0x8000},
+						{n = "iw", b = 0x03000000, l = 0x8000}}) do
+					local f = io.open(dir .. "stuck." .. r.n .. ".bin", "wb")
+					if f then f:write(emu:readRange(r.b, r.l)); f:close() end
+				end
+				say("dumped RAM as 'stuck' for offline comparison")
+			end
+			return
+		end
+		unstick = 0
+
 		-- A decision point is the game asking us, on a position we have not
 		-- already answered. The signature guard is what stops the agent
 		-- answering the same turn twice while the menu is still up.
@@ -303,7 +425,13 @@ local function tick()
 	end
 
 	if phase == "settle" then
-		emu:setKeys(timer % 40 < 4 and KEY_A or 0)   -- advance battle messages
+		-- Advance messages ONLY while the game is busy. Pressing A blindly here
+		-- was pressing it at the action menu too, which opens FIGHT -- so the
+		-- agent kept re-opening the move list it had just come back from, never
+		-- saw the action menu again, and declared that nothing had resolved
+		-- after ninety seconds. It was undoing its own turn.
+		local advancing = (scr == "busy") and (timer % 40 < 4)
+		emu:setKeys(advancing and KEY_A or 0)
 		if scr == "action" or scr == "party" then
 			if positionSignature() ~= lastSig then
 				local f = io.open(DIR .. "result.json", "w")
@@ -329,9 +457,6 @@ end
 -- The turn counter lives in a global so it survives a hot reload; restarting
 -- the numbering mid-fight would make the planner's answers stop matching the
 -- questions they were answers to.
-_RR_TURN = _RR_TURN or 0
-turn = _RR_TURN
-
 -- LOAD THE FIGHT OURSELVES. James keeps save states parked at the exact
 -- decision point, so the agent should not need him to navigate to one: it
 -- reads a filename out of load.txt at startup and loads it. Only on a FIRST
