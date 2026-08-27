@@ -28,6 +28,7 @@
 const fs = require('fs');
 const path = require('path');
 const H = require('./lib/harness.js');
+const R = require('./lib/replan.js');
 
 const DIR = path.join(process.env.HOME, 'rr-agent');
 const STATE = path.join(DIR, 'state.json');
@@ -49,13 +50,34 @@ const party = H.realTeam();
  */
 const ALL_BATTLES = H.earlyBattles(engine, {maxLevel: 60});
 const battleCache = {};
+function planCtx(obs) {
+	const b = battleOf(obs);
+	const sets = b ? H.foeSets(b) : null;
+	return {
+		engine, party,
+		foeSets: (sets && sets.length) ? sets : [setFromBattler(obs.foe, null)],
+		expendable: (process.env.EXPENDABLE || 'Lilligant').split(',').filter(Boolean)
+	};
+}
+
 function battleOf(obs) {
 	const name = speciesName(obs.foe.species);
 	if (!name) return null;
 	if (battleCache[name] !== undefined) return battleCache[name];
+	// Match FORMS too. RAM reports the base species -- "Manectric" -- while the
+	// trainer data lists "Manectric-Mega", so an exact-name lookup returned
+	// nothing the moment Surge's last Pokemon came in, and foeSets(null) threw.
+	// That killed the planner mid-fight and left the agent waiting forever on an
+	// answer that was never coming.
+	const base = n => String(n || '').split('-')[0];
 	let found = null;
 	for (const b of ALL_BATTLES) {
 		if ((b.team || []).some(m => m.species === name)) { found = b; break; }
+	}
+	if (!found) {
+		for (const b of ALL_BATTLES) {
+			if ((b.team || []).some(m => base(m.species) === base(name))) { found = b; break; }
+		}
 	}
 	battleCache[name] = found;
 	return found;
@@ -221,7 +243,8 @@ function buildState(obs) {
 	// resolved.
 	let foeTeam = null;
 	if (obs.foeparty && obs.foeparty.length) {
-		const known = H.foeSets(battleOf(obs)) || [];
+		const b = battleOf(obs);
+		const known = b ? (H.foeSets(b) || []) : [];
 		const pool = known.slice();
 		foeTeam = [];
 		obs.foeparty.forEach(row => {
@@ -636,16 +659,41 @@ setInterval(() => {
 
 	const st = buildState(obs);
 	if (!st) { console.log('turn ' + obs.turn + ': could not identify the position'); return; }
-	let d;
-	if (process.env.GREEDY && obs.kind !== 'forced') {
+	// THE PLANNER DRIVES. Every turn it re-prices the ways to kill the Pokemon
+	// in front of us FROM THE CURRENT POSITION -- who can do it, what it costs,
+	// what has to happen first -- and plays the first move of the cheapest line
+	// that stays inside the cap. Next turn it asks again from wherever the dice
+	// put us, which is the whole point: a fixed script cannot notice that the
+	// position has drifted, and three separate experiments showed static plans
+	// dying because of exactly that.
+	//
+	// Until now this was scaffolding: a one-turn scorer with no lookahead and no
+	// plan at all. It played reasonable-looking moves for local reasons and had
+	// no notion of reserving a Pokemon for a job or of what the fight needs
+	// three turns from now.
+	let d = null, plannerSaid = null;
+	if (!process.env.GREEDY && !process.env.NOPLAN) {
+		try {
+			const pick = R.chooseAction(planCtx(obs), st, {});
+			if (pick && pick.action) {
+				plannerSaid = pick;
+				d = {best: {action: pick.action, foeDead: false, mineDead: false,
+					theirLoss: 0, myLoss: 0, unknownTarget: false},
+					all: [], theirs: null, src: {byte: null, model: null, stale: false}};
+			}
+		} catch (e) {
+			console.log('  [planner failed: ' + e.message + ']');
+		}
+	}
+	if (!d && process.env.GREEDY && obs.kind !== 'forced') {
 		const a = greedyAction(st);
 		d = {best: {action: a, foeDead: false, mineDead: false, theirLoss: 0, myLoss: 0,
 			unknownTarget: false}, all: [], theirs: null,
 			src: {byte: null, model: null, stale: false}};
-	} else {
+	} else if (!d) {
 		d = decide(st, obs);
 	}
-	if (!d.best) { console.log('turn ' + obs.turn + ': no legal action found'); return; }
+	if (!d || !d.best) { console.log('turn ' + obs.turn + ': no legal action found'); return; }
 	if (obs.kind === 'forced' && d.best.action.type !== 'switch') {
 		// Belt and braces: on a party screen the only executable answer is a
 		// switch. Anything else is unplayable and would cycle.
@@ -670,6 +718,7 @@ setInterval(() => {
 	console.log('  they will: ' + theirAction
 		+ '   [byte ' + byteSays + (d.src.stale ? ' STALE, ignored' : '')
 		+ ' | model ' + modelSays + ']');
+	console.log('  ' + (plannerSaid ? 'PLAN: ' + plannerSaid.path.cand.why : 'no plan found, falling back to one-turn scoring'));
 	console.log('  we play: ' + ourAction
 		+ (d.best.unknownTarget
 			? '   (they are switching, so this lands on whoever comes in)'

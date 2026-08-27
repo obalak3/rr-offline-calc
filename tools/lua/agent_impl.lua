@@ -445,10 +445,16 @@ function tick_inner()
 				if emu:read16(PARTY + i * P_SIZE + P_HP) > 0 then mineLeft = mineLeft + 1 end
 				if emu:read16(FOE_PARTY + i * P_SIZE + P_HP) > 0 then theirsLeft = theirsLeft + 1 end
 			end
-			if mineLeft > 0 and theirsLeft > 0 then
+			-- The transition guard is TIME-LIMITED. Outside a battle the party
+			-- reads are not meaningful -- they can still show healthy Pokemon --
+			-- so "both sides standing" stops being evidence of anything once we
+			-- have been out of battle for a while. Without the limit this
+			-- blocked every restart and the agent sat in nobattle for minutes,
+			-- which is the opposite of the bug it was added to fix.
+			if mineLeft > 0 and theirsLeft > 0 and unstick < 600 then
 				if unstick % 300 == 0 then
-					say("nobattle but both sides still standing (" .. mineLeft
-						.. " v " .. theirsLeft .. ") -- treating as a transition")
+					say("nobattle but both sides standing (" .. mineLeft .. " v "
+						.. theirsLeft .. ") -- waiting, may be a transition")
 				end
 				return
 			end

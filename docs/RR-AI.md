@@ -286,3 +286,36 @@ Zero at every point. Not supported — though three informative pairs is thin, a
 the reason it is thin is that the easy save states are dominated by opponents
 that spam a single move. The rotation now targets ss4 and ss5, whose opponents
 vary their moves and switch, which is also what the switch-scoring port needs.
+
+## Mega evolution: the ability fires TWICE — unmodelled
+
+Reported from live play, 2026-08-27.
+
+A mega Pokemon **switches in as its base form and mega-evolves on that same
+turn**, and the new form's ability fires on evolution. So the entry ability
+triggers once for the base form and again for the mega form.
+
+Surge's last Pokemon is the case in point: Manectric has Intimidate, and
+Manectric-Mega has Intimidate. It comes in, Intimidate procs, it mega-evolves,
+Intimidate procs **again** -- our attacker ends up at **-2 Attack, not -1**.
+
+Two things this breaks in the current model:
+
+1. **The Intimidate count.** Every plan that puts a physical attacker in front
+   of Manectric has been pricing it at -1 when the real figure is -2. Our
+   physical damage there is roughly a third lower than modelled.
+2. **The stats on the entry turn.** The trainer data names the set
+   "Manectric-Mega", so the model treats it as arriving already mega. For the
+   turn it arrives it is the BASE form -- different stats -- until it evolves.
+
+It also had a third consequence, now fixed: RAM reports the base species while
+the data lists the mega, so an exact-name battle lookup returned null the moment
+Manectric arrived, `foeSets(null)` threw, and the live planner died mid-fight
+leaving the agent waiting on an answer that never came. Form matching now falls
+back to the base name.
+
+The generalisation matters more than this one case: the pre-mega and post-mega
+abilities can DIFFER, and whichever the mega form has fires on evolution. Any
+plan that depends on an entry ability -- Intimidate stacking especially, which
+is the manoeuvre this project has leaned on -- has to account for two triggers,
+not one.
