@@ -56,6 +56,23 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	const foeTeam = ctx.foeSets.slice(fi).concat(ctx.foeSets.slice(0, fi));
 	let st = B.createState(ctx.party, foeTeam, options.stateOpts || {});
 
+	// THE FIELD IS CARRIED, not re-derived. Rotating their team so the target
+	// leads means the LEAD's entry ability fires, so a leg against their fourth
+	// Pokemon was being simulated with whatever terrain that Pokemon happens to
+	// set -- usually none. Meanwhile candidate generation was rejecting sleep
+	// outright whenever anyone on their team had a terrain ability, with no
+	// accounting for how long it lasts. Two opposite errors, and James supplied
+	// the counterexample to both: "there is the sleep powder path, I did it on
+	// file once." Electric Terrain runs eight turns with Terrain Extender, and
+	// their fourth Pokemon does not arrive until well past that.
+	if (en.field) {
+		st.field.terrain = en.field.terrain || null;
+		st.field.terrainTurns = en.field.terrainTurns || 0;
+		st.field.weather = en.field.weather || null;
+		st.field.weatherTurns = en.field.weatherTurns || 0;
+	}
+	if (en.turn) st.turn = en.turn;
+
 	const idxOf = name => st.me.team.findIndex(m => m.set.species === name);
 	if (en.hp) {
 		for (const name in en.hp) {
@@ -186,6 +203,8 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		endHP: endHP,
 		dead: dead,
 		active: st.me.team[st.me.active].set.species,
+		field: {terrain: st.field.terrain, terrainTurns: st.field.terrainTurns,
+			weather: st.field.weather, weatherTurns: st.field.weatherTurns},
 		foeLeft: st.foe.team[0].curHP / st.foe.team[0].maxHP,
 		deathRisk: 1 - survive,
 		blockedEntries: blocked,

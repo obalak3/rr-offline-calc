@@ -105,7 +105,14 @@ function planAction(engine, state, plan, progress) {
 		return null;
 	}
 	const want = job.moves[Math.min(step, job.moves.length - 1)];
-	const move = legal.find(a => a.type === 'move' && a.move === want);
+	// "*" means click whatever hits hardest right now, re-decided every turn.
+	// A fixed move is the right way to write down a lever -- Sleep Powder means
+	// Sleep Powder -- and the wrong way to write down a kill. Victreebel's job
+	// was "Leaf Storm", which lowers its own Sp. Atk by two stages, so the
+	// second click did nothing at all and it stood there repeating a move it
+	// had already ruined while Pawmot finished it off, one turn from the kill.
+	const move = want === '*' ? bestDamage(engine, state, legal)
+		: legal.find(a => a.type === 'move' && a.move === want);
 	if (!move) {
 		// Out of PP, or taunted, or the move does not exist on this Pokemon.
 		// Advancing rather than failing lets a two-move job degrade into its
@@ -156,6 +163,49 @@ function jobDone(state, job, progress, foeSpecies, ji) {
 		if (mine && state.me.team[state.me.active] === mine) return true;
 	}
 	return false;
+}
+
+/**
+ * The move a person would actually click here.
+ *
+ * Not simply the biggest number. Against a Pokemon at 6 HP that outspeeds us,
+ * the biggest number is Bullet Seed and the right answer is Mach Punch, because
+ * one of them kills before it can act and the other lets it kill us first. That
+ * distinction is invisible to raw damage and obvious at the table, which is the
+ * whole class of thing this planner exists to capture.
+ *
+ * So: prefer a move that KILLS; among killing moves prefer priority when we are
+ * slower, since a kill we do not live to land is not a kill; otherwise take the
+ * damage. Reads at the median, like everything else in a plan.
+ */
+function bestDamage(engine, state, legal) {
+	const B = engine.B;
+	const foe = state.foe.team[state.foe.active];
+	const slower = B.finalSpeed(state, 'me') <= B.finalSpeed(state, 'foe');
+	let best = null, bestKey = null;
+	legal.filter(a => a.type === 'move').forEach(a => {
+		const r = B.damageRolls(state, 'me', a.move);
+		if (!r || r.immune) return;
+		const band = r.noCrit;
+		const dmg = band[Math.floor(band.length / 2)] * (r.hits || 1);
+		// Priority comes off the move data. The engine keeps actionPriority
+		// internal, and its answer for a move action is exactly this.
+		const info = B.moveData(a.move);
+		const priority = info ? (info.priority || 0) : 0;
+		const kills = dmg >= foe.curHP;
+		const key = [
+			kills ? 1 : 0,
+			kills && slower && priority > 0 ? 1 : 0,
+			dmg
+		];
+		if (!bestKey || compare(key, bestKey) > 0) { bestKey = key; best = a; }
+	});
+	return best;
+}
+
+function compare(a, b) {
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
+	return 0;
 }
 
 function alive(state, species) {

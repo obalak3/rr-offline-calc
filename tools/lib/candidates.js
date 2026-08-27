@@ -25,6 +25,12 @@ const E = require('./enablers.js');
 
 const pctOf = x => (x * 100).toFixed(0) + '%';
 
+/** The field, in the vocabulary a duel entry condition speaks. */
+function fieldCond(field) {
+	if (!field || !field.terrainTurns) return {};
+	return {terrain: field.terrain};
+}
+
 
 // Every lever OUR side has, read out of our own moves, abilities and items.
 // Nothing below this line knows which fight it is looking at. That is the
@@ -43,14 +49,19 @@ const pctOf = x => (x * 100).toFixed(0) + '%';
  * is asked rather than re-derived here, which is also how the fight's own
  * terrain setter gets accounted for instead of being special-cased.
  */
-function achievable(ctx, cond, foe) {
-	const engine = ctx.engine, party = ctx.party, foeSets = ctx.foeSets;
+function achievable(ctx, cond, foe, field) {
+	const engine = ctx.engine, party = ctx.party;
 	if (!cond.foeStatus) return true;
 	const probe = engine.B.createState(party, [foe], {});
-	const surge = foeSets.find(f => /Surge$/.test(f.ability || ''));
-	if (surge) {
-		probe.field.terrain = (surge.ability || '').replace(/ Surge$/, '');
-		probe.field.terrainTurns = 8;
+	// The FIELD AS IT WILL BE, passed in by the caller, not guessed from the
+	// roster. The first version rejected sleep any time their team contained a
+	// terrain setter, forever. Terrain expires; by the time their fourth
+	// Pokemon is on the field it usually has.
+	if (field) {
+		probe.field.terrain = field.terrainTurns > 0 ? field.terrain : null;
+		probe.field.terrainTurns = field.terrainTurns || 0;
+	} else {
+		probe.field.terrain = null;
 	}
 	return engine.B._internal.canTakeStatus(probe.foe.team[0], cond.foeStatus, probe, null);
 }
@@ -172,6 +183,31 @@ function safestPivot(ctx, fi, exclude) {
 	return best;
 }
 
+
+/**
+ * Who closes out a Pokemon that survives on a sliver and outspeeds us?
+ *
+ * A priority attacker, if we have one. This is the shape of James's own Pawmot
+ * line: sleep it, hit it with the biggest thing available, and when it wakes at
+ * 6 HP faster than everything we own, finish it with Mach Punch rather than let
+ * it move again. Two-job plans cannot express that -- there has to be somewhere
+ * to hand the last hit to -- and the closer is derived from whoever actually
+ * carries a priority damaging move.
+ */
+function closersFor(ctx, exclude) {
+	const ME = ctx.engine.sandbox.RR_MOVE_EFFECTS.moves;
+	const out = [];
+	ctx.party.forEach(p => {
+		if ((exclude || []).includes(p.species)) return;
+		const has = (p.moves || []).some(m => {
+			const d = ME[m];
+			return d && d.split !== 'Status' && (d.priority || 0) > 0;
+		});
+		if (has) out.push(p.species);
+	});
+	return out;
+}
+
 function candidatesFor(ctx, fi, options) {
 	const engine = ctx.engine, party = ctx.party, foeSets = ctx.foeSets;
 	const opts = options || {};
@@ -196,7 +232,7 @@ function candidatesFor(ctx, fi, options) {
 	// 1. Who kills it with no help at all.
 	const solo = {};
 	party.forEach((p, mi) => {
-		const line = D.duelLines(engine, party, foeSets, mi, fi, {}, {})
+		const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field), {})
 			.find(l => l.outcome === 'kill');
 		if (!line) return;
 		solo[mi] = true;
@@ -216,16 +252,29 @@ function candidatesFor(ctx, fi, options) {
 		let found = 0;
 		for (const entry of CONDITIONS) {
 			if (found >= (opts.perKiller || 4)) break;
-			if (!achievable(ctx, entry.cond, foe)) continue;
-			const line = D.duelLines(engine, party, foeSets, mi, fi, entry.cond, {})
+			if (!achievable(ctx, entry.cond, foe, opts.field)) continue;
+			const line = D.duelLines(engine, party, foeSets, mi, fi,
+				Object.assign({}, entry.cond, fieldCond(opts.field)), {})
 				.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
 			if (!line) continue;
 			found++;
-			const jobs = enablerJobs(ctx, fi, entry).filter(j => j.mon !== p.species)
-				.concat([{mon: p.species, moves: line.moves}]);
-			push(jobs, E.describeEffect(entry.cond) + ', then ' + p.species
+			const prep = enablerJobs(ctx, fi, entry).filter(j => j.mon !== p.species);
+			push(prep.concat([{mon: p.species, moves: line.moves}]),
+				E.describeEffect(entry.cond) + ', then ' + p.species
 				+ ' kills for ' + pctOf(line.cost),
 				entry.effort * 0.15 + line.cost + 3 * line.deathRisk);
+			// The same idea with somewhere to hand the last hit to. "*" lets the
+			// attacker re-pick its best move each turn, which matters when the
+			// obvious move ruins itself -- Leaf Storm drops its own Sp. Atk two
+			// stages, so a job that says "Leaf Storm" clicks a dead move forever.
+			closersFor(ctx, [p.species].concat(prep.map(j => j.mon))).forEach(closer => {
+				push(prep.concat([
+					{mon: p.species, moves: ['*'], until: {selfHp: 0.6}},
+					{mon: closer, moves: ['*']}
+				]), E.describeEffect(entry.cond) + ', then ' + p.species
+					+ ' softens it and ' + closer + ' closes',
+					entry.effort * 0.15 + line.cost + 3 * line.deathRisk + 0.05);
+			});
 		}
 	});
 
