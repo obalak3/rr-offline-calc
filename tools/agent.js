@@ -96,9 +96,36 @@ function buildState(obs) {
 	const foeSet = setFromBattler(obs.foe, null);
 	if (!foeSet) return null;
 	const mineName = speciesName(obs.me.species);
-	const mySets = party.map(p => p.species === mineName
-		? setFromBattler(obs.me, p) : p);
+
+	// THE PARTY ORDER COMES FROM RAM, NOT FROM THE SAVE FILE. They are not the
+	// same: ss4's party is ordered Lilligant, Diggersby, Lanturn, Breloom,
+	// Victreebel, Mienshao while the .sav has Mienshao first. Trusting the file
+	// meant "switch to slot 0" named Mienshao in the model and Lilligant -- the
+	// Pokemon already on the field -- in the actual game, which cannot be
+	// selected, so the agent sat on the party screen until it timed out.
+	//
+	// Level and max HP together identify a member unambiguously here, and both
+	// are outside Gen 3's party encryption, so the order can be read directly
+	// rather than assumed.
+	const roster = party.slice();
+	const ordered = [];
+	(obs.party || []).forEach(row => {
+		let best = -1;
+		for (let i = 0; i < roster.length; i++) {
+			if (!roster[i]) continue;
+			const probe = B.createState([roster[i]], [{species: 'Rattata', level: 5,
+				evs: {}, ivs: {}, moves: ['Tackle']}], {});
+			const maxHP = probe.me.team[0].maxHP;
+			if (roster[i].level === row.level && maxHP === row.maxhp) { best = i; break; }
+		}
+		if (best >= 0) { ordered.push(roster[best]); roster[best] = null; }
+		else ordered.push(null);
+	});
+	// Anything unmatched keeps a slot so the indices still line up with the game.
+	const leftovers = roster.filter(Boolean);
+	const mySets = ordered.map(x => x || leftovers.shift() || party[0]);
 	const activeIndex = Math.max(0, mySets.findIndex(p => p.species === mineName));
+	if (mySets[activeIndex]) mySets[activeIndex] = setFromBattler(obs.me, mySets[activeIndex]);
 	// THEIR BENCH HAS TO EXIST FOR THEIR SWITCH TO BE LEGAL. We can only see
 	// their active Pokemon, so the side used to be built with exactly one --
 	// and then, the moment they committed to a switch, every action we tried

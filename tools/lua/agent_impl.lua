@@ -171,6 +171,7 @@ _RR = _RR or {turn = 0, phase = "wait", timer = 0, pending = nil,
 local turn, phase, timer, pending, want = _RR.turn, _RR.phase, _RR.timer, _RR.pending, _RR.want
 local lastSig, attempts = _RR.lastSig, _RR.attempts
 local unstick = _RR.unstick or 0
+local idle = _RR.idle or 0
 
 -- Written back on every tick; locals stay for readability and speed.
 local function persist()
@@ -178,6 +179,7 @@ local function persist()
 	_RR.pending, _RR.want = pending, want
 	_RR.lastSig, _RR.attempts = lastSig, attempts
 	_RR.unstick = unstick
+	_RR.idle = idle
 end
 local log = io.open(DIR .. "agent.log", "a")
 say = function(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
@@ -232,8 +234,31 @@ end
 
 local frame = 0
 local function tick()
+	-- HEARTBEAT. Without one there is no way to tell an implementation that
+	-- the bootstrap has PAUSED from a game that is simply stuck: both look
+	-- like a log that stopped. The bootstrap pauses on the first throw that
+	-- escapes, and reports it only to the console, which no log file sees.
+	_RR.beat = (_RR.beat or 0) + 1
+	if _RR.beat % 60 == 0 then
+		-- Report WHERE it is, not just that it is alive. A bare heartbeat says
+		-- the implementation is ticking and leaves the phase to be guessed at,
+		-- and guessing is what has cost the last three intervals.
+		local hb = io.open(DIR .. "heartbeat", "w")
+		if hb then
+			local okScr, scrNow = pcall(screen)
+			hb:write(string.format("%d beat=%d phase=%s timer=%s screen=%s idle=%s unstick=%s turn=%s",
+				os.time(), _RR.beat, tostring(phase), tostring(timer),
+				okScr and tostring(scrNow) or "?", tostring(idle),
+				tostring(unstick), tostring(turn)))
+			hb:close()
+		end
+	end
 	local ok, err = pcall(tick_inner)
-	persist()
+	-- persist() is inside the guard too. It used to run outside, so a throw in
+	-- it escaped to the bootstrap and killed the run silently -- which is
+	-- exactly what happened: "implementation live", then nothing for
+	-- thirteen minutes, and no error file to say why.
+	pcall(persist)
 	if not ok then
 		-- NEVER RE-RAISE. The bootstrap pauses the implementation permanently
 		-- the first time a tick throws, and its errors only reach the console
@@ -357,12 +382,45 @@ function tick_inner()
 			end
 			return
 		end
-		unstick = 0
+		-- Reset only where nothing is being recovered from. This used to run
+		-- before the party-screen branch, which re-incremented it to 1 every
+		-- tick -- so "unstick % 20 < 4" was permanently true and B was HELD
+		-- rather than pressed. A held button has no edge, so the menu never
+		-- closed, and the log line keyed on the counter never fired either.
+		-- The agent looked idle while mashing a button that could not work.
+		if scr == "action" then unstick = 0 end
 
 		-- A decision point is the game asking us, on a position we have not
 		-- already answered. The signature guard is what stops the agent
 		-- answering the same turn twice while the menu is still up.
+		-- A party screen is only a QUESTION when our Pokemon has fainted. With
+		-- everyone healthy it is a leftover from a switch that did not
+		-- complete, and treating it as a forced switch made the agent ask the
+		-- planner to replace a Pokemon that was standing there at full health.
+		if scr == "party" and emu:read16(MON + O_HP) > 0 then
+			unstick = (unstick or 0) + 1
+			emu:setKeys(unstick % 20 < 4 and KEY_B or 0)
+			if unstick % 180 == 0 then
+				say("recovering: party screen open with nobody fainted, backing out")
+			end
+			return
+		end
 		if scr == "action" or scr == "party" then
+			-- WATCHDOG. Sitting at a decision screen with an unchanged position
+			-- and an answered question on disk is a deadlock: the agent will
+			-- not re-ask because nothing has changed, and nothing will change
+			-- because the answer it was given cannot be executed. That is
+			-- exactly how the last two intervals were lost -- heartbeat
+			-- ticking, log frozen, both halves waiting on each other. If we are
+			-- still here after ten seconds, throw the question away and ask
+			-- again; the planner may well answer differently now.
+			idle = (idle or 0) + 1
+			if idle > 600 then
+				say("watchdog: idle at " .. scr .. " for 10s, discarding the question")
+				os.remove(DIR .. "state.json")
+				os.remove(DIR .. "cmd.json")
+				lastSig, idle = "", 0
+			end
 			local sig = positionSignature()
 			-- Re-ask when the position has moved on, OR when the question is
 			-- simply unanswered: no state file on disk means nobody has been
@@ -376,7 +434,7 @@ function tick_inner()
 				lastSig = sig
 				pending = (scr == "party") and "forced" or "choose"
 				writeState(pending)
-				phase, timer, attempts = "await", 0, 0
+				phase, timer, attempts, idle = "await", 0, 0, 0
 			end
 		end
 		return
@@ -529,8 +587,15 @@ function tick_inner()
 			phase, timer = "wait", 0
 			return
 		end
+		if scr == "party" then
+			-- Our Pokemon fainted mid-turn and the game wants a replacement.
+			-- Settle has nothing to say about that; it is a new question.
+			emu:setKeys(0)
+			phase, timer = "wait", 0
+			return
+		end
 		local ourMenu = (scr == "action") or (scr == "moves")
-			or (scr == "party") or (scr == "party_submenu")
+			or (scr == "party_submenu")
 		emu:setKeys((not ourMenu) and (timer % 30 < 4) and KEY_A or 0)
 		if timer % 300 == 0 then
 			say("settle: " .. scr .. " after " .. timer .. " frames")
