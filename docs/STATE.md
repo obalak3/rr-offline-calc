@@ -6,10 +6,15 @@
 > from Surge-side states. Measured on other fights by the live agent, the byte
 > claims a SWITCH on essentially every turn and the opponent attacks instead.
 >
-> On the five logged turns where the opponent actually used a move:
+> Over 54 live turns where the opponent actually used a move:
 >
->     the byte                0/5 correct
->     the ported AI model     4/5 correct
+>     the decision byte       0/54 correct
+>     the ported AI model    41/54 correct  (76%)
+>
+> The model's 76% lands on the 75.5% the offline scoreboard measured over 102
+> recorded decisions -- an independent confirmation from live play, on different
+> trainers, of a number derived from a fixture. The byte is simply dead off
+> Surge: it claimed a switch on essentially every turn.
 >
 > The cost is not academic. A predicted switch means predicted zero damage
 > taken, so the agent expected 0 and took 61. The agent now treats a byte that
