@@ -333,6 +333,11 @@ function buildState(obs) {
 	outCount.foeKey = foeKey;
 	if (st.me.team[activeIndex]) st.me.team[activeIndex].turnsOut = outCount.me;
 	if (st.foe.team[st.foe.active]) st.foe.team[st.foe.active].turnsOut = outCount.foe;
+	// Carry the protect chain across the rebuild, so a second Detect is priced
+	// as the coin flip it really is instead of a free turn.
+	if (st.me.team[activeIndex] && protectRun.key === meKey && protectRun.chain > 0) {
+		st.me.team[activeIndex].volatiles.protectChain = protectRun.chain;
+	}
 
 	// Apply everything observed, so the simulation starts from the real
 	// position rather than a fresh one.
@@ -519,6 +524,16 @@ let lastPlan = {foe: null, jobs: null};
 
 // Decisions since each active last changed -- see buildState.
 const outCount = {me: 0, meKey: null, foe: 0, foeKey: null};
+// PROTECT DOES NOT WORK TWICE RUNNING, and a rebuilt state cannot remember
+// that. The engine models it (`protectChain`), but createState zeroes every
+// volatile and the agent rebuilds from RAM each turn, so live it always
+// believed Detect was about to succeed -- and spammed it: Mienshao stood in
+// front of a Pawmot on 22 HP playing Detect on repeat while Drain Punch healed
+// it back up. Exactly the shape of the turnsOut bug, and fixed the same way:
+// remember what we actually played, keyed to who was out.
+const protectRun = {key: null, chain: 0};
+const PROTECT_MOVES = {'Protect': 1, 'Detect': 1, 'Spiky Shield': 1, 'Baneful Bunker': 1,
+	'King\'s Shield': 1, 'Obstruct': 1, 'Silk Trap': 1, 'Burning Bulwark': 1};
 
 function decide(st, obs) {
 	const src = foeAction(st, obs);
@@ -1037,6 +1052,14 @@ setInterval(() => {
 	// mistake finder: what the position was, what we played, and what we
 	// expected. Without this a game is watched once and gone, and finding
 	// mistakes means somebody sitting there for hours.
+	// Remember a protect for the next rebuild; anything else breaks the chain.
+	{
+		const key = obs.me.maxhp + ':' + obs.me.species;
+		const move = d.best.action.type === 'move' ? d.best.action.move : null;
+		if (move && PROTECT_MOVES[move] && protectRun.key === key) protectRun.chain += 1;
+		else if (move && PROTECT_MOVES[move]) { protectRun.key = key; protectRun.chain = 1; }
+		else { protectRun.key = key; protectRun.chain = 0; }
+	}
 	try {
 		const dir = path.join(DIR, 'turns');
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
