@@ -58,8 +58,28 @@ var RRBattle = (function () {
 	var CACHE_LIMIT = 300000;
 	var nextSetId = 1;
 
+	/**
+	 * A stable identity for a set, used as part of the damage cache key.
+	 *
+	 * The marker is NON-ENUMERABLE on purpose. It used to be a plain property,
+	 * which meant `Object.assign({}, set, {...})` copied the id along with
+	 * everything else: a modified copy of a Pokemon shared its original's cache
+	 * key, so the cache handed back the ORIGINAL's damage numbers and the
+	 * modification silently did nothing. That is a wrong answer delivered
+	 * confidently, which is the worst kind this project can produce -- it was
+	 * found because a live-stats override changed the calculator's numbers and
+	 * did not change the damage. Object.assign copies only enumerable own
+	 * properties, so a copy now gets an id of its own.
+	 */
 	function setId(set) {
-		if (!set._rrid) set._rrid = nextSetId++;
+		if (!set._rrid) {
+			try {
+				Object.defineProperty(set, "_rrid",
+					{value: nextSetId++, enumerable: false, writable: true});
+			} catch (e) {
+				set._rrid = nextSetId++;   // frozen or exotic object: best effort
+			}
+		}
 		return set._rrid;
 	}
 
@@ -243,6 +263,13 @@ var RRBattle = (function () {
 
 	// -------------------------------------------------------- calc bridging
 
+	// Recorded rather than thrown: a stat we cannot reproduce means the game is
+	// doing something the model does not know about, which is worth seeing.
+	var unmodelledStats = [];
+	function state_unmodelled_stat(set, stat, target) {
+		unmodelledStats.push(set.species + " " + stat + "=" + target);
+	}
+
 	function toCalcPokemon(mon) {
 		var set = mon.set;
 		var options = {
@@ -259,6 +286,51 @@ var RRBattle = (function () {
 			},
 			curHP: mon.curHP
 		};
+		// STATS READ OFF THE GAME, when we have them.
+		//
+		// A live battler's real Attack, Defense, Speed, Sp. Atk and Sp. Def are
+		// sitting in gBattleMons, so the agent can hand over the numbers the
+		// game is actually using instead of making the calculator re-derive
+		// them from a nature and an EV spread nobody knows. Inferring an
+		// opponent's spread is guessing; this is reading.
+		//
+		// It has to go in as BASE stats rather than by poking rawStats. The
+		// calculator clones its inputs internally and a clone rebuilds its
+		// stats from the original spread, so a direct override is silently
+		// discarded -- measured: def 20 and def 300 both produced identical
+		// damage. So the base stat that reproduces the observed final stat is
+		// solved for, and the calculator computes from that natively. The
+		// result is cached on the set, since it never changes.
+		if (set.rawStats) {
+			if (!set._rrBaseOverride) {
+				var g = gen();
+				var lvl = set.level, nat = set.nature || "Serious";
+				var iv = set.ivs || {}, ev = set.evs || {};
+				var real = g.species.get(calc.toID(set.species));
+				var over = {};
+				for (var key in (real && real.baseStats) || {}) over[key] = real.baseStats[key];
+				["atk", "def", "spa", "spd", "spe"].forEach(function (stat) {
+					var target = set.rawStats[stat];
+					if (target === undefined || target === null) return;
+					var ivv = iv[stat] === undefined ? 31 : iv[stat];
+					var evv = ev[stat] === undefined ? 0 : ev[stat];
+					for (var b = 1; b <= 255; b++) {
+						if (calc.calcStat(g, stat, b, ivv, evv, lvl, nat) === target) {
+							over[stat] = b;
+							return;
+						}
+					}
+					// No base stat reproduces it -- a boost, an item or a
+					// mechanic we do not model. Left alone and reported rather
+					// than forced, so the mismatch stays visible.
+					state_unmodelled_stat(set, stat, target);
+				});
+				Object.defineProperty(set, "_rrBaseOverride",
+					{value: over, enumerable: false, writable: true});
+			}
+			options.overrides = {baseStats: set._rrBaseOverride};
+		}
+
 		// The calculator has no frostbite, so the status is passed only where it
 		// shares mainline semantics. Frostbite's Sp. Atk cut is applied to the
 		// damage array instead; see applySpecialStatusScaling.
@@ -2065,6 +2137,7 @@ var RRBattle = (function () {
 			setStatus: setStatus,
 			applyBoosts: applyBoosts,
 			canTakeStatus: canTakeStatus,
+			unmodelledStats: function () { return unmodelledStats.slice(); },
 			isGrounded: isGrounded,
 			absorbs: absorbs,
 			heal: heal,

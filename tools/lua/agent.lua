@@ -1,0 +1,289 @@
+-- THE ACTUATOR. Reads the battle, hands it to the planner, plays what comes
+-- back, and checks that what it played actually happened.
+--
+-- Load ONCE per mGBA session, with a battle in progress. Quit mGBA first if
+-- any other script is loaded; script loads stack and closing the Scripting
+-- window does not unload them.
+--
+-- It NEVER presses a button without first reading which screen is up. Every
+-- button failure this project has had came from not being able to do that --
+-- a DOWN-walk that kept re-selecting the same Pokemon, a menu that bounced in
+-- and out ten times, an address guessed a kilobyte from where it lives. The
+-- screen map is docs/SCREEN-MAP.md, measured across two save states and
+-- verified against James's screenshots of the real menus.
+--
+-- The loop is turn by turn, not a script:
+--     wait until the game is asking us for an action
+--     write the position, and what the AI has ALREADY committed to, to a file
+--     wait for the planner to answer with one action
+--     play it, verifying each menu transition before the next press
+--     record what was predicted against what happened
+-- The prediction log is the point of the early fights. Losing them is fine;
+-- the log is what closes the gaps in the roll model.
+
+local DIR = os.getenv("HOME") .. "/rr-agent/"
+
+-- ---------------------------------------------------------------- addresses
+-- All measured. See docs/SCREEN-MAP.md for how, and for the control conditions.
+local CTRL_ME       = 0x03004FE0   -- which screen: the player's controller fn
+local SCREEN_ID     = 0x02020014   -- secondary; separates party list from submenu
+local ACTION_CURSOR = 0x02023FF8   -- 0 FIGHT 1 BAG 2 POKEMON 3 RUN
+local MOVE_CURSOR   = 0x02023FFC   -- 0..3, the move list's 2x2 in reading order
+local PARTY_IDX     = 0x0203B0A9   -- party slot; 7 is the Cancel button
+local MON, SIZE     = 0x02023BE4, 0x58
+local PARTY         = 0x02024284
+local AI_TARGET     = 0x02000091   -- move slot, or destination party index
+local AI_ACTION     = 0x0200005B   -- 1 switch, 0 move
+local RNG           = 0x020386D0
+
+local S_ACTION, S_MOVES, S_PARTY, S_BUSY = 0x0802E439, 0x0802EA11, 0x08030685, 0x0802E3B5
+
+-- BattlePokemon, Gen 3 layout.
+local O_SP, O_MOVES, O_STAGES, O_AB, O_PP, O_HP, O_LV, O_MAX, O_ITEM, O_ST1 =
+	0x00, 0x0C, 0x18, 0x20, 0x24, 0x28, 0x2A, 0x2C, 0x2E, 0x4C
+-- The battler's REAL stats, in order atk, def, spe, spa, spd. Reading these
+-- means the planner never has to infer the opponent's nature, EVs or IVs to
+-- price a hit -- it uses the numbers the game is using.
+local O_STATS = 0x02
+-- Gen 3 party Pokemon: everything below is OUTSIDE the encrypted block.
+local P_SIZE, P_STATUS, P_LEVEL, P_HP, P_MAX = 100, 0x50, 0x54, 0x56, 0x58
+
+local KEY_A, KEY_B = 1, 2
+
+if _RR_AGENT_ACTIVE then
+	console:error("agent: already running. Quit mGBA and reload.")
+	return
+end
+_RR_AGENT_ACTIVE = true
+pcall(function() os.execute("mkdir -p '" .. DIR .. "'") end)
+
+-- ------------------------------------------------------------------ reading
+local function screen()
+	local c = emu:read32(CTRL_ME)
+	if c == S_ACTION then return "action" end
+	if c == S_MOVES  then return "moves"  end
+	if c == S_PARTY  then
+		-- The submenu shares the controller pointer with the list behind it.
+		return emu:read8(SCREEN_ID) == 9 and "party_submenu" or "party"
+	end
+	if c == S_BUSY   then return "busy"   end
+	return string.format("unknown:0x%08X", c)
+end
+
+local function battler(base)
+	local mv, pp, st = {}, {}, {}
+	for i = 0, 3 do
+		mv[i+1] = emu:read16(base + O_MOVES + i*2)
+		pp[i+1] = emu:read8(base + O_PP + i)
+	end
+	for i = 0, 7 do st[i+1] = emu:read8(base + O_STAGES + i) end
+	local stats = {}
+	for i = 0, 4 do stats[i+1] = emu:read16(base + O_STATS + i*2) end
+	return string.format(
+		'{"species":%d,"level":%d,"hp":%d,"maxhp":%d,"ability":%d,"item":%d,'
+		.. '"status":%d,"moves":[%s],"pp":[%s],"stages":[%s],"stats":[%s]}',
+		emu:read16(base + O_SP), emu:read8(base + O_LV),
+		emu:read16(base + O_HP), emu:read16(base + O_MAX),
+		emu:read8(base + O_AB), emu:read16(base + O_ITEM),
+		emu:read32(base + O_ST1),
+		table.concat(mv, ","), table.concat(pp, ","), table.concat(st, ","),
+		table.concat(stats, ","))
+end
+
+-- The party's species sits inside the encrypted substructures, so it is not
+-- read here. Level, HP and status are outside the encryption, and the planner
+-- already knows the roster from the save file -- it matches on those instead,
+-- and checks its answer against gBattleMons for whoever is actually out.
+local function party()
+	local rows = {}
+	for i = 0, 5 do
+		local b = PARTY + i * P_SIZE
+		rows[#rows+1] = string.format('{"slot":%d,"level":%d,"hp":%d,"maxhp":%d,"status":%d}',
+			i, emu:read8(b + P_LEVEL), emu:read16(b + P_HP), emu:read16(b + P_MAX),
+			emu:read32(b + P_STATUS))
+	end
+	return table.concat(rows, ",")
+end
+
+-- ------------------------------------------------------------------ the loop
+local turn, phase, timer, pending, want = 0, "wait", 0, nil, nil
+local lastSig, attempts = "", 0
+local log = io.open(DIR .. "agent.log", "a")
+local function say(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
+
+local function positionSignature()
+	return emu:read16(MON + O_SP) .. "/" .. emu:read16(MON + O_HP) .. "/"
+		.. emu:read16(MON + SIZE + O_SP) .. "/" .. emu:read16(MON + SIZE + O_HP)
+		.. "/" .. emu:read8(MON + O_PP) .. emu:read8(MON + O_PP + 1)
+		.. emu:read8(MON + O_PP + 2) .. emu:read8(MON + O_PP + 3)
+end
+
+local function writeState(kind)
+	turn = turn + 1
+	local f = io.open(DIR .. "state.json", "w")
+	f:write(string.format(
+		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
+		.. '"ai_action":%d,"ai_target":%d,'
+		.. '"me":%s,"foe":%s,"party":[%s]}\n',
+		turn, kind, screen(), emu:read32(RNG),
+		emu:read8(AI_ACTION), emu:read8(AI_TARGET),
+		battler(MON), battler(MON + SIZE), party()))
+	f:close()
+	os.remove(DIR .. "cmd.json")
+	say(string.format("turn %d (%s): asked the planner. foe committed to %s %d",
+		turn, kind, emu:read8(AI_ACTION) == 1 and "SWITCH" or "MOVE",
+		emu:read8(AI_TARGET)))
+end
+
+local function readCommand()
+	local f = io.open(DIR .. "cmd.json", "r")
+	if not f then return nil end
+	local body = f:read("*a"); f:close()
+	local id = tonumber(body:match('"turn"%s*:%s*(%d+)'))
+	if id ~= turn then return nil end             -- an answer to an older turn
+	local act = body:match('"action"%s*:%s*"(%a+)"')
+	local slot = tonumber(body:match('"slot"%s*:%s*(%d+)'))
+	if not act or not slot then return nil end
+	return {action = act, slot = slot}
+end
+
+local frame = 0
+local function tick()
+	frame = frame + 1
+	if frame % 4 ~= 0 and phase == "wait" then return end
+
+	local scr = screen()
+
+	if phase == "wait" then
+		-- A decision point is the game asking us, on a position we have not
+		-- already answered. The signature guard is what stops the agent
+		-- answering the same turn twice while the menu is still up.
+		if scr == "action" or scr == "party" then
+			local sig = positionSignature()
+			if sig ~= lastSig then
+				lastSig = sig
+				pending = (scr == "party") and "forced" or "choose"
+				writeState(pending)
+				phase, timer, attempts = "await", 0, 0
+			end
+		end
+		return
+	end
+
+	if phase == "await" then
+		timer = timer + 1
+		if timer % 15 ~= 0 then return end
+		want = readCommand()
+		if want then
+			say(string.format("turn %d: playing %s %d", turn, want.action, want.slot))
+			phase, timer = (want.action == "switch") and "sw_open" or "mv_open", 0
+		elseif timer > 60 * 60 then
+			say("turn " .. turn .. ": planner did not answer in 60s; standing by")
+			phase, timer = "wait", 0
+		end
+		return
+	end
+
+	-- Each branch below asserts the screen it expects BEFORE it presses, and
+	-- asserts the screen it produced before moving on. A press that lands
+	-- somewhere unexpected stops the agent instead of compounding.
+	timer = timer + 1
+
+	if phase == "mv_open" then
+		if scr ~= "action" then
+			if timer > 240 then say("mv_open: expected the action menu, saw " .. scr); phase = "wait" end
+			return
+		end
+		emu:write8(ACTION_CURSOR, 0)                       -- FIGHT
+		emu:setKeys(timer <= 6 and KEY_A or 0)
+		if timer > 60 then phase, timer = "mv_pick", 0 end
+		return
+	end
+
+	if phase == "mv_pick" then
+		if scr ~= "moves" then
+			if timer > 180 then
+				attempts = attempts + 1
+				say("mv_pick: the move list did not open (saw " .. scr .. "), retrying")
+				phase, timer = (attempts < 3) and "mv_open" or "wait", 0
+			end
+			return
+		end
+		emu:write8(MOVE_CURSOR, want.slot)
+		emu:setKeys(timer <= 6 and KEY_A or 0)
+		if timer > 60 then phase, timer = "settle", 0 end
+		return
+	end
+
+	if phase == "sw_open" then
+		if scr ~= "action" and scr ~= "party" then
+			if timer > 240 then say("sw_open: expected a menu, saw " .. scr); phase = "wait" end
+			return
+		end
+		if scr == "party" then phase, timer = "sw_pick", 0; return end
+		emu:write8(ACTION_CURSOR, 2)                       -- POKEMON
+		emu:setKeys(timer <= 6 and KEY_A or 0)
+		if timer > 90 then phase, timer = "sw_pick", 0 end
+		return
+	end
+
+	if phase == "sw_pick" then
+		if scr ~= "party" then
+			if timer > 240 then
+				attempts = attempts + 1
+				say("sw_pick: the party screen did not open (saw " .. scr .. "), retrying")
+				phase, timer = (attempts < 3) and "sw_open" or "wait", 0
+			end
+			return
+		end
+		-- 7 is the Cancel button, not a Pokemon. Writing the slot directly
+		-- avoids the 2x3 grid entirely; a DOWN-only walk cannot reach the
+		-- right-hand column at all, which is why earlier attempts kept
+		-- re-selecting the same Pokemon.
+		emu:write8(PARTY_IDX, want.slot)
+		emu:setKeys(timer <= 6 and KEY_A or 0)
+		if timer > 90 then phase, timer = "sw_confirm", 0 end
+		return
+	end
+
+	if phase == "sw_confirm" then
+		-- On a voluntary switch a submenu opens -- Shift / Summary / Cancel,
+		-- cursor already on Shift, so one A does it. On a FORCED switch, after
+		-- one of ours has fainted, there is no submenu at all.
+		if scr == "party_submenu" then
+			emu:setKeys(timer <= 6 and KEY_A or 0)
+			if timer > 40 then phase, timer = "settle", 0 end
+			return
+		end
+		if scr ~= "party" then phase, timer = "settle", 0; return end
+		if timer > 180 then
+			say("sw_confirm: stuck on the party screen; the slot may be empty or fainted")
+			phase, timer = "wait", 0
+		end
+		return
+	end
+
+	if phase == "settle" then
+		emu:setKeys(timer % 40 < 4 and KEY_A or 0)   -- advance battle messages
+		if scr == "action" or scr == "party" then
+			if positionSignature() ~= lastSig then
+				local f = io.open(DIR .. "result.json", "w")
+				f:write(string.format('{"turn":%d,"me":%s,"foe":%s,"rng":%d}\n',
+					turn, battler(MON), battler(MON + SIZE), emu:read32(RNG)))
+				f:close()
+				say("turn " .. turn .. ": resolved")
+				emu:setKeys(0)
+				phase, timer = "wait", 0
+			end
+		end
+		if timer > 60 * 90 then
+			say("settle: nothing resolved in 90s; standing by")
+			emu:setKeys(0); phase, timer = "wait", 0
+		end
+		return
+	end
+end
+
+callbacks:add("frame", tick)
+say("started. screen=" .. screen() .. "  waiting for a decision point")
+console:log("agent: talking to " .. DIR)
