@@ -42,6 +42,25 @@ const AI_FLAGS = {checkBadMove: true, checkGoodMove: true};
 const dex = H.loadDex();
 const party = H.realTeam();
 
+/**
+ * Which trainer battle is this? Identified by the opponent's active species,
+ * so the real sets (abilities, items, Hidden Power types, EV spreads) can be
+ * used instead of anything inferred from RAM.
+ */
+const ALL_BATTLES = H.earlyBattles(engine, {maxLevel: 60});
+const battleCache = {};
+function battleOf(obs) {
+	const name = speciesName(obs.foe.species);
+	if (!name) return null;
+	if (battleCache[name] !== undefined) return battleCache[name];
+	let found = null;
+	for (const b of ALL_BATTLES) {
+		if ((b.team || []).some(m => m.species === name)) { found = b; break; }
+	}
+	battleCache[name] = found;
+	return found;
+}
+
 const speciesName = id => (dex.byID[id] && dex.byID[id].name) || null;
 const moveName = id => dex.moveName[id] || null;
 const abilityName = id => {
@@ -190,16 +209,50 @@ function buildState(obs) {
 	const mySets = ordered.map(x => x || leftovers.shift() || party[0]);
 	const activeIndex = Math.max(0, mySets.findIndex(p => p.species === mineName));
 	if (mySets[activeIndex]) mySets[activeIndex] = setFromBattler(obs.me, mySets[activeIndex]);
-	// THEIR BENCH HAS TO EXIST FOR THEIR SWITCH TO BE LEGAL. We can only see
-	// their active Pokemon, so the side used to be built with exactly one --
-	// and then, the moment they committed to a switch, every action we tried
-	// to simulate threw, because the destination slot did not exist. The agent
-	// reported "no legal action found" and stood there. Placeholders make the
-	// switch representable; they are NOT a claim about what is coming in, which
-	// is why nothing credits a kill on a switch turn.
-	const bench = [];
-	for (let i = 0; i < 5; i++) bench.push(Object.assign({}, foeSet));
-	const st = B.createState(mySets, [foeSet].concat(bench), {});
+	// THEIR REAL BENCH, read from gEnemyParty at 0x0202402C.
+	//
+	// It used to be five placeholder clones of whatever was out, because we
+	// could not see their party. That single approximation caused three
+	// separate problems: the model "predicted" switches to Pokemon that do not
+	// exist, every opponent damage band came back empty because the band was
+	// computed for a fiction, and switch prediction could never be measured at
+	// all. Their party is now visible, so each slot is matched to a real set by
+	// level and max HP against the trainer data -- the same way our own side is
+	// resolved.
+	let foeTeam = null;
+	if (obs.foeparty && obs.foeparty.length) {
+		const known = H.foeSets(battleOf(obs)) || [];
+		const pool = known.slice();
+		foeTeam = [];
+		obs.foeparty.forEach(row => {
+			if (!row.maxhp) return;                 // empty slot: they have fewer
+			let pick = -1;
+			for (let i = 0; i < pool.length; i++) {
+				if (!pool[i]) continue;
+				const probe = B.createState([pool[i]], [foeSet], {});
+				if (pool[i].level === row.level && probe.me.team[0].maxHP === row.maxhp) {
+					pick = i; break;
+				}
+			}
+			if (pick >= 0) { foeTeam.push(pool[pick]); pool[pick] = null; }
+			else foeTeam.push(Object.assign({}, foeSet));   // unknown: fall back
+		});
+	}
+	if (!foeTeam || !foeTeam.length) {
+		foeTeam = [foeSet];
+		for (let i = 0; i < 5; i++) foeTeam.push(Object.assign({}, foeSet));
+	}
+	const st = B.createState(mySets, foeTeam, {});
+	// Put THEIR active where it really is, and apply what we can see of them.
+	const activeFoe = foeTeam.findIndex(f => f && f.species === speciesName(obs.foe.species));
+	if (activeFoe >= 0) st.foe.active = activeFoe;
+	(obs.foeparty || []).forEach((row, i) => {
+		const m = st.foe.team[i];
+		if (!m || !row.maxhp) return;
+		m.curHP = row.hp;
+		m.fainted = row.hp <= 0;
+		m.status = statusOf(row.status);
+	});
 	st.me.active = activeIndex;
 
 	// Apply everything observed, so the simulation starts from the real
@@ -428,6 +481,9 @@ if (process.argv[2] === '--probe') {
 	console.log('its moves: ' + JSON.stringify(act.set.moves) + '  pp ' + JSON.stringify(act.pp));
 	console.log('team: ' + st.me.team.map((m, i) =>
 		i + ':' + m.set.species + (m.fainted ? '(X)' : '') + ' ' + m.curHP).join('  '));
+	console.log('THEIR team: ' + st.foe.team.map((m, i) =>
+		(i === st.foe.active ? '>' : ' ') + i + ':' + m.set.species
+		+ (m.fainted ? '(X)' : ' ' + m.curHP + '/' + m.maxHP)).join('  '));
 	console.log('legal actions: ' + JSON.stringify(B.legalActions(st, 'me')));
 	// Trip the staleness detector the way a running session does, so the probe
 	// exercises the MODEL path and not just the byte path.

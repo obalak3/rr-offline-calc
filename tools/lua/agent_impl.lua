@@ -148,6 +148,34 @@ end
 -- read here. Level, HP and status are outside the encryption, and the planner
 -- already knows the roster from the save file -- it matches on those instead,
 -- and checks its answer against gBattleMons for whoever is actually out.
+-- THEIR party. gEnemyParty sits directly after gPlayerParty: six slots of 100
+-- bytes each, so +600. Level, HP, max HP and status all live OUTSIDE Gen 3's
+-- encryption, which is enough to identify each member against the trainer data
+-- and to know how hurt it is.
+--
+-- Until now their bench was five placeholder clones of whatever was out, which
+-- is why the model kept "predicting" switches to Pokemon that do not exist, why
+-- every opponent damage band came back empty, and why switch prediction has
+-- never been measurable at all.
+-- MEASURED, not assumed. gEnemyParty is 600 bytes BEFORE gPlayerParty in this
+-- ROM, not after -- reading +600 gave level 126 and 9228 max HP. Found by
+-- searching a full EWRAM dump for six 100-byte records whose levels matched
+-- Surge's known 32/33/33/33/34, which landed on exactly one address whose max
+-- HP values are his five Pokemon.
+local FOE_PARTY = 0x0202402C
+
+local function foeParty()
+	local rows = {}
+	for i = 0, 5 do
+		local b = FOE_PARTY + i * P_SIZE
+		rows[#rows+1] = string.format(
+			'{"slot":%d,"level":%d,"hp":%d,"maxhp":%d,"status":%d}',
+			i, emu:read8(b + P_LEVEL), emu:read16(b + P_HP),
+			emu:read16(b + P_MAX), emu:read32(b + P_STATUS))
+	end
+	return table.concat(rows, ",")
+end
+
 local function party()
 	local rows = {}
 	for i = 0, 5 do
@@ -291,10 +319,10 @@ local function writeState(kind)
 	f:write(string.format(
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
 		.. '"ai_action":%d,"ai_target":%d,'
-		.. '"me":%s,"foe":%s,"party":[%s]}\n',
+		.. '"me":%s,"foe":%s,"party":[%s],"foeparty":[%s]}\n',
 		turn, kind, screen(), emu:read32(RNG),
 		emu:read8(AI_ACTION), emu:read8(AI_TARGET),
-		battler(MON), battler(MON + SIZE), party()))
+		battler(MON), battler(MON + SIZE), party(), foeParty()))
 	f:close()
 	os.remove(DIR .. "cmd.json")
 	say(string.format("turn %d (%s): asked the planner. foe committed to %s %d",
