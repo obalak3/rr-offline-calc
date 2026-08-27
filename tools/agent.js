@@ -193,10 +193,17 @@ const byteHistory = [];   // was each recent reading a switch?
 function modelAction(st) {
 	try {
 		const scored = RRAI.scoreAll(st, 'foe', AI_FLAGS, {});
-		if (!scored.length) return null;
+		// MOVES ONLY. Their bench is five placeholder clones of whatever is
+		// out, because we cannot see their real party -- so letting the model
+		// "switch" is letting it choose a Pokemon that does not exist. It was
+		// doing exactly that: every opponent-side damage band came back empty,
+		// costing eight usable roll observations, and a fictional switch is
+		// also a prediction that can never be right.
+		const moves = scored.filter(e => e.action.type === 'move');
+		if (!moves.length) return null;
 		let best = -Infinity;
-		scored.forEach(e => { if (e.score > best) best = e.score; });
-		return scored.filter(e => e.score === best)[0].action;
+		moves.forEach(e => { if (e.score > best) best = e.score; });
+		return moves.filter(e => e.score === best)[0].action;
 	} catch (e) { return null; }
 }
 
