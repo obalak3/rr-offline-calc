@@ -221,3 +221,57 @@ at exactly 1.00x).
 **Consequence worth stating plainly: the fights got harder because the opponent
 got real.** Comparisons across the port boundary are meaningless, and a new
 baseline has to be taken from here rather than measured against history.
+
+## 2026-08-27 — live calibration run, overnight
+
+Measured by the live agent (`tools/agent.js` + `tools/lua/agent_impl.lua`) over
+231 resolved turns across five save states.
+
+### The opponent predictor
+
+54 turns where the opponent genuinely used a move, its identity recovered from
+its PP rather than assumed:
+
+    decision byte 0x02000091     0/54
+    ported AI model             41/54   (76%)
+
+76% lands on the 75.5% the offline scoreboard measured over 102 recorded
+decisions — an independent confirmation, from live play against different
+trainers, of a number that until now rested on one fixture. The byte is dead off
+Surge: it claimed a SWITCH on essentially every turn. Its 32/32 validation was
+real but narrow, drawn entirely from Surge-side states.
+
+The model scored 54% while it was allowed to predict switching to bench Pokemon
+that do not exist (their bench is placeholders, since we cannot see it) and 76%
+once restricted to moves.
+
+### The damage bands
+
+19 distinct damage observations, ours and theirs, matched against the 16-value
+band predicted before the turn:
+
+    exactly on a band value             8  (42%)
+    inside the range, between values    3  (16%)
+    OUTSIDE the range                   8  (42%)
+
+A band contains the true damage 58% of the time. Four misses are the Hidden
+Power type error (a set rebuilt from RAM sees one move ID whose type comes from
+IVs; fixed by looking the species up in the trainer data). Two remain unexplained:
+Lanturn's Scald landing 2-12% above its own band maximum, which no roll can
+produce, and Shroomish's Headbutt at 3.83x, too large for anything but the wrong
+defender.
+
+### The RNG draw order — NEGATIVE
+
+No draw position within 64 of the action-menu seed is consistent with every
+distinct observation. A FIXED offset is refuted, not merely unconfirmed.
+
+The 256/256 offline validation on isolated attacks stands. What does not hold is
+advancing a seed captured at DECISION time to locate the damage roll during a
+live turn, because a turn consumes a varying number of draws that is not modelled.
+
+The blocker is not runtime. Distinct observations have been stuck at three while
+rows went 47 -> 147, because save-state replays are byte-identical and because
+identifying a roll requires a band that contains the damage — see above.
+NEXT: read the seed at the moment of the damage calculation from a quicksave,
+rather than trying to advance to it from decision time.
