@@ -1,91 +1,118 @@
--- Locate the battle menu cursors by pressing a direction and watching RAM.
--- Load ONCE. Quit mGBA first. Takes about 20 seconds.
+-- Where is the battle menu cursor? Find it by DIFF-OF-DIFFS over all of RAM.
+-- Load ONCE (quit mGBA first). ~30s. Writes ~/rr-screen-corpus/cursor_probe.txt
 --
--- WHY. Driving the menus with blind button sequences does not scale: a timing
--- drift sends a direction to the ACTION menu instead of the move list, and the
--- script walks into the BAG or -- worse -- RUN, which ends the battle. Writing
--- the cursor directly removes navigation entirely: set FIGHT, set the move
--- slot, press A twice. No drift, no stray menus, and it behaves the same in
--- every fight.
+-- The previous version watched a 100-byte window chosen around an address I
+-- had GUESSED, and reported "nothing changed" -- which proves nothing, since a
+-- window built around a guess can only ever confirm that guess. This scans
+-- IWRAM and EWRAM entirely: no assumption about where the cursor lives.
 --
--- Vanilla FireRed puts gActionSelectionCursor at 0x02023BCE and
--- gMoveSelectionCursor at 0x02023BD2, and gBattleMons IS at its vanilla
--- address here, so those are plausible. But the bytes there are ambiguous
--- across the save states -- 0 in four, 2 in one -- and this project has lost
--- hours to an address that looked plausible and was not (0x03000204, written
--- 128 times, read never).
---
--- So: snapshot the region, press RIGHT, snapshot again, and report what
--- changed. A cursor MUST move. Anything that does not is not it.
+-- CONTROL CONDITION, because raw diffs are useless here. Between any two
+-- moments hundreds of bytes change on their own -- frame counters, RNG,
+-- animation state. So the run does the SAME wait twice: once pressing
+-- nothing, once pressing a direction. Bytes that change in both are noise;
+-- bytes that change ONLY when the key is pressed are input-caused, and the
+-- cursor must be among them. That is the same discipline as the RNG hunt's
+-- null test, which is what stopped a plausible-looking address from being
+-- believed there.
 
-local STATE = os.getenv("HOME") .. "/RadicalRed-mGBA/RadicalRed.ss5"
-local LO, HI = 0x02023B80, 0x02023BE4
+local STATE = os.getenv("HOME") .. "/rr-screen-corpus/savestates/ss5.ss"
+local OUT = os.getenv("HOME") .. "/rr-screen-corpus/cursor_probe.txt"
 local KEY_A, KEY_RIGHT, KEY_DOWN = 1, 16, 128
 
-if _RR_CUR_ACTIVE then
-  console:error("find_cursor: ALREADY RUNNING. Quit mGBA first."); return
-end
-_RR_CUR_ACTIVE = true
+local IW, IWLEN = 0x03000000, 0x8000
+local EW, EWLEN = 0x02000000, 0x40000
+
+if _RR_CUR2 then console:error("already running; quit mGBA first"); return end
+_RR_CUR2 = true
+
+local R = io.open(OUT, "w")
+local function say(m) console:log(m); R:write(m.."\n"); R:flush() end
 
 local function snap()
-  local t = {}
-  for a = LO, HI - 1 do t[a] = emu:read8(a) end
-  return t
+  return {iw = emu:readRange(IW, IWLEN), ew = emu:readRange(EW, EWLEN)}
 end
 
-local function diff(a, b, label)
-  local n = 0
-  for addr = LO, HI - 1 do
-    if a[addr] ~= b[addr] then
-      console:log(string.format("  %s: 0x%08X  %d -> %d", label, addr, a[addr], b[addr]))
+local function changed(a, b)
+  local set = {}
+  for i = 1, #a.iw do
+    if a.iw:byte(i) ~= b.iw:byte(i) then set["I"..i] = true end
+  end
+  for i = 1, #a.ew do
+    if a.ew:byte(i) ~= b.ew:byte(i) then set["E"..i] = true end
+  end
+  return set
+end
+
+local function report(label, treat, ctrl, before, after)
+  local n, shown = 0, 0
+  say(label .. ":")
+  for k in pairs(treat) do
+    if not ctrl[k] then
       n = n + 1
+      if shown < 25 then
+        local kind, idx = k:sub(1,1), tonumber(k:sub(2))
+        local base = (kind == "I") and IW or EW
+        local src  = (kind == "I") and "iw" or "ew"
+        say(string.format("   0x%08X  %d -> %d", base + idx - 1,
+          before[src]:byte(idx), after[src]:byte(idx)))
+        shown = shown + 1
+      end
     end
   end
-  if n == 0 then console:log("  " .. label .. ": nothing changed") end
+  say("   input-caused bytes: " .. n .. (n > 25 and " (first 25 shown)" or ""))
 end
 
-local t, phase = 0, "load"
-local atPrompt, afterRight, afterFight, afterDown
+local phase, t, base0, ctrlAfter, treatBefore = "load", 0, nil, nil, nil
+local ctrlSet, key, stage = nil, KEY_RIGHT, 1
 
 local function tick()
+  if phase == "done" then return end
   t = t + 1
+
   if phase == "load" then
     if not pcall(function() emu:loadStateFile(STATE) end) then
-      console:error("cannot load state"); phase = "done"; return
+      say("cannot load " .. STATE); phase = "done"; return
     end
-    emu:setKeys(0); t, phase = 0, "settle1"
+    emu:setKeys(0); t = 0; phase = "settle"
 
-  elseif phase == "settle1" then
-    if t > 40 then atPrompt = snap(); t, phase = 0, "right" end
+  elseif phase == "settle" then
+    if t > 30 then base0 = snap(); t = 0; phase = "control" end
 
-  elseif phase == "right" then           -- at the ACTION menu, move the cursor
-    emu:setKeys(t <= 6 and KEY_RIGHT or 0)
-    if t > 50 then
-      afterRight = snap()
-      console:log("ACTION menu, after pressing RIGHT:")
-      diff(atPrompt, afterRight, "action")
-      t, phase = 0, "reset"
+  elseif phase == "control" then          -- same wait, NO key
+    emu:setKeys(0)
+    if t > 40 then
+      ctrlAfter = snap()
+      ctrlSet = changed(base0, ctrlAfter)
+      say("control (no key): " .. (function() local c=0 for _ in pairs(ctrlSet) do c=c+1 end return c end)() .. " bytes drift on their own")
+      -- reload for the treatment run so both start identically
+      pcall(function() emu:loadStateFile(STATE) end)
+      emu:setKeys(0); t = 0; phase = "settle2"
     end
 
-  elseif phase == "reset" then           -- back to a clean prompt, then FIGHT
-    if not pcall(function() emu:loadStateFile(STATE) end) then phase="done"; return end
-    emu:setKeys(0); t, phase = 0, "fight"
+  elseif phase == "settle2" then
+    if t > 30 then treatBefore = snap(); t = 0; phase = "treat" end
 
-  elseif phase == "fight" then
-    emu:setKeys(t <= 6 and KEY_A or 0)
-    if t > 60 then afterFight = snap(); t, phase = 0, "down" end
-
-  elseif phase == "down" then            -- now in the MOVE list
-    emu:setKeys(t <= 6 and KEY_DOWN or 0)
-    if t > 50 then
-      afterDown = snap()
-      console:log("MOVE list, after pressing DOWN:")
-      diff(afterFight, afterDown, "move")
-      console:log("find_cursor: done")
-      phase = "done"
+  elseif phase == "treat" then           -- same wait, WITH key
+    emu:setKeys(t <= 8 and key or 0)
+    if t > 40 then
+      local after = snap()
+      report(stage == 1 and "ACTION menu, RIGHT pressed" or "MOVE list, DOWN pressed",
+        changed(treatBefore, after), ctrlSet, treatBefore, after)
+      if stage == 1 then
+        -- stage 2: open FIGHT first, then press DOWN
+        stage, key = 2, KEY_DOWN
+        pcall(function() emu:loadStateFile(STATE) end)
+        emu:setKeys(0); t = 0; phase = "openfight"
+      else
+        say("find_cursor: done"); R:close(); phase = "done"
+      end
     end
+
+  elseif phase == "openfight" then
+    emu:setKeys(t <= 8 and KEY_A or 0)
+    if t > 50 then treatBefore = snap(); t = 0; phase = "treat" end
   end
 end
 
 callbacks:add("frame", tick)
-console:log("find_cursor: watching 0x02023B80..0x02023BE3")
+console:log("find_cursor: full-RAM scan with control condition -> " .. OUT)

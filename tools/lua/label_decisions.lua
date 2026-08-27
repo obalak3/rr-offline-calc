@@ -30,14 +30,25 @@ local MON, SIZE = 0x02023BE4, 0x58
 local US, FOE = MON, MON + SIZE
 local O_SP, O_MOVES, O_PP = 0x00, 0x0C, 0x24
 
-local KEY_A, KEY_RIGHT, KEY_DOWN, KEY_B = 1, 16, 128, 2
-local PATTERNS = {
-  {KEY_B, KEY_A, KEY_A},
-  {KEY_B, KEY_A, KEY_RIGHT, KEY_A},
-  {KEY_B, KEY_A, KEY_DOWN, KEY_A},
-  {KEY_B, KEY_A, KEY_DOWN, KEY_RIGHT, KEY_A},
-}
+local KEY_A, KEY_B, KEY_DOWN = 1, 2, 128
 local HOLD, GAP, EPISODE_FRAMES, IDLE_LIMIT = 5, 22, 26000, 2600
+
+-- SWITCH-DRIVEN, on James's call: "this test constantly has the pokemon make
+-- the same move... I would suggest switching, so that automatically the
+-- opponent does different moves." Correct, and for a better reason than
+-- convenience: the AI picks against WHOEVER IS OUT, so rotating our Pokemon
+-- makes it vary its choice without us varying anything -- which is exactly the
+-- spread of moves, slots and switch decisions the label set needs.
+--
+-- BAG AND RUN ARE NOW STRUCTURALLY UNREACHABLE. gActionSelectionCursor was
+-- MEASURED at 0x02023FF8 (full-RAM diff with a control condition: 6
+-- input-caused bytes out of 3418 drifting, and this one goes 0->1 exactly as
+-- FIGHT->BAG). It is written directly, so no direction key is ever pressed at
+-- the action menu -- which is the only menu where BAG and RUN can be hit. The
+-- guessed address (0x02023BCE) was wrong, so pressing blind or writing the
+-- guess would both have failed silently.
+local ACTION_CURSOR = 0x02023FF8
+local ACT_FIGHT, ACT_POKEMON = 0, 2
 
 if _RR_LBL_ACTIVE then
   console:error("label_decisions: already running. Quit mGBA first."); return
@@ -50,11 +61,11 @@ out:write("statefile\taction\tmove_id\tslot\tnew_species\n")
 
 local EPISODES = {}
 for si = 1, #STATES do
-  for pi = 1, #PATTERNS do EPISODES[#EPISODES+1] = {si = si, pi = pi} end
+  for pi = 1, 5 do EPISODES[#EPISODES+1] = {si = si, pi = pi} end
 end
 
 local ep, frame, phase, idle = 0, 0, "load", 0
-local prev, seq, seqStep, seqTimer, patIdx = nil, nil, 0, 0, 1
+local prev, seqTimer, stepDown = nil, 0, 1
 local lastSave, saveCount, labels = "", 0, 0
 
 local function snapshot()
@@ -79,9 +90,8 @@ local function tick()
     if not pcall(function() emu:loadStateFile(SRC .. STATES[EPISODES[ep].si]) end) then
       console:error("cannot load " .. STATES[EPISODES[ep].si]); phase = "done"; return
     end
-    patIdx = EPISODES[ep].pi
-    seq = PATTERNS[patIdx]
-    seqStep, seqTimer, frame, idle = 0, 0, 0, 0
+    stepDown = EPISODES[ep].pi
+    seqTimer, frame, idle = 0, 0, 0
     prev = snapshot()
     emu:setKeys(0)
     phase = "run"
@@ -94,26 +104,35 @@ local function tick()
     emu:setKeys(0); phase = "load"; return
   end
 
+  -- One cycle: save the state, force the cursor to POKEMON, confirm, walk
+  -- down to the next party slot, confirm. Directions only ever land inside
+  -- the party screen, where they are harmless.
   seqTimer = seqTimer + 1
-  if seqTimer <= HOLD then
-    -- A state saved at the START of each input cycle is (approximately) the
-    -- menu-time state the upcoming decision must be derivable from.
-    if seqStep == 0 and seqTimer == 1 then
-      saveCount = saveCount + 1
-      lastSave = string.format("ep%03d_f%06d.ss", ep, frame)
-      pcall(function() emu:saveStateFile(OUT .. lastSave) end)
-    end
-    emu:setKeys(seq[seqStep + 1] or KEY_A)
+  if seqTimer == 1 then
+    saveCount = saveCount + 1
+    lastSave = string.format("ep%03d_f%06d.ss", ep, frame)
+    pcall(function() emu:saveStateFile(OUT .. lastSave) end)
+    emu:write8(ACTION_CURSOR, ACT_POKEMON)
+    emu:setKeys(KEY_A)
+  elseif seqTimer <= HOLD then
+    emu:setKeys(KEY_A)
+  elseif seqTimer <= HOLD + 10 then
+    emu:setKeys(0)
+  elseif seqTimer <= HOLD + 10 + (stepDown * 8) then
+    -- walk down `stepDown` entries inside the party screen
+    local ph = (seqTimer - HOLD - 10) % 8
+    emu:setKeys(ph < 4 and KEY_DOWN or 0)
+  elseif seqTimer <= HOLD + 18 + (stepDown * 8) then
+    emu:setKeys(KEY_A)
+  elseif seqTimer <= HOLD + 26 + (stepDown * 8) then
+    emu:setKeys(0)
+  elseif seqTimer <= HOLD + 32 + (stepDown * 8) then
+    emu:setKeys(KEY_A)          -- clear any prompt / advance messages
   else
     emu:setKeys(0)
-    if seqTimer >= HOLD + GAP then
-      seqStep = seqStep + 1
+    if seqTimer >= HOLD + GAP + 40 + (stepDown * 8) then
       seqTimer = 0
-      if seqStep >= #seq then
-        seqStep = 0
-        patIdx = (patIdx % #PATTERNS) + 1
-        seq = PATTERNS[patIdx]
-      end
+      stepDown = (stepDown % 5) + 1     -- rotate which bench slot we take
     end
   end
 
