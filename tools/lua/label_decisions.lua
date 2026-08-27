@@ -49,6 +49,17 @@ local HOLD, GAP, EPISODE_FRAMES, IDLE_LIMIT = 5, 22, 26000, 2600
 -- guess would both have failed silently.
 local ACTION_CURSOR = 0x02023FF8
 local ACT_FIGHT, ACT_POKEMON = 0, 2
+-- Party-screen logical cursor, MEASURED by the two-press stride probe:
+-- 0x0203B0A9 holds THE PARTY SLOT ITSELF. The probe read 0 -> 2 -> 4 not
+-- because the encoding is 2*slot, but because RR's party screen is a 2x3
+-- GRID in party order (left column = slots 0,2,4) and DOWN walks that
+-- column. James's screenshot settled it. Writing 2*slot selected slots
+-- 2,4,6,8 -- hence sometimes-Lanturn, sometimes-stuck. (The +8-stride byte found alongside it is the cursor SPRITE's
+-- pixel position, which follows this value.) Written, not navigated: the
+-- DOWN-walk that kept re-selecting Lanturn is gone entirely. This write is
+-- also the experiment: every label row now records which of ours ended up
+-- active, so if this address is wrong the data says so by itself.
+local PARTY_IDX = 0x0203B0A9
 
 if _RR_LBL_ACTIVE then
   console:error("label_decisions: already running. Quit mGBA first."); return
@@ -57,7 +68,7 @@ _RR_LBL_ACTIVE = true
 
 local out = io.open(OUT .. "labels.tsv", "a")
 out:write("# session " .. os.date() .. "\n")
-out:write("statefile\taction\tmove_id\tslot\tnew_species\n")
+out:write("statefile\taction\tmove_id\tslot\tnew_species\tour_active\n")
 
 local EPISODES = {}
 for si = 1, #STATES do
@@ -112,41 +123,48 @@ local function tick()
     saveCount = saveCount + 1
     lastSave = string.format("ep%03d_f%06d.ss", ep, frame)
     pcall(function() emu:saveStateFile(OUT .. lastSave) end)
+  end
+  if seqTimer <= 6 then
+    emu:setKeys(KEY_B)                    -- unwind any half-open menu
+  elseif seqTimer <= 14 then
+    emu:setKeys(0)
+  elseif seqTimer == 15 then
     emu:write8(ACTION_CURSOR, ACT_POKEMON)
     emu:setKeys(KEY_A)
-  elseif seqTimer <= HOLD then
+  elseif seqTimer <= 20 then
+    emu:setKeys(KEY_A)                    -- open the party screen
+  elseif seqTimer <= 90 then
+    emu:setKeys(0)                        -- generous settle
+    if seqTimer == 88 then emu:write8(PARTY_IDX, stepDown) end
+  elseif seqTimer <= 96 then
+    emu:write8(PARTY_IDX, stepDown)   -- re-assert, then select
     emu:setKeys(KEY_A)
-  elseif seqTimer <= HOLD + 10 then
+  elseif seqTimer <= 120 then
+    emu:setKeys(0)                        -- Shift submenu settles
+  elseif seqTimer <= 126 then
+    emu:setKeys(KEY_A)                    -- confirm SHIFT
+  elseif seqTimer <= 136 then
     emu:setKeys(0)
-  elseif seqTimer <= HOLD + 10 + (stepDown * 8) then
-    -- walk down `stepDown` entries inside the party screen
-    local ph = (seqTimer - HOLD - 10) % 8
-    emu:setKeys(ph < 4 and KEY_DOWN or 0)
-  elseif seqTimer <= HOLD + 18 + (stepDown * 8) then
-    emu:setKeys(KEY_A)
-  elseif seqTimer <= HOLD + 26 + (stepDown * 8) then
-    emu:setKeys(0)
-  elseif seqTimer <= HOLD + 32 + (stepDown * 8) then
-    emu:setKeys(KEY_A)          -- clear any prompt / advance messages
+  elseif seqTimer <= 142 then
+    emu:setKeys(KEY_A)                    -- spare confirm / message advance
+  elseif seqTimer <= 230 then
+    emu:setKeys(0)                        -- the exchange plays out
   else
-    emu:setKeys(0)
-    if seqTimer >= HOLD + GAP + 40 + (stepDown * 8) then
-      seqTimer = 0
-      stepDown = (stepDown % 5) + 1     -- rotate which bench slot we take
-    end
+    seqTimer = 0
+    stepDown = (stepDown % 5) + 1
   end
 
   local now = snapshot()
   if now.sp ~= prev.sp and now.sp ~= 0 and prev.sp ~= 0 then
     labels = labels + 1
-    out:write(string.format("%s\tswitch\t0\t-1\t%d\n", lastSave, now.sp))
+    out:write(string.format("%s\tswitch\t0\t-1\t%d\t%d\n", lastSave, now.sp, emu:read16(US + O_SP)))
     out:flush(); idle = 0
   elseif now.sp == prev.sp then
     for i = 1, 4 do
       if now.pp[i] < prev.pp[i] and prev.moves[i] ~= 0 then
         labels = labels + 1
-        out:write(string.format("%s\tmove\t%d\t%d\t0\n",
-          lastSave, prev.moves[i], i - 1))
+        out:write(string.format("%s\tmove\t%d\t%d\t0\t%d\n",
+          lastSave, prev.moves[i], i - 1, emu:read16(US + O_SP)))
         out:flush(); idle = 0
         break
       end
