@@ -41,10 +41,24 @@ function chooseAction(ctx, state, opts) {
 		if (m.fainted) dead.push(m.set.species);
 	});
 	state.foe.team.forEach((m, i) => { if (m.fainted) foeDead.push(i); });
+	// AND THE TARGET'S OWN HP. This block said "everyone's HP" and recorded
+	// ours plus who was dead on theirs -- the damage already done to the
+	// Pokemon we are trying to remove was simply dropped, so pricePath rebuilt
+	// the board with it at FULL HEALTH and every candidate was priced against a
+	// fight that was not the one in front of us.
+	//
+	// It is the same mistake as the candidate cache being keyed without HP, in
+	// a second place: generation and pricing each kept their own idea of the
+	// position and disagreed. Live at turn 81 that meant a Pawmot on 41 of 99
+	// was priced as a Pawmot on 99, so "finish it now" never won.
+	const target = state.foe.team[fi];
 	const entry = {hp, dead, foeDead, field,
 		active: state.me.team[state.me.active].set.species,
 		turnsOut: state.me.team[state.me.active].turnsOut,
 		foeTurnsOut: state.foe.team[fi] && state.foe.team[fi].turnsOut};
+	if (target && target.maxHP && target.curHP < target.maxHP) {
+		entry.foeChip = 1 - (target.curHP / target.maxHP);
+	}
 
 	// LOOK PAST THE POKEMON IN FRONT OF US.
 	//
@@ -137,6 +151,11 @@ function chooseAction(ctx, state, opts) {
 			active: after.me.team[after.me.active].set.species,
 			turnsOut: after.me.team[after.me.active].turnsOut
 		};
+		// Each remaining opponent is priced from the HP it actually has left.
+		const foeHpAfter = {};
+		after.foe.team.forEach((m, i) => {
+			if (m && m.maxHP && !m.fainted) foeHpAfter[i] = m.curHP / m.maxHP;
+		});
 		let total = 0;
 		for (let gi = 0; gi < ctx.foeSets.length; gi++) {
 			if (foeDeadAfter.includes(gi)) continue;
@@ -153,8 +172,11 @@ function chooseAction(ctx, state, opts) {
 				if (found >= ENOUGH) break;
 				if (!cand.jobs.length) continue;
 				if (cand.jobs.every(j => deadAfter.includes(j.mon))) continue;
-				let rr;
-				try { rr = pricePath(ctx, gi, cand.jobs, entryAfter, {expendable}); }
+					let rr;
+				const eAfter = (foeHpAfter[gi] !== undefined && foeHpAfter[gi] < 1)
+					? Object.assign({}, entryAfter, {foeChip: 1 - foeHpAfter[gi]})
+					: entryAfter;
+				try { rr = pricePath(ctx, gi, cand.jobs, eAfter, {expendable}); }
 				catch (e) { continue; }
 				if (!rr.kills) continue;
 				found++;
