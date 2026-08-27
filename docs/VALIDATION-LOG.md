@@ -600,3 +600,67 @@ The blocker is contaminated history, not method: Scald shows a 67% "crit" rate,
 which is impossible and is really the old Bellibolt 133-vs-125 max-HP error
 inflating observed damage. Refitting needs rows recorded after today's band
 fixes.
+
+## 2026-08-27 (night) -- the switch loop root-caused, fixed, and the ZERO-DEATH win
+
+The loop above decomposed completely once `RR_EXPLAIN=1` (new, on the probe)
+printed the finalist market for archived turn 592:
+
+    #0 here=0.40 ahead=16.00 outcome=left | spe -1, psn, then Mienshao kills
+    #1 here=0.40 ahead=16.00 outcome=left | ...then Mienshao softens...
+    ...all 68 candidates identical, every sim line one turn long:
+    t1 we Mienshao -> Diggersby / they Volt Switch   -> outcome=left
+
+The pricer gave the simulated foe its literal argmax, and late in the fight
+that argmax is Volt Switch, so EVERY simulated duel ended on turn one with
+'left'. Every plan priced at one turn of tempo (0.40) plus the same flat
+lookahead (16.00 = two unanswerable foes at 8). A 68-way tie, broken by
+generation order, flipping with whoever stood on the field: the loop. Two
+feeders confirmed on the way: the engine pivoted Manectric out through a Volt
+Switch a Ground type had nullified (the real game strands it), and chip legs
+generated at full party HP degrade at execution into "switch to the finisher",
+which is why plan text and action disagreed in the live log.
+
+The fix (6f7cc5e) is doctrine already written at the top of policy.js -- their
+switching only reorders the duels, it never invalidates one. `committedChoice`
+(duels.js, shared with paths.js) makes the sim foe play its best COMMITTED
+action; a real pivot postpones a duel, and that is the live agent's business,
+not the duel's price. Plus the engine fix: an immune damaging move fails
+outright, no pivot, no secondary.
+
+Replayed: 592 Drain Punch, 593 Bulldoze, 594 Drain Punch, 600 Fake Out --
+loop gone. 694 still switches, but with a priced 0%-death kill path (Mienshao
+in, eats Ice Punch, kills the 14 HP Pawmot). Healthy-Pawmot position 2864
+still opens Baby-Doll Eyes with the identical action as before the change.
+
+### Live outcome, same evening
+
+    19:26  WIN, 4 alive  (first half of the episode ran on the OLD code and
+           lost Diggersby+Victreebel in the loop; the restart at turn 919
+           took over mid-fight and closed it out)
+    19:30  WIN, SIX ALIVE -- first clean episode on 6f7cc5e:
+           54/98 112/112 54/139 70/102 95/95 61/108, their five all at 0.
+           Zero deaths. Not just the cap (lose only Lilligant) -- the
+           stretch goal, first time ever.
+
+n=1. Reliability is the next measurement; the agent is running episodes.
+
+### Warts seen tonight, none fatal, all open
+
+- Vikavolt endgame was won by PP attrition: live Vikavolt Roosted ~15 turns
+  against Rock Tomb while the plan said "kills it outright" (the committed sim
+  foe attacks; the real one Roosts). Safe but slow, and it worked only because
+  Roost has 16 PP. The clean line (Fake Out + 2 Rock Tombs on the sleeper)
+  exists when the position allows it.
+- node.log sometimes prints the WRONG foe species in the turn header (said
+  Bellibolt while RAM said Pincurchin active). Display only; obs is correct.
+- "expecting to deal 0 and take 0" prints zeros every turn, and the resolved
+  our/theirs damage numbers are frequently impossible (a switch turn logged
+  "theirs 139"). The prediction bookkeeping needs an audit before anyone
+  quotes it.
+- Chip/absorb legs are still GENERATED against a full-HP party, so a plan
+  label can promise "Lanturn chips it" while execution goes straight to the
+  finisher. Prices are honest (the sim runs the degenerate version); the
+  labels lie.
+- The lookahead still returns a flat 8 for "nothing answers this foe from
+  here". That flatness was half of why the loop's totals tied exactly.

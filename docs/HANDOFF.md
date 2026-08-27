@@ -11,47 +11,34 @@ Beat LT. Surge (`RadicalRed.ss5`) **losing nobody but Lilligant**. James has
 done this himself. Once it is reliable the target becomes **zero deaths**,
 which he also believes is possible. Anything less is not the win.
 
-## THE OPEN PROBLEM -- late-fight collapse
+## STATE: the cap is beaten -- first ZERO-DEATH win, 2026-08-27 19:30
 
-**This is the only thing that matters right now.** James, watching it live:
+The late-fight switch loop is root-caused and fixed (`6f7cc5e`), and the first
+clean episode on that commit beat Surge with ALL SIX ALIVE:
 
-> "The problems I am talking about never happen early game, they are all late
-> game... The baby doll eyes plan was great and the current hit pawmot with leaf
-> storm while manectric switches to pawmot is also working great. The problem
-> seems more to me like the model goes crazy after a certain amount of turns
-> pass. The problem isn't the engine, something happens when the game goes too
-> long."
+    54/98  112/112  54/139  70/102  95/95  61/108   their five all at 0
 
-The evidence, from the fight of 18:50 (turns 592-613):
+That exceeds the cap (lose nobody but Lilligant). It is ONE episode. The open
+question is now RELIABILITY: let the rotation run and count how often the
+zero-death (or Lilligant-only) win repeats, per git version, in results.tsv.
 
-- **Turns 592-607: sixteen consecutive switches**, Mienshao -> Diggersby ->
-  Mienshao -> Breloom -> Mienshao -> Lilligant ..., no attack landed, our side
-  taking a free hit every turn. Diggersby died in it.
-- **Turn 608 onward it simply worked**: Fake Out, then Rock Tomb five times.
-  James: Fake Out + 2 Rock Tombs "would have literally won the game".
+### What the loop was (full decomposition in docs/VALIDATION-LOG.md)
 
-What the log shows during the loop, and this is the shape of the bug:
+The pricer gave the simulated foe its literal argmax; late-fight that argmax
+is Volt Switch, so every simulated duel ended turn one with outcome 'left'.
+All 68 candidates at turn 592 priced identically -- one turn of tempo plus the
+same flat lookahead -- and the 68-way tie broke by generation order, flipping
+with whoever was standing. Both directions of the flip priced their switch as
+a free absorb entry. Sixteen switches, two deaths, no attack landed.
 
-    592  Mienshao out  PLAN "spe -1, psn, then Mienshao KILLS"      -> switch to Diggersby
-         [switch margin 9.93 vs staying in ("... then Mienshao SOFTENS + Breloom closes")]
-    593  Diggersby out PLAN "spe -1, psn, then Mienshao SOFTENS..."  -> switch to Mienshao
-         [switch margin 9.85 vs staying in ("... then Mienshao KILLS")]
-    594  Mienshao out  ... identical to 592
-    595  Diggersby out ... identical to 593
+Fix, no new constants: `committedChoice` (duels.js, shared with paths.js) --
+the sim foe plays its best COMMITTED action, because their switching only
+reorders the duels (policy.js doctrine). And the engine now fails an immune
+damaging move outright: Volt Switch into a Ground type strands its user.
 
-**The same two plans swap prices depending on which Pokemon is standing.**
-Whichever plan needs the Pokemon that is NOT out wins, so the agent switches,
-and next turn the other one wins. The margin is ~10, so the incumbent bonus
-(`STICK`, 0.75) cannot hold it. A margin of ~10 is roughly `illegal death 6 +
-4 * deathRisk`, which suggests every "stay" line is priced as the active dying
--- so both Pokemon are individually correct to flee, and the fleeing is what
-kills them.
-
-PP was checked and RULED OUT: Mienshao sat on 3,10,4,15 through the whole loop.
-
-Next step: get `planJobs` for turns 592-595 out of `~/rr-agent/turns/` and find
-why the "stay" variant is priced ~10 worse than the "switch" variant when they
-are the same plan seen from two sides.
+`RR_EXPLAIN=1 node tools/agent.js --probe <turn.json>` prints the finalist
+market with price decomposition and sim lines. This is what cracked it; use
+it first on any future bad decision.
 
 ## What is running
 
@@ -104,26 +91,28 @@ across turns is lost unless carried explicitly.
 
 ## Open, in rough priority order
 
-- **The late-fight switch loop above.** Everything else is noise next to it.
-- **The lookahead can invert a better plan.** It prices each remaining opponent
-  independently, assumes one healthy Pokemon handles all of them, and returns a
-  flat 8 when it finds nothing. Depths 12 and 30 lose every run; it sits at 5
-  only because deeper is worse. It has **never been tested off**. Do not retune
-  it without James -- these are the fitted constants he wants derived.
-- **Chip chains (`RR_CHIP_CHAINS`) are default ON and unproven.** They do not
-  displace the Baby-Doll Eyes plan (checked: identical top-6 ordering, BDE at
-  ranks 4/7/13 either way), but they have never been shown to help.
-- **Crits cannot currently be predicted from the decision-time seed.** The LCG
-  is solved (`v*0x41C64E6D + 12345`) and the seed is read every turn as
-  `obs.rng`, but a fixed draw offset fits at 85% against an 82% "always guess
-  no-crit" baseline -- noise. The per-move draw order (one draw per luck event:
-  accuracy, crit, damage, secondary) is the right model and the damage roll IS
-  locatable within a single move+context (Sludge alone: draw 3, consistent
-  across 16 rows, p ~ 1e-10). Refitting needs rows recorded AFTER today's band
-  fixes; the historical ones are contaminated (Scald shows a 67% "crit" rate,
-  which is the old Bellibolt 133-vs-125 error, not crits).
+- **Reliability of the win.** One zero-death episode is n=1; the 11-0 record
+  was once false too. Count episodes per version in results.tsv before
+  claiming anything.
+- **Vikavolt Roost stall.** The committed sim foe attacks, the real Vikavolt
+  Roosts; live it took ~15 Rock Tombs and won only because Roost has 16 PP.
+  Safe, slow, unpriced.
+- **Chip/absorb legs are generated against a full-HP party**, so plan labels
+  promise chippers that execution skips ("Lanturn chips it" at 6 HP goes
+  straight to the finisher). Prices are honest; labels lie; candidate list
+  floods with aliases of the same degenerate plan.
+- **The lookahead can invert a better plan.** Prices each remaining opponent
+  independently, flat 8 when it finds nothing (that flatness was half the
+  loop tie). Depth is MEASURED AT 5; do not retune without James.
+- **Telemetry is untrustworthy in three places**: wrong foe species in some
+  turn headers, "expecting to deal 0 and take 0" always zero, impossible
+  resolved-damage numbers on switch turns. Audit before quoting any of them.
+- Chip chains (`RR_NO_CHIP_CHAINS` disables) remain unproven either way.
+- Crits still not predictable from the decision-time seed (see the negative
+  result in VALIDATION-LOG); refit needs post-band-fix rows.
 - Mega evolution unmodelled (Intimidate fires twice).
-- Opponent predictor is 56% live, not the 75.5% the offline fixture claims.
+- Opponent predictor is 56% live; the committed-choice fix reduced how much a
+  wrong pivot prediction can hurt, but the port gap stands.
 
 ## How to work on this
 
