@@ -95,10 +95,28 @@ function chooseAction(ctx, state, opts) {
 	// on the HP of the position, so it is the same answer every turn of a fight
 	// and was being recomputed from scratch for every candidate of every turn.
 	// That alone was most of a 41-second decision.
-	function cachedCandidates(idx, fld) {
-		const key = idx + '|' + (fld && fld.terrainTurns > 0 ? fld.terrain : '-');
+	// THE TARGET'S HP IS PART OF THE QUESTION, so it is part of the key. The
+	// note here used to say generation "depends only on WHO we are facing and
+	// the field, not on the HP of the position". That is false: whether a line
+	// KILLS is entirely a question of how much HP is left, so a table built once
+	// against a full-health target can never contain "somebody finishes it now".
+	//
+	// Watched live at turn 81: Mienshao's Drain Punch had just taken Pawmot to
+	// 41 of 99 and the very same move would finish it, but every candidate had
+	// been generated against a 99 HP Pawmot, where it is not a kill. No plan
+	// said "kill it", so the agent switched instead and Pawmot drained back to
+	// 97.
+	//
+	// Bucketed to a tenth: the cache was most of a 41-second decision and still
+	// does its job, while a target that has dropped meaningfully gets a fresh
+	// table.
+	function cachedCandidates(idx, fld, foeHp) {
+		const bucket = foeHp === undefined ? 10 : Math.max(1, Math.ceil(foeHp * 10));
+		const key = idx + '|' + (fld && fld.terrainTurns > 0 ? fld.terrain : '-') + '|' + bucket;
 		if (!ctx._candCache) ctx._candCache = {};
-		if (!ctx._candCache[key]) ctx._candCache[key] = C.candidatesFor(ctx, idx, {field: fld});
+		if (!ctx._candCache[key]) {
+			ctx._candCache[key] = C.candidatesFor(ctx, idx, {field: fld, foeHp: bucket / 10});
+		}
 		return ctx._candCache[key];
 	}
 
@@ -124,7 +142,11 @@ function chooseAction(ctx, state, opts) {
 			if (foeDeadAfter.includes(gi)) continue;
 			let cheapest = null;
 			let ahead;
-			try { ahead = cachedCandidates(gi, entryAfter.field); }
+			try {
+				const fm = after.foe.team[gi];
+				ahead = cachedCandidates(gi, entryAfter.field,
+					fm && fm.maxHP ? fm.curHP / fm.maxHP : undefined);
+			}
 			catch (e) { continue; }
 			let found = 0;
 			for (const cand of ahead.slice(0, LOOKAHEAD)) {
@@ -174,7 +196,9 @@ function chooseAction(ctx, state, opts) {
 
 	let best = null;
 	const shortlist = [];
-	const ideas = cachedCandidates(fi, field);
+	const foeMon = state.foe.team[fi];
+	const ideas = cachedCandidates(fi, field,
+		foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined);
 	for (const cand of ideas) {
 		if (!cand.jobs.length) continue;
 		if (cand.jobs.every(j => dead.includes(j.mon))) continue;

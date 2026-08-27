@@ -25,10 +25,23 @@ const E = require('./enablers.js');
 
 const pctOf = x => (x * 100).toFixed(0) + '%';
 
-/** The field, in the vocabulary a duel entry condition speaks. */
-function fieldCond(field) {
-	if (!field || !field.terrainTurns) return {};
-	return {terrain: field.terrain};
+/**
+ * The field AND the damage already on the target, in the vocabulary a duel
+ * entry condition speaks.
+ *
+ * THE FOE'S CURRENT HP BELONGS IN HERE. Generation used to run every duel from
+ * a fresh full-health state, and whether a duel is a KILL depends entirely on
+ * how much HP is left -- so the whole family "somebody just kills it now" was
+ * invisible whenever the target was damaged. Watched live: Mienshao's Drain
+ * Punch took Pawmot to 41 of 99, one more click would have finished it, and no
+ * candidate said so. The planner switched Diggersby in instead and lost it in
+ * one hit while Pawmot drained back to 97.
+ */
+function fieldCond(field, foeHp) {
+	const out = {};
+	if (field && field.terrainTurns) out.terrain = field.terrain;
+	if (foeHp !== undefined && foeHp < 0.999) out.foeChip = 1 - foeHp;
+	return out;
 }
 
 
@@ -232,7 +245,7 @@ function candidatesFor(ctx, fi, options) {
 	// 1. Who kills it with no help at all.
 	const solo = {};
 	party.forEach((p, mi) => {
-		const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field), {})
+		const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field, opts.foeHp), {})
 			.find(l => l.outcome === 'kill');
 		if (!line) return;
 		solo[mi] = true;
@@ -254,7 +267,7 @@ function candidatesFor(ctx, fi, options) {
 			if (found >= (opts.perKiller || 4)) break;
 			if (!achievable(ctx, entry.cond, foe, opts.field)) continue;
 			const line = D.duelLines(engine, party, foeSets, mi, fi,
-				Object.assign({}, entry.cond, fieldCond(opts.field)), {})
+				Object.assign({}, entry.cond, fieldCond(opts.field, opts.foeHp)), {})
 				.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
 			if (!line) continue;
 			found++;
@@ -300,7 +313,7 @@ function candidatesFor(ctx, fi, options) {
 		if (!theirTypes.has(l.absorbs)) return;      // nothing here to absorb
 		party.forEach((p, mi) => {
 			if (p.species === l.mon) return;
-			const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field), {})
+			const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field, opts.foeHp), {})
 				.find(x => x.outcome === 'kill');
 			if (!line) return;
 			push([{mon: l.mon, moves: [], until: {entered: true}},
@@ -340,8 +353,10 @@ function candidatesFor(ctx, fi, options) {
 	for (let depth = 0; depth <= MAX_CHIP_LEGS; depth++) {
 		const grown = [];
 		for (const node of frontier) {
-			const entryCond = Object.assign({}, fieldCond(opts.field),
-				node.acc > 0 ? {foeChip: node.acc} : {});
+			const base = fieldCond(opts.field, opts.foeHp);
+			const already = base.foeChip || 0;
+			const entryCond = Object.assign({}, base,
+				(node.acc + already) > 0 ? {foeChip: Math.min(0.99, node.acc + already)} : {});
 			party.forEach((p, mi) => {
 				if (node.used[mi]) return;
 				// Can this one FINISH the remaining fraction? Only meaningful
