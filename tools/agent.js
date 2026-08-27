@@ -188,6 +188,7 @@ function buildState(obs) {
  * assuming.
  */
 let lastByte = null, byteRepeats = 0;
+const byteHistory = [];   // was each recent reading a switch?
 
 function modelAction(st) {
 	try {
@@ -209,11 +210,19 @@ function byteAction(obs) {
 function foeAction(st, obs) {
 	const sig = obs.ai_action + ':' + obs.ai_target;
 	if (sig === lastByte) byteRepeats++; else { byteRepeats = 0; lastByte = sig; }
+	byteHistory.push(obs.ai_action === 1);
+	if (byteHistory.length > 8) byteHistory.shift();
 	const fromByte = byteAction(obs);
 	const fromModel = modelAction(st);
-	// Three identical readings across three different positions means the byte
-	// is not being written in this fight.
-	const stale = byteRepeats >= 3;
+	// Two independent staleness tests, because the first one alone missed it.
+	// Identical readings across changed positions is the obvious case. The one
+	// that actually caught this fight is the RATE: the byte claimed a switch on
+	// every single turn -- switch 2, switch 3, switch 2, switch 2 -- and no AI
+	// switches every turn. A side that is always switching is a byte that is
+	// not being written, whatever numbers it happens to contain.
+	const switchRate = byteHistory.filter(Boolean).length / byteHistory.length;
+	const alwaysSwitching = byteHistory.length >= 4 && switchRate > 0.6;
+	const stale = byteRepeats >= 3 || alwaysSwitching;
 	return {
 		chosen: (stale || !fromByte) ? fromModel : fromByte,
 		byte: fromByte, model: fromModel, stale: stale
@@ -342,7 +351,13 @@ setInterval(() => {
 				const foeSwapped = res.foe.species !== awaiting.foeSpecies;
 				let theirActual = 'unknown';
 				if (foeSwapped) {
-					theirActual = 'switched/replaced';
+					// A different Pokemon is out, but that has two causes and
+					// they are not the same event. If our hit was lethal they
+					// FAINTED; otherwise they chose to leave. Conflating them
+					// credited the predictor for switches that were really
+					// deaths we caused.
+					theirActual = (awaiting.predOur >= awaiting.foeHP)
+						? 'fainted+replaced' : 'switched';
 				} else {
 					for (let i = 0; i < 4; i++) {
 						if (res.foe.pp[i] < awaiting.foePP[i]) {
@@ -354,7 +369,8 @@ setInterval(() => {
 				}
 				const predictorOK = awaiting.theirAction === theirActual ? 'yes'
 					: (awaiting.theirAction.startsWith('switch')
-						&& theirActual === 'switched/replaced') ? 'yes' : 'NO';
+						&& theirActual === 'switched') ? 'yes'
+					: (theirActual === 'fainted+replaced') ? 'n/a' : 'NO';
 				const meSwapped = res.me.species !== awaiting.meSpecies;
 				const ourDmg = foeSwapped ? awaiting.foeHP : awaiting.foeHP - res.foe.hp;
 				const theirDmg = meSwapped ? awaiting.myHP : awaiting.myHP - res.me.hp;
