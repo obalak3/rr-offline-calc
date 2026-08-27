@@ -380,6 +380,81 @@ var RRBattle = (function () {
 	var speedCache = Object.create(null);
 	var speedCacheSize = 0;
 
+	/**
+	 * Final Speed, computed here rather than asked of the calculator.
+	 *
+	 * THIS WAS SILENTLY BROKEN FOR THE WHOLE PROJECT. The line below used to be
+	 * `calc.getFinalSpeed(...)` inside a try/catch that fell back to the raw
+	 * stat. `getFinalSpeed` is not on the calculator's public exports -- it
+	 * lives in `calc/dist/mechanics/util.js` and is never re-exported -- so the
+	 * call threw on EVERY invocation and every speed check in the simulator has
+	 * been reading the unmodified stat since the day it was written. Stat
+	 * stages, paralysis, Choice Scarf, Tailwind and the weather abilities have
+	 * never once affected turn order.
+	 *
+	 * That is not a cosmetic error. Bulldoze, Rock Tomb and Icy Wind exist in
+	 * this plan precisely to flip the order against Pawmot -- James's whole
+	 * method for that fight is "hit it with Bulldoze, and then it is slowed
+	 * down and I can kill it easier" -- and the simulator was throwing the drop
+	 * away. Chlorophyll never doubled Victreebel in sun either.
+	 *
+	 * Ported from the calculator's own implementation rather than reinvented,
+	 * including its fixed-point mod chain, so the numbers match the reference
+	 * exactly. rr-trainers.js has the same fallback and the same latent bug; it
+	 * feeds the UI rather than the search, so it is fixed separately.
+	 */
+	function modifiedStat(stat, mod) {
+		var table = [[2, 8], [2, 7], [2, 6], [2, 5], [2, 4], [2, 3], [2, 2],
+			[3, 2], [4, 2], [5, 2], [6, 2], [7, 2], [8, 2]];
+		var entry = table[6 + Math.max(-6, Math.min(6, mod))];
+		return Math.floor((stat * entry[0]) / entry[1]);
+	}
+
+	function chainMods(mods) {
+		var m = 4096;
+		for (var i = 0; i < mods.length; i++) {
+			if (mods[i] !== 4096) m = (m * mods[i] + 2048) >> 12;
+		}
+		return Math.max(Math.min(m, 131172), 410);
+	}
+
+	function pokeRound(n) { return n % 1 > 0.5 ? Math.ceil(n) : Math.floor(n); }
+
+	function computeSpeed(mon, side, field) {
+		var probe = toCalcPokemon(mon);
+		var raw = probe.rawStats ? probe.rawStats.spe : probe.stats.spe;
+		var speed = modifiedStat(raw, mon.boosts.spe || 0);
+		var ability = mon.set.ability || "";
+		var item = mon.itemGone ? "" : (mon.set.item || "");
+		var weather = field.weather || "";
+		var terrain = field.terrain || "";
+		var mods = [];
+		if (side.screens && side.screens.tailwind) mods.push(8192);
+		if ((ability === "Unburden" && mon.itemGone) ||
+			(ability === "Chlorophyll" && weather.indexOf("Sun") >= 0) ||
+			(ability === "Sand Rush" && weather === "Sand") ||
+			(ability === "Swift Swim" && weather.indexOf("Rain") >= 0) ||
+			(ability === "Slush Rush" && (weather === "Hail" || weather === "Snow")) ||
+			(ability === "Surge Surfer" && terrain === "Electric")) {
+			mods.push(8192);
+		} else if (ability === "Quick Feet" && mon.status) {
+			mods.push(8192);
+		} else if (ability === "Slow Start" && (mon.turnsOut || 0) < 5) {
+			mods.push(2048);
+		} else if (mon.volatiles && mon.volatiles.paradoxStat === "spe") {
+			// Protosynthesis / Quark Drive, recorded by applyParadoxBoost.
+			mods.push(6144);
+		}
+		if (item === "Choice Scarf") mods.push(6144);
+		else if (item === "Iron Ball" || item === "Macho Brace") mods.push(2048);
+		speed = pokeRound((speed * chainMods(mods)) / 4096);
+		// Paralysis halves Speed from generation 7 on, and Quick Feet ignores it.
+		if (mon.status === "par" && ability !== "Quick Feet") {
+			speed = Math.floor((speed * 50) / 100);
+		}
+		return Math.max(0, Math.min(10000, speed));
+	}
+
 	function finalSpeed(state, key) {
 		var side = state[key];
 		var mon = active(side);
@@ -391,13 +466,7 @@ var RRBattle = (function () {
 		var hit = speedCache[cacheKey];
 		if (hit !== undefined) return hit;
 
-		var field = buildField(state, key);
-		var value;
-		try {
-			value = calc.getFinalSpeed(gen(), toCalcPokemon(mon), field, field.attackerSide);
-		} catch (e) {
-			value = toCalcPokemon(mon).stats.spe;
-		}
+		var value = computeSpeed(mon, side, state.field);
 		if (speedCacheSize >= CACHE_LIMIT) {
 			speedCache = Object.create(null);
 			speedCacheSize = 0;
@@ -1030,6 +1099,13 @@ var RRBattle = (function () {
 			// downstream was built on it. "median" is what a plan should assume
 			// happens; the real odds are reported separately per step.
 			var pick = ctx.risks.roll || "max";
+			// The other half of the honest-dice fix. `roll` was applied to both
+			// sides at once, so reading our kills at the median also read their
+			// kills at the median -- which is optimism about SURVIVING, the one
+			// direction a Nuzlocke planner must never be wrong in. A plan should
+			// assume its own damage is typical and the damage it takes is the
+			// worst of the band, so the two readings need separate dials.
+			if (key === "foe" && ctx.risks.foeRoll) pick = ctx.risks.foeRoll;
 			var band = rolls.noCrit;
 			if (key === "foe" && ctx.risks.crit) band = rolls.crit;
 			if (key === "me" && ctx.risks.cautious) return band[0];
