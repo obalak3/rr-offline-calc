@@ -182,3 +182,45 @@ CURRENT POSITION every turn, which is what `pricePath` already takes an entry
 state for. The combination search then answers "is there still a way through
 from here", not "here is the sequence". The live agent's per-turn loop is the
 right shape; it just has a greedy chooser where the path planner belongs.
+
+## THE SIMULATED SURGE FIGHT APPEARS UNWINNABLE — and that is the real problem
+
+Re-planning from the current position every turn was the fix the trace pointed
+at. It was built (`tools/lib/replan.js`) and measured:
+
+    re-planning every turn      won 0/12, all six dead
+    (106 turns decided by a priced path, 108 fell back — no path existed)
+
+Then the baseline, which should have been run first:
+
+    plain best-damage greedy    won 0/20, all six dead, every episode
+
+**Every strategy loses. Greedy, static plan, re-planning — 0 wins in 70+
+episodes, six deaths every time.** James beats this fight losing ONE Pokemon,
+and has done so three or four times.
+
+So the planner is not the thing that is broken. We have spent the night
+optimising against a simulated opponent that no strategy can beat, which means
+every plan produced has been optimised against a fiction, and the earlier
+"advisor loses Surge 6/6" results were measuring the same fiction.
+
+What is NOT the explanation, from tonight's live data:
+
+- Damage is right. Actual-to-band-max ratio has a median of 0.92 on our moves
+  and 0.91 on theirs, exactly a uniform 85-100% roll.
+- Their replacement order is right: 40/40 Pawmot second, which is what the real
+  game does.
+
+What remains, in rough order of suspicion:
+
+1. **The simulated AI plays better than the real one.** It is argmax over the
+   ported scores with full knowledge; the real AI matched that on only 76% of
+   turns, and the other 24% are presumably worse moves. A perfect version of an
+   imperfect opponent is a different, harder fight.
+2. **No items.** The planner and both executors cannot use a potion. James can.
+3. **The trainer data may not match the difficulty James plays.**
+4. Our own team's set data (EVs, IVs, items) may differ from the real save.
+
+THIS IS THE TOP PRIORITY. Until a strategy that James can execute wins in
+simulation, no planner result from this repo means anything -- including every
+number reported earlier tonight.
