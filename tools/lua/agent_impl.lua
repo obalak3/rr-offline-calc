@@ -245,10 +245,36 @@ local function samplesJSON()
 	return "{" .. table.concat(parts, ",") .. "}"
 end
 
+-- HUNT THE AI'S SCORE ARRAY.
+--
+-- James's point: the chosen move is written late, but whatever DECIDES the move
+-- must exist earlier. CFRU scores all four moves in AI_THINKING_STRUCT --
+-- everything starts at 100 and each AI pass adjusts it -- then takes the
+-- argmax. Those four bytes have to be in memory while the AI is thinking, which
+-- is before the choice is committed. If we can find them we do not need to port
+-- the scoring at all; we can read the AI's own evaluation.
+--
+-- And we can find them, because there is now ground truth: the right address is
+-- the one whose argmax matches the move they actually used, turn after turn.
+-- Dump RAM at the decision point and correlate offline.
+local DUMPS = os.getenv("HOME") .. "/rr-agent/aidump/"
+local dumpCount = 0
+local function dumpForScoreHunt()
+	if dumpCount >= 30 then return end
+	dumpCount = dumpCount + 1
+	local tag = string.format("t%03d", turn)
+	for _, r in ipairs({{n = "ew", b = 0x02020000, l = 0x8000},
+			{n = "iw", b = 0x03000000, l = 0x8000}}) do
+		local f = io.open(DUMPS .. tag .. "." .. r.n .. ".bin", "wb")
+		if f then f:write(emu:readRange(r.b, r.l)); f:close() end
+	end
+end
+
 local function writeState(kind)
 	turn = turn + 1
 	_RR.samples = {}
 	sampleAI("menu")
+
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
@@ -759,7 +785,16 @@ function tick_inner()
 		-- foresight and the whole capability comes back. Three clean pairs
 		-- could not answer it, so sample the whole tail and let volume decide.
 		if timer == 1 then sampleAI("committed") end
-		if timer == 45 then sampleAI("resolving") end
+		if timer == 45 then
+			sampleAI("resolving")
+			-- Dump HERE, not at the menu. Nothing score-shaped exists at the
+			-- menu because the AI has not thought yet -- which is the same
+			-- reason the chosen-move byte is stale there. At 45 frames the
+			-- choice is already correct, so its scores should be present, and
+			-- reading them would show WHICH move our port misprices rather than
+			-- only that the argmax differs.
+			dumpForScoreHunt()
+		end
 		if timer == 100 then sampleAI("late") end
 		if timer == 150 then sampleAI("t150") end
 		if timer == 220 then sampleAI("t220") end
