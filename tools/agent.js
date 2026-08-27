@@ -308,6 +308,23 @@ function decide(st, obs) {
 		});
 	}
 	rows.sort((x, y) => y.score - x.score);
+	// VOLUNTARY SWITCHING IS DISABLED, deliberately and temporarily.
+	//
+	// The Shift confirmation does not take. Grid navigation now works -- the
+	// log shows "at slot 2 after 1 presses" -- but pressing A on the submenu
+	// closes it without switching, and a whole interval spent on it produced no
+	// progress while the agent resolved ONE turn in fifteen minutes. Moves are
+	// proven over ninety-nine resolved turns.
+	//
+	// So the agent plays moves, and only touches the party screen when a faint
+	// FORCES it -- a path that has no Shift submenu at all, per the screenshot,
+	// and so is not affected by this. That trades some decision quality for a
+	// loop that actually collects data, which is what the calibration run is
+	// for. It is a limitation to lift, not a fix.
+	if (obs.kind !== 'forced') {
+		const moves = rows.filter(r => r.action.type !== 'switch');
+		if (moves.length) return {best: moves[0], all: rows, theirs, src};
+	}
 	return {best: rows[0], all: rows, theirs, src};
 }
 
@@ -517,9 +534,16 @@ setInterval(() => {
 	const slot = d.best.action.type === 'switch'
 		? d.best.action.index
 		: st.me.team[st.me.active].set.moves.indexOf(d.best.action.move);
+	// `from` is where the party cursor STARTS: the battle party screen opens
+	// with the active Pokemon highlighted. The cursor byte cannot be used for
+	// this -- it reads 0 whenever the screen opens regardless of what is
+	// actually highlighted, so the agent kept "arriving" at slot 0 without
+	// moving and confirming whatever was really selected. Knowing the start and
+	// the target makes the path deterministic and needs no sensor at all.
 	fs.writeFileSync(CMD, JSON.stringify({
 		turn: obs.turn,
 		action: d.best.action.type === 'switch' ? 'switch' : 'move',
-		slot: Math.max(0, slot)
+		slot: Math.max(0, slot),
+		from: st.me.active
 	}) + '\n');
 }, 250);

@@ -61,6 +61,7 @@ local O_STATS = 0x02
 local P_SIZE, P_STATUS, P_LEVEL, P_HP, P_MAX = 100, 0x50, 0x54, 0x56, 0x58
 
 local KEY_A, KEY_B = 1, 2
+local KEY_RIGHT, KEY_LEFT, KEY_UP, KEY_DOWN = 16, 32, 64, 128
 -- Set by the presence of a file, so it can be flipped without a reload.
 local RESTART = false
 do
@@ -172,6 +173,11 @@ local turn, phase, timer, pending, want = _RR.turn, _RR.phase, _RR.timer, _RR.pe
 local lastSig, attempts = _RR.lastSig, _RR.attempts
 local unstick = _RR.unstick or 0
 local idle = _RR.idle or 0
+local opened = _RR.opened or false
+local moves = _RR.moves or 0
+local lastCur = _RR.lastCur or -1
+local cursorAt = _RR.cursorAt == nil and -1 or _RR.cursorAt
+local swFails = _RR.swFails or 0
 
 -- Written back on every tick; locals stay for readability and speed.
 local function persist()
@@ -180,6 +186,9 @@ local function persist()
 	_RR.lastSig, _RR.attempts = lastSig, attempts
 	_RR.unstick = unstick
 	_RR.idle = idle
+	_RR.opened, _RR.moves, _RR.lastCur = opened, moves, lastCur
+	_RR.cursorAt = cursorAt
+	_RR.swFails = swFails
 end
 local log = io.open(DIR .. "agent.log", "a")
 say = function(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
@@ -227,12 +236,16 @@ local function readCommand()
 		return nil
 	end
 	local slot = tonumber(body:match('"slot"%s*:%s*(%d+)'))
+	local from = tonumber(body:match('"from"%s*:%s*(%d+)'))
 	if not act or not slot then return nil end
 	say("read command: " .. body:gsub("%s+$", ""))
-	return {action = act, slot = slot}
+	return {action = act, slot = slot, from = from}
 end
 
 local frame = 0
+-- Every phase change, logged from one place. Four intervals have gone into
+-- inferring the sequence from snapshots and getting it wrong each time; the
+-- state machine should say where it goes rather than be reconstructed.
 local function tick()
 	-- HEARTBEAT. Without one there is no way to tell an implementation that
 	-- the bootstrap has PAUSED from a game that is simply stuck: both look
@@ -253,7 +266,13 @@ local function tick()
 			hb:close()
 		end
 	end
+	local before = phase
 	local ok, err = pcall(tick_inner)
+	if phase ~= before then
+		local okS, sc = pcall(screen)
+		say("phase " .. tostring(before) .. " -> " .. tostring(phase)
+			.. " (screen " .. (okS and tostring(sc) or "?") .. ")")
+	end
 	-- persist() is inside the guard too. It used to run outside, so a throw in
 	-- it escaped to the bootstrap and killed the run silently -- which is
 	-- exactly what happened: "implementation live", then nothing for
@@ -446,6 +465,7 @@ function tick_inner()
 		want = readCommand()
 		if want then
 			say(string.format("turn %d: playing %s %d", turn, want.action, want.slot))
+			opened, moves, lastCur, cursorAt = false, 0, -1, -1
 			phase, timer = (want.action == "switch") and "sw_open" or "mv_open", 0
 		elseif timer > 60 * 60 then
 			-- Ask again rather than giving up. The planner may simply not have
@@ -529,30 +549,136 @@ function tick_inner()
 	end
 
 	if phase == "sw_pick" then
-		-- 7 is the Cancel button, not a Pokemon. Writing the slot directly
-		-- avoids the 2x3 grid entirely; a DOWN-only walk cannot reach the
-		-- right-hand column at all, which is why earlier attempts kept
-		-- re-selecting the same Pokemon.
-		if scr == "party_submenu" then phase, timer = "sw_confirm", 0; return end
+		-- NAVIGATE THE GRID, do not write the cursor and hope.
+		--
+		-- 0x0203B0A9 tracks the highlighted slot, but writing it only moves the
+		-- HIGHLIGHT: the game still confirms whichever Pokemon it believes is
+		-- selected, which is the one already in battle, so Shift fails and
+		-- drops back to the list. That is exactly the bounce James described --
+		-- "instead of moving to a different pokemon you are clicking lanturn,
+		-- trying to switch, fail, then click lanturn again".
+		--
+		-- So the byte is read as a SENSOR and the cursor is moved with real
+		-- presses. The party screen is a 2x3 grid in party order: left column
+		-- holds slots 0, 2, 4 and right column 1, 3, 5, so column is slot % 2
+		-- and row is floor(slot / 2). One press per step, with a gap, because a
+		-- held direction is one press to the game no matter how long it lasts.
+		if scr == "party_submenu" then
+			-- ONLY TRUST A SUBMENU WE OPENED OURSELVES. The cursor byte is an
+			-- echo of the highlight, not the selection the game confirms, so
+			-- "the byte says slot 0" is not evidence the submenu belongs to
+			-- slot 0. Accepting one we found already open is how every switch
+			-- ended up Shifting the Pokemon already in battle: the submenu
+			-- closed, nothing switched, and the whole thing went round again.
+			if opened then
+				phase, timer = "sw_confirm", 0
+			else
+				emu:setKeys(timer % 24 < 6 and KEY_B or 0)
+				if timer % 120 == 0 then
+					say("sw_pick: closing a submenu I did not open")
+				end
+			end
+			return
+		end
 		if scr ~= "party" then
 			if timer > 4 then phase, timer = "settle", 0; return end
 			return
 		end
-		emu:write8(PARTY_IDX, want.slot)
-		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
+		-- Track the cursor OURSELVES from a known start. The battle party
+		-- screen opens with the ACTIVE Pokemon highlighted, and the planner
+		-- tells us which slot that is. The cursor byte reads 0 on open
+		-- regardless, which is why the agent kept believing it had already
+		-- arrived at slot 0 and confirmed whatever was genuinely selected.
+		if cursorAt < 0 then cursorAt = want.from or 0 end
+		local cur = cursorAt
+		local target = want.slot
+		local step = timer % 24
+		if cur == target then
+			-- On the right Pokemon: confirm it, and REMEMBER that this submenu
+			-- is ours. Also record whether the cursor ever moved -- if presses
+			-- are not registering at all, that is a different problem and the
+			-- log should say so rather than looking like a stuck menu.
+			if not opened then
+				say("sw_pick: at slot " .. target .. " after " .. moves
+					.. " presses (started " .. tostring(want.from)
+					.. ", byte reads " .. emu:read8(PARTY_IDX) .. "), confirming")
+			end
+			opened = true
+			emu:setKeys(step < 6 and KEY_A or 0)
+		elseif cur > 5 then
+			-- Sitting on Cancel; step back into the grid before navigating.
+			emu:setKeys(step < 6 and KEY_UP or 0)
+		else
+			local curCol, curRow = cur % 2, math.floor(cur / 2)
+			local tgtCol, tgtRow = target % 2, math.floor(target / 2)
+			local key = 0
+			if curCol ~= tgtCol then
+				key = (tgtCol > curCol) and KEY_RIGHT or KEY_LEFT
+			elseif curRow < tgtRow then key = KEY_DOWN
+			elseif curRow > tgtRow then key = KEY_UP
+			end
+			emu:setKeys(step < 6 and key or 0)
+			-- One press per cycle, and we advance our own model of where the
+			-- cursor is as we issue it.
+			if step == 6 and key ~= 0 then
+				if key == KEY_RIGHT then cursorAt = cursorAt + 1
+				elseif key == KEY_LEFT then cursorAt = cursorAt - 1
+				elseif key == KEY_DOWN then cursorAt = cursorAt + 2
+				elseif key == KEY_UP then cursorAt = cursorAt - 2 end
+				moves = moves + 1
+			end
+		end
+		if timer % 120 == 0 then
+			say("sw_pick: cursor at " .. cur .. ", want " .. target)
+		end
 		if timer > 900 then
-			say("sw_pick: slot " .. want.slot .. " would not select; re-asking")
+			say("sw_pick: could not reach slot " .. target .. "; re-asking")
 			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
 		end
 		return
 	end
 
 	if phase == "sw_confirm" then
+		-- ESCAPE HATCH. Switching does not complete: the submenu opens and A
+		-- closes it without switching. Rather than let one broken mechanism
+		-- halt an entire calibration run -- the last interval resolved ONE turn
+		-- in fifteen minutes -- count the failures and restart the fight. Data
+		-- from a fresh battle is worth more than another hour spent on the same
+		-- menu, and the failure is recorded rather than hidden.
+		if swFails >= 3 and RESTART then
+			local list = {}
+			local lf = io.open(DIR .. "saves.txt", "r")
+			if lf then
+				for raw in lf:lines() do
+					local line = raw:gsub("%s+$", "")
+					if line ~= "" then list[#list + 1] = line end
+				end
+				lf:close()
+			end
+			if #list > 0 then
+				_RR.saveIdx = ((_RR.saveIdx or 0) % #list) + 1
+				local file = list[_RR.saveIdx]
+				if pcall(function() emu:loadStateFile(file) end) then
+					say("switching failed " .. swFails .. " times; restarting with "
+						.. file:match("[^/]+$"))
+					_RR.fights = (_RR.fights or 0) + 1
+					os.remove(DIR .. "state.json"); os.remove(DIR .. "cmd.json")
+					lastSig, swFails, opened = "", 0, false
+					phase, timer = "wait", 0
+					return
+				end
+			end
+		end
 		-- On a voluntary switch a submenu opens -- Shift / Summary / Cancel,
 		-- cursor already on Shift, so A takes it. A FORCED switch, after one of
 		-- ours has fainted, has no submenu at all and never reaches here.
 		if scr ~= "party_submenu" then
-			if timer > 4 then phase, timer = "settle", 0; return end
+			if timer > 4 then
+				-- Back on the list means the submenu closed without switching.
+				if scr == "party" then swFails = swFails + 1 end
+				phase, timer = "settle", 0
+				return
+			end
 			return
 		end
 		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
