@@ -1,5 +1,33 @@
 # Where this stands — 2026-08-24 (end of day)
 
+> **2026-08-27 OVERNIGHT, THE HEADLINE: THE AI DECISION BYTE DOES NOT
+> GENERALISE.** `0x02000091` / `0x0200005B` were validated 32/32 and that
+> validation is not wrong -- it is just narrow. Every one of those labels came
+> from Surge-side states. Measured on other fights by the live agent, the byte
+> claims a SWITCH on essentially every turn and the opponent attacks instead.
+>
+> On the five logged turns where the opponent actually used a move:
+>
+>     the byte                0/5 correct
+>     the ported AI model     4/5 correct
+>
+> The cost is not academic. A predicted switch means predicted zero damage
+> taken, so the agent expected 0 and took 61. The agent now treats a byte that
+> claims a switch on most turns as unwritten and falls back to the model, and
+> records BOTH readings every turn so the comparison keeps being measured
+> rather than assumed.
+>
+> This was flagged as a caveat when the byte was found -- "all 32 labels came
+> from Surge-side states, confirm on a different fight" -- and then built on
+> anyway. It only became visible once the log started recording what the
+> opponent ACTUALLY did, read from their PP.
+>
+> **THE ROLL MODEL, by contrast, HELD on a live non-Surge fight.** Victreebel's
+> Sludge into Falinks did 60: draw 3 is 61667 and 61667 % 24 = 11 so no crit,
+> draw 4 is 57382 and 57382 % 16 = 6, and base 64 at 94% is exactly 60. That is
+> the draw ORDERING confirmed outside the fixture it was derived from.
+
+
 > **2026-08-26 NIGHT — TWO THINGS CHANGED, READ THESE FIRST.**
 >
 > **1. The AI's upcoming decision is readable out of a quicksave.** Verified
