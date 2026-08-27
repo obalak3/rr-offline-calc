@@ -161,7 +161,8 @@ beam.slice(0, 3).forEach((node, i) => {
 		+ '   loses somebody it may not ' + pct(node.risk) + ' of the time');
 	node.steps.forEach(s => {
 		console.log('\n  ' + s.foe + '   (' + s.r.turns + ' turns, '
-			+ (s.r.dead.length ? 'LOSES ' + s.r.dead.join(', ') : 'no losses') + ')');
+			+ (s.r.dead.length ? 'LOSES ' + s.r.dead.join(', ') : 'no losses')
+			+ ', risk ' + pct(s.r.deathRisk) + ')');
 		console.log('    plan: ' + s.cand.jobs.map(j => j.mon + ' '
 			+ ((j.moves || []).join(' > ') || '(switch in)')).join('   then   '));
 		s.r.log.forEach(l => console.log('      T' + String(l.turn).padStart(2)
