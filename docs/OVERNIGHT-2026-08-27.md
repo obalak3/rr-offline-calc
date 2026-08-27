@@ -67,3 +67,43 @@ regardless. Grid navigation by real presses works (verified: "at slot 2 after 1
 presses"), but the Shift confirmation still does not take. Switching is disabled
 and a forced switch that fails three times restarts the fight — that hatch fired
 19 times and kept the run alive.
+
+## The offline planner's zero-loss Surge plan is REFUTED
+
+Step 4 of `docs/PLAN-LINE-PLANNER.md` says every candidate plan gets
+rollout-verified before it is believed. That step had never been run. It has now.
+
+    REAL-DICE VERIFICATION of the combine.js plan, 30 episodes
+      won:            0/30
+      met the cap:    0/30
+      deaths:         all six Pokemon, 30/30
+
+The plan `combine.js` reports as losing NOBODY loses EVERYBODY, every time.
+
+**The cause is a design flaw, not variance.** 30/30 identical outcomes is not
+dice. `combine.js` walks their team in ROSTER order and prices each leg against
+the accumulated HP cost of the legs before it. But the opponent chooses its own
+replacement by matchup. Measured, 40 out of 40 samples:
+
+    roster order predicts second:   Vikavolt
+    who they actually send second:  Pawmot   (40/40)
+
+So the hardest Pokemon on their team arrives SECOND, against a plan that
+budgeted for it arriving fourth with three legs' worth of chip already spent
+elsewhere. In the traced episode Pincurchin faints on turn 5, Pawmot arrives on
+turn 6, and it beats Lilligant, Breloom, Mienshao and Victreebel in sequence.
+
+This is exactly the failure the policy-table design was meant to prevent --
+"their switching controls only the ORDER" -- but only EXECUTION was made
+order-independent. The COST ACCOUNTING still assumes an order, so the HP budget
+is spent in the wrong sequence and the feasibility check is meaningless.
+
+The fix is not small: the combination search has to price each foe from the
+positions it can ACTUALLY arrive in, which means searching over their
+replacement policy rather than assuming a sequence. Their replacement choice is
+at least predictable -- `chooseReplacement` is deterministic here, 40/40 -- so
+it can be simulated rather than guessed.
+
+Everything I said earlier about a zero-loss Surge line should be read with this
+attached. The line was real at median rolls in the order it assumed; that order
+does not happen.

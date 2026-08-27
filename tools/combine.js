@@ -154,6 +154,18 @@ foeSets.forEach((foe, fi) => {
 	}
 });
 
+// The chosen combination, as a POLICY TABLE, so it can be replayed with real
+// dice. combine.js searches at the MEDIAN roll -- that is the right reading for
+// "what normally happens" and the wrong one for "does this hold up". Step 4 of
+// docs/PLAN-LINE-PLANNER.md says every candidate plan gets rollout-verified
+// before it is believed, and that step has never been run on this output.
+if (process.env.EMIT_PLAN && beam.length) {
+	const plan = {};
+	beam[0].steps.forEach(s => { plan[s.foe] = s.cand.jobs; });
+	require('fs').writeFileSync(process.env.EMIT_PLAN, JSON.stringify(plan, null, 1));
+	console.log('\nplan written to ' + process.env.EMIT_PLAN);
+}
+
 console.log('\n' + beam.length + ' complete combinations survive the cap.\n');
 beam.slice(0, 3).forEach((node, i) => {
 	console.log('=========== COMBINATION #' + (i + 1)
