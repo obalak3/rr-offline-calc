@@ -246,20 +246,20 @@ local frame = 0
 -- Every phase change, logged from one place. Four intervals have gone into
 -- inferring the sequence from snapshots and getting it wrong each time; the
 -- state machine should say where it goes rather than be reconstructed.
-local function tick()
-	-- HEARTBEAT. Without one there is no way to tell an implementation that
-	-- the bootstrap has PAUSED from a game that is simply stuck: both look
-	-- like a log that stopped. The bootstrap pauses on the first throw that
-	-- escapes, and reports it only to the console, which no log file sees.
+-- EVERYTHING inside the guard. The heartbeat write and the phase-transition
+-- logging were added later and sat OUTSIDE it, so a throw in either escaped to
+-- the bootstrap -- which pauses the implementation permanently and reports only
+-- to the console. That is the third silent death tonight from the same cause:
+-- a diagnostic that can itself fail, positioned where its failure is invisible.
+-- The rule now is that tick() does nothing except call the guarded body.
+local function tick_body()
 	_RR.beat = (_RR.beat or 0) + 1
 	if _RR.beat % 60 == 0 then
-		-- Report WHERE it is, not just that it is alive. A bare heartbeat says
-		-- the implementation is ticking and leaves the phase to be guessed at,
-		-- and guessing is what has cost the last three intervals.
 		local hb = io.open(DIR .. "heartbeat", "w")
 		if hb then
 			local okScr, scrNow = pcall(screen)
-			hb:write(string.format("%d beat=%d phase=%s timer=%s screen=%s idle=%s unstick=%s turn=%s",
+			hb:write(string.format(
+				"%d beat=%d phase=%s timer=%s screen=%s idle=%s unstick=%s turn=%s",
 				os.time(), _RR.beat, tostring(phase), tostring(timer),
 				okScr and tostring(scrNow) or "?", tostring(idle),
 				tostring(unstick), tostring(turn)))
@@ -267,30 +267,25 @@ local function tick()
 		end
 	end
 	local before = phase
-	local ok, err = pcall(tick_inner)
+	tick_inner()
 	if phase ~= before then
 		local okS, sc = pcall(screen)
 		say("phase " .. tostring(before) .. " -> " .. tostring(phase)
 			.. " (screen " .. (okS and tostring(sc) or "?") .. ")")
 	end
-	-- persist() is inside the guard too. It used to run outside, so a throw in
-	-- it escaped to the bootstrap and killed the run silently -- which is
-	-- exactly what happened: "implementation live", then nothing for
-	-- thirteen minutes, and no error file to say why.
+end
+
+local function tick()
+	local ok, err = pcall(tick_body)
 	pcall(persist)
 	if not ok then
-		-- NEVER RE-RAISE. The bootstrap pauses the implementation permanently
-		-- the first time a tick throws, and its errors only reach the console
-		-- -- so one bad frame silently ends an overnight run with no trace in
-		-- any log file. Record it and carry on: a single broken frame is not a
-		-- reason to stop playing.
 		local f = io.open(DIR .. "errors.log", "a")
 		if f then f:write(os.date() .. "  " .. tostring(err) .. "\n"); f:close() end
 		if not _RR.lastErr or _RR.lastErr ~= tostring(err) then
 			_RR.lastErr = tostring(err)
-			say("tick error (recorded, continuing): " .. tostring(err))
+			pcall(say, "tick error (recorded, continuing): " .. tostring(err))
 		end
-		emu:setKeys(0)
+		pcall(function() emu:setKeys(0) end)
 	end
 end
 
