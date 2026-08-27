@@ -236,11 +236,15 @@ function alreadyAnswered(obs) {
 }
 
 setInterval(() => {
-	const obs = readJSON(STATE);
-	if (!obs || alreadyAnswered(obs)) {
-		if (awaiting) {
-			const res = readJSON(RESULT);
-			if (res && res.turn === awaiting.turn) {
+	// RESULTS ARE COLLECTED FIRST, unconditionally. This used to run only when
+	// the current question was already answered, which is a window of a few
+	// hundred milliseconds between a turn resolving and the next one being
+	// asked -- so thirteen resolved turns produced two rows. The prediction log
+	// is the entire point of these calibration runs; losing most of it to a
+	// polling race makes the runs worthless.
+	{
+		const res = readJSON(RESULT);
+		if (awaiting && res && res.turn === awaiting.turn) {
 				// A different Pokemon is standing there now, so the HP
 				// difference is meaningless -- it compares two Pokemon. The
 				// first live turn logged our damage as MINUS SIX because
@@ -263,11 +267,12 @@ setInterval(() => {
 					+ ourDmg + ' (' + ok(ourDmg, awaiting.predOur, foeSwapped)
 					+ '), theirs ' + theirDmg + ' ('
 					+ ok(theirDmg, awaiting.predTheir, meSwapped) + ')');
-				awaiting = null;
-			}
+			awaiting = null;
 		}
-		return;
 	}
+
+	const obs = readJSON(STATE);
+	if (!obs || alreadyAnswered(obs)) return;
 	lastTurn = obs.turn;
 
 	const st = buildState(obs);

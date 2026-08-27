@@ -282,12 +282,34 @@ function tick_inner()
 			-- Restart from the save, which is what makes a calibration run a
 			-- LOOP: play, finish, reload, play again, without anybody watching.
 			if unstick > 240 and RESTART then
-				local f = io.open(DIR .. "load.txt", "r")
-				local file = f and (f:read("*a") or ""):gsub("%s+$", "") or ""
-				if f then f:close() end
+				-- ROTATE THE SAVE. Replaying one state gives byte-identical
+				-- rolls every time -- turn 1 and turn 14 logged the same seed
+				-- and the same eight draws -- because a save state restores the
+				-- RNG. Repeating one fight can therefore never teach the roll
+				-- model anything. Rotating gives different positions AND
+				-- different dice, which is what the prediction log needs.
+				local list = {}
+				local lf = io.open(DIR .. "saves.txt", "r")
+				if lf then
+					for raw in lf:lines() do
+						local line = raw:gsub("%s+$", "")
+						if line ~= "" then list[#list + 1] = line end
+					end
+					lf:close()
+				end
+				local file = ""
+				if #list > 0 then
+					_RR.saveIdx = ((_RR.saveIdx or 0) % #list) + 1
+					file = list[_RR.saveIdx]
+				else
+					local f = io.open(DIR .. "load.txt", "r")
+					file = f and (f:read("*a") or ""):gsub("%s+$", "") or ""
+					if f then f:close() end
+				end
+				local f = nil
 				if file ~= "" and pcall(function() emu:loadStateFile(file) end) then
 					_RR.fights = (_RR.fights or 0) + 1
-					say("restarted the fight (" .. _RR.fights .. ")")
+					say("restarted (" .. _RR.fights .. ") with " .. file:match("[^/]+$"))
 					os.remove(DIR .. "state.json")
 					os.remove(DIR .. "cmd.json")
 					lastSig, unstick = "", 0
