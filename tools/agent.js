@@ -208,7 +208,8 @@ function decide(st, obs) {
 // ------------------------------------------------------------------- the loop
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, {recursive: true});
 if (!fs.existsSync(PRED)) {
-	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_action\t'
+	fs.writeFileSync(PRED, 'turn\tus\tthem\tour_action\ttheir_predicted\t'
+		+ 'their_actual\tpredictor_ok\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
 		+ 'rng_before\tdraws\n');
 }
@@ -251,12 +252,36 @@ setInterval(() => {
 				// Voltorb died and something with more HP replaced it. What we
 				// actually learn from a kill is a lower bound: at least the
 				// HP it had left.
+				// WHAT THEY ACTUALLY DID, not what we read they would do.
+				// The decision byte at 0x02000091 was validated on Surge-side
+				// states only, and this log already suggests it is wrong
+				// elsewhere: every row predicting a switch shows their species
+				// unchanged afterwards. Comparing their PP before and after
+				// names the move they really used, which turns the whole
+				// calibration run into a fidelity test of the predictor rather
+				// than an assumption resting on one fight.
 				const foeSwapped = res.foe.species !== awaiting.foeSpecies;
+				let theirActual = 'unknown';
+				if (foeSwapped) {
+					theirActual = 'switched/replaced';
+				} else {
+					for (let i = 0; i < 4; i++) {
+						if (res.foe.pp[i] < awaiting.foePP[i]) {
+							theirActual = moveName(awaiting.foeMoves[i]) || ('slot ' + i);
+							break;
+						}
+					}
+					if (theirActual === 'unknown') theirActual = 'no move used';
+				}
+				const predictorOK = awaiting.theirAction === theirActual ? 'yes'
+					: (awaiting.theirAction.startsWith('switch')
+						&& theirActual === 'switched/replaced') ? 'yes' : 'NO';
 				const meSwapped = res.me.species !== awaiting.meSpecies;
 				const ourDmg = foeSwapped ? awaiting.foeHP : awaiting.foeHP - res.foe.hp;
 				const theirDmg = meSwapped ? awaiting.myHP : awaiting.myHP - res.me.hp;
 				fs.appendFileSync(PRED, [awaiting.turn, awaiting.us, awaiting.them,
 					awaiting.ourAction, awaiting.theirAction,
+					theirActual, predictorOK,
 					awaiting.predOur, awaiting.predTheir,
 					(foeSwapped ? '>=' : '') + ourDmg,
 					(meSwapped ? '>=' : '') + theirDmg,
@@ -302,6 +327,7 @@ setInterval(() => {
 		turn: obs.turn, us, them, ourAction, theirAction, predOur, predTheir,
 		myHP: obs.me.hp, foeHP: obs.foe.hp, rng: obs.rng,
 		meSpecies: obs.me.species, foeSpecies: obs.foe.species,
+		foePP: obs.foe.pp.slice(), foeMoves: obs.foe.moves.slice(),
 		draws: draws(obs.rng, 8).map(v => (v >>> 16))
 	};
 
