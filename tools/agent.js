@@ -59,6 +59,23 @@ const itemName = id => {
 };
 
 // Gen 3 packs status into a bitfield. Only the parts that change a decision.
+/**
+ * Turn one sampled "action/target" pair into the move or switch it names.
+ *
+ * The pair is meaningless without the opponent's move list, which is why it is
+ * resolved here against the moves recorded before the turn rather than printed
+ * raw.
+ */
+function sampleName(res, tag) {
+	const s = res.ai_samples && res.ai_samples[tag];
+	if (!s || !awaiting) return '';
+	const bits = s.split('/');
+	const act = parseInt(bits[0], 10), tgt = parseInt(bits[1], 10);
+	if (act === 1) return 'switch ' + tgt;
+	const mv = awaiting.foeMoves && awaiting.foeMoves[tgt];
+	return (mv && moveName(mv)) || ('slot ' + tgt);
+}
+
 function statusOf(word) {
 	if (word & 0x07) return 'slp';
 	if (word & 0x08) return 'psn';
@@ -396,7 +413,7 @@ function decide(st, obs) {
 	// and so is not affected by this. That trades some decision quality for a
 	// loop that actually collects data, which is what the calibration run is
 	// for. It is a limitation to lift, not a fix.
-	if (obs.kind !== 'forced') {
+	if (obs.kind !== 'forced' && !process.env.SWITCH) {
 		const moves = rows.filter(r => r.action.type !== 'switch');
 		if (moves.length) return {best: moves[0], all: rows, theirs, src};
 	}
@@ -439,7 +456,7 @@ const PRED_HEADER = 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 	+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 	+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
 	+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\t'
-	+ 'foe_status_after\tme_status_after\n';
+	+ 'foe_status_after\tme_status_after\tai_menu\tai_movelist\tai_committed\tai_resolving\n';
 if (fs.existsSync(PRED)) {
 	const first = fs.readFileSync(PRED, 'utf8').split('\n')[0] + '\n';
 	if (first !== PRED_HEADER) {
@@ -452,7 +469,7 @@ if (!fs.existsSync(PRED)) {
 		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
 		+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\t'
-	+ 'foe_status_after\tme_status_after\n');
+	+ 'foe_status_after\tme_status_after\tai_menu\tai_movelist\tai_committed\tai_resolving\n');
 }
 
 let lastTurn = 0, awaiting = null;
@@ -541,7 +558,12 @@ setInterval(() => {
 					awaiting.rng, awaiting.draws.join(','),
 					awaiting.rolls.join(','), awaiting.critRolls,
 					awaiting.foeRolls.join(';'), awaiting.foeCrit,
-					statusOf(res.foe.status) || '', statusOf(res.me.status) || ''
+					statusOf(res.foe.status) || '', statusOf(res.me.status) || '',
+					// The decision bytes as they read at four points in the
+					// turn. One of these should match what they actually did at
+					// the rate the Surge labels did; the log will say which.
+					sampleName(res, 'menu'), sampleName(res, 'movelist'),
+					sampleName(res, 'committed'), sampleName(res, 'resolving')
 					].join('\t') + '\n');
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));
@@ -670,16 +692,25 @@ setInterval(() => {
 	const slot = d.best.action.type === 'switch'
 		? d.best.action.index
 		: st.me.team[st.me.active].set.moves.indexOf(d.best.action.move);
-	// `from` is where the party cursor STARTS: the battle party screen opens
-	// with the active Pokemon highlighted. The cursor byte cannot be used for
-	// this -- it reads 0 whenever the screen opens regardless of what is
-	// actually highlighted, so the agent kept "arriving" at slot 0 without
-	// moving and confirming whatever was really selected. Knowing the start and
-	// the target makes the path deterministic and needs no sensor at all.
+	// THE BATTLE PARTY SCREEN IS NOT IN PARTY ORDER. It shows the ACTIVE
+	// Pokemon first, then the rest in party order -- confirmed by screenshot:
+	// with Lanturn (party index 2) active, the grid read Lanturn, Diggersby,
+	// Mienshao, Lilligant, Breloom, Victreebel.
+	//
+	// So a party index is not a screen position, and navigating to "slot 5"
+	// landed on whoever happened to sit there. The game said so in as many
+	// words -- "Lanturn is already in battle!" -- which is also the bounce
+	// James reported weeks ago: clicking Lanturn, failing, clicking again.
+	//
+	// The cursor always starts at display 0, the active Pokemon, so `from` is
+	// always 0 and the target is converted to its DISPLAY position here.
+	const order = [st.me.active].concat(
+		st.me.team.map((m, i) => i).filter(i => i !== st.me.active));
+	const displaySlot = Math.max(0, order.indexOf(slot));
 	fs.writeFileSync(CMD, JSON.stringify({
 		turn: obs.turn,
 		action: d.best.action.type === 'switch' ? 'switch' : 'move',
-		slot: Math.max(0, slot),
-		from: st.me.active
+		slot: displaySlot,
+		from: 0
 	}) + '\n');
 }, 250);

@@ -178,6 +178,7 @@ local moves = _RR.moves or 0
 local lastCur = _RR.lastCur or -1
 local cursorAt = _RR.cursorAt == nil and -1 or _RR.cursorAt
 local swFails = _RR.swFails or 0
+local swFrom = _RR.swFrom
 
 -- Written back on every tick; locals stay for readability and speed.
 local function persist()
@@ -189,6 +190,7 @@ local function persist()
 	_RR.opened, _RR.moves, _RR.lastCur = opened, moves, lastCur
 	_RR.cursorAt = cursorAt
 	_RR.swFails = swFails
+	_RR.swFrom = swFrom
 end
 local log = io.open(DIR .. "agent.log", "a")
 say = function(s) console:log("agent: " .. s); log:write(s .. "\n"); log:flush() end
@@ -200,8 +202,52 @@ local function positionSignature()
 		.. emu:read8(MON + O_PP + 2) .. emu:read8(MON + O_PP + 3)
 end
 
+-- SAMPLE THE DECISION BYTES AT SEVERAL MOMENTS IN THE TURN.
+--
+-- The 32/32 validation came from states saved at one particular point in a
+-- scripted press cycle. The live agent reads the instant the action menu
+-- appears, and gets a nearly-constant value across changing positions -- which
+-- is what LAST TURN'S LEFTOVER looks like, not a wrong answer. There is one
+-- battle engine, so if the opponent's choice is in memory during a Surge fight
+-- it is in memory during every fight; the question is only WHEN it is written.
+--
+-- So take a reading at each stage and let the log say which one matches what
+-- they actually did.
+-- SCREENSHOT THE EMULATOR ITSELF, not the desktop. mGBA can dump its own
+-- framebuffer, so it does not matter whether the window is fullscreen, on
+-- another Space, or not visible at all -- and James does not have to move it
+-- to let me look. Wrapped in pcall because the API name varies by build; a
+-- failure is recorded once and then ignored rather than killing the run.
+local SHOTS = os.getenv("HOME") .. "/rr-agent/shots/"
+local shotFails = 0
+local function shot(tag)
+	if shotFails > 3 then return end
+	local path = SHOTS .. tag .. ".png"
+	local ok = pcall(function() emu:screenshot(path) end)
+	if not ok then
+		shotFails = shotFails + 1
+		if shotFails == 1 then say("screenshot API unavailable in this build") end
+	end
+end
+
+local function sampleAI(tag)
+	_RR.samples = _RR.samples or {}
+	_RR.samples[tag] = emu:read8(AI_ACTION) .. "/" .. emu:read8(AI_TARGET)
+end
+
+local function samplesJSON()
+	local t = _RR.samples or {}
+	local parts = {}
+	for _, tag in ipairs({"menu", "movelist", "committed", "resolving"}) do
+		if t[tag] then parts[#parts + 1] = '"' .. tag .. '":"' .. t[tag] .. '"' end
+	end
+	return "{" .. table.concat(parts, ",") .. "}"
+end
+
 local function writeState(kind)
 	turn = turn + 1
+	_RR.samples = {}
+	sampleAI("menu")
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
@@ -460,7 +506,7 @@ function tick_inner()
 		want = readCommand()
 		if want then
 			say(string.format("turn %d: playing %s %d", turn, want.action, want.slot))
-			opened, moves, lastCur, cursorAt = false, 0, -1, -1
+			opened, moves, lastCur, cursorAt, swFrom = false, 0, -1, -1, nil
 			phase, timer = (want.action == "switch") and "sw_open" or "mv_open", 0
 		elseif timer > 60 * 60 then
 			-- Ask again rather than giving up. The planner may simply not have
@@ -504,6 +550,7 @@ function tick_inner()
 	end
 
 	if phase == "mv_pick" then
+		if timer == 1 then sampleAI("movelist") end
 		if scr ~= "moves" then
 			-- The move list closed, which means the move was taken.
 			if timer > 4 then phase, timer = "settle", 0; return end
@@ -584,15 +631,24 @@ function tick_inner()
 		-- tells us which slot that is. The cursor byte reads 0 on open
 		-- regardless, which is why the agent kept believing it had already
 		-- arrived at slot 0 and confirmed whatever was genuinely selected.
+		-- LET THE SCREEN FINISH DRAWING FIRST. The shot taken two frames into
+		-- this phase came back completely BLACK: the party screen is still
+		-- fading in, and every direction press issued during that fade is
+		-- swallowed. The cursor therefore never left the active Pokemon, and
+		-- the A that followed opened the submenu on it -- which is why the game
+		-- kept answering "Lanturn is already in battle!".
+		if timer < 50 then emu:setKeys(0); return end
+		if timer == 50 then shot("sw1_partylist") end
 		if cursorAt < 0 then cursorAt = want.from or 0 end
 		local cur = cursorAt
 		local target = want.slot
-		local step = timer % 24
+		local step = (timer - 50) % 24
 		if cur == target then
 			-- On the right Pokemon: confirm it, and REMEMBER that this submenu
 			-- is ours. Also record whether the cursor ever moved -- if presses
 			-- are not registering at all, that is a different problem and the
 			-- log should say so rather than looking like a stuck menu.
+			if not opened and timer % 24 == 2 then shot("sw2_on_target") end
 			if not opened then
 				say("sw_pick: at slot " .. target .. " after " .. moves
 					.. " presses (started " .. tostring(want.from)
@@ -634,53 +690,59 @@ function tick_inner()
 	end
 
 	if phase == "sw_confirm" then
-		-- ESCAPE HATCH. Switching does not complete: the submenu opens and A
-		-- closes it without switching. Rather than let one broken mechanism
-		-- halt an entire calibration run -- the last interval resolved ONE turn
-		-- in fifteen minutes -- count the failures and restart the fight. Data
-		-- from a fresh battle is worth more than another hour spent on the same
-		-- menu, and the failure is recorded rather than hidden.
-		if swFails >= 3 and RESTART then
-			local list = {}
-			local lf = io.open(DIR .. "saves.txt", "r")
-			if lf then
-				for raw in lf:lines() do
-					local line = raw:gsub("%s+$", "")
-					if line ~= "" then list[#list + 1] = line end
-				end
-				lf:close()
-			end
-			if #list > 0 then
-				_RR.saveIdx = ((_RR.saveIdx or 0) % #list) + 1
-				local file = list[_RR.saveIdx]
-				if pcall(function() emu:loadStateFile(file) end) then
-					say("switching failed " .. swFails .. " times; restarting with "
-						.. file:match("[^/]+$"))
-					_RR.fights = (_RR.fights or 0) + 1
-					os.remove(DIR .. "state.json"); os.remove(DIR .. "cmd.json")
-					lastSig, swFails, opened = "", 0, false
-					phase, timer = "wait", 0
-					return
-				end
-			end
-		end
-		-- On a voluntary switch a submenu opens -- Shift / Summary / Cancel,
-		-- cursor already on Shift, so A takes it. A FORCED switch, after one of
-		-- ours has fainted, has no submenu at all and never reaches here.
-		if scr ~= "party_submenu" then
-			if timer > 4 then
-				-- Back on the list means the submenu closed without switching.
-				if scr == "party" then swFails = swFails + 1 end
-				phase, timer = "settle", 0
-				return
-			end
+		-- OUTCOME-DRIVEN, not screen-driven.
+		--
+		-- The screenshots showed what RAM could not: at sw_confirm timer 2 the
+		-- game is still on the party LIST ("Choose a Pokemon.", Cancel button)
+		-- while screen() reported party_submenu, because SCREEN_ID == 9 is not
+		-- the submenu. Every transition in this flow was therefore one step out
+		-- of sync, and the recovery in wait() would then press B on a switch
+		-- that was actually in progress.
+		--
+		-- So stop tracking menus here. The switch is done when OUR ACTIVE
+		-- POKEMON CHANGES, and nothing else is evidence of it. Press A on a
+		-- steady cadence until that happens.
+		-- SELECTING SHIFT COMMITS THE TURN, it does not swap immediately: the
+		-- Pokemon changes when the turn RESOLVES. Waiting for the species to
+		-- change therefore waits for something that cannot happen while the
+		-- menu is still up, which is why this sat pressing A for four hundred
+		-- frames. Leaving the party screen is the real acknowledgement.
+		if swFrom == nil then swFrom = emu:read16(MON + O_SP) end
+		local nowSp = emu:read16(MON + O_SP)
+		local id = emu:read8(SCREEN_ID)
+		if id ~= 8 and id ~= 9 then
+			say("switch committed (left the party screen, id=" .. id .. ")")
+			swFrom, swFails = nil, 0
+			emu:setKeys(0)
+			phase, timer = "settle", 0
 			return
 		end
-		emu:setKeys(timer % 40 < 6 and KEY_A or 0)
-		if timer > 600 then
-			say("sw_confirm: the submenu would not take Shift; re-asking")
-			emu:setKeys(KEY_B)
-			os.remove(DIR .. "state.json"); lastSig = ""; phase = "wait"
+		if nowSp ~= swFrom and nowSp ~= 0 then
+			say("switch done: active is now species " .. nowSp)
+			swFrom, swFails = nil, 0
+			emu:setKeys(0)
+			phase, timer = "settle", 0
+			return
+		end
+		-- A SLOWER, LONGER PRESS. Six frames on and twenty-four off did not
+		-- take, even with the cursor sitting on Shift. Menus in this engine
+		-- swallow input for a while after a transition, so the press is now
+		-- fifteen frames with a full second between attempts, and a shot is
+		-- taken just after each one so the effect is visible rather than
+		-- guessed at.
+		local slot = timer % 90
+		emu:setKeys(slot < 15 and KEY_A or 0)
+		if slot == 25 then shot("after_press_" .. timer) end
+		if timer % 90 == 0 and timer > 0 then
+			say("sw_confirm: still species " .. nowSp .. " after " .. timer .. " frames")
+		end
+		if timer > 420 then
+			say("sw_confirm: the switch never took")
+			swFails = swFails + 1
+			swFrom = nil
+			emu:setKeys(0)
+			os.remove(DIR .. "state.json"); lastSig = ""
+			phase, timer = "wait", 0
 		end
 		return
 	end
@@ -724,8 +786,10 @@ function tick_inner()
 		if scr == "action" or scr == "party" then
 			if positionSignature() ~= lastSig then
 				local f = io.open(DIR .. "result.json", "w")
-				f:write(string.format('{"turn":%d,"me":%s,"foe":%s,"rng":%d}\n',
-					turn, battler(MON), battler(MON + SIZE), emu:read32(RNG)))
+				f:write(string.format(
+					'{"turn":%d,"me":%s,"foe":%s,"rng":%d,"ai_samples":%s}\n',
+					turn, battler(MON), battler(MON + SIZE), emu:read32(RNG),
+					samplesJSON()))
 				f:close()
 				say("turn " .. turn .. ": resolved")
 				emu:setKeys(0)
