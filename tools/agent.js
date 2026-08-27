@@ -455,7 +455,7 @@ setInterval(() => {
 					(meSwapped ? '>=' : '') + theirDmg,
 					awaiting.rng, awaiting.draws.join(','),
 					awaiting.rolls.join(','), awaiting.critRolls,
-					awaiting.foeRolls.join(','), awaiting.foeCrit].join('\t') + '\n');
+					awaiting.foeRolls.join(';'), awaiting.foeCrit].join('\t') + '\n');
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));
 				console.log('  turn ' + awaiting.turn + ' resolved: our damage '
@@ -516,17 +516,26 @@ setInterval(() => {
 	// rather than an exact roll. The damage we TAKE is almost always exact --
 	// we rarely faint in these fights -- so logging the opponent's damage band
 	// roughly doubles the usable observations per turn from the same play.
-	let foeRolls = [], foeCrit = '';
-	if (d.theirs && d.theirs.type === 'move') {
+	// ALL FOUR of their moves, not just the one we predicted. Twenty rows of
+	// opponent bands were unusable because the band recorded belonged to the
+	// move we EXPECTED, and the predictor is right about half the time -- so
+	// the actual damage matched nothing and every one was discarded. Which move
+	// they used is known afterwards from their PP; the band has to be captured
+	// beforehand, so capture them all.
+	const foeBands = {};
+	(obs.foe.moves || []).forEach(id => {
+		const nm = moveName(id);
+		if (!nm) return;
 		try {
-			const fr = B.damageRolls(st, 'foe', d.theirs.move);
+			const fr = B.damageRolls(st, 'foe', nm);
 			if (fr && !fr.immune) {
 				const h = fr.hits || 1;
-				foeRolls = fr.noCrit.map(v => v * h);
-				foeCrit = fr.crit[fr.crit.length - 1] * h;
+				foeBands[nm] = fr.noCrit.map(v => v * h).join(',');
 			}
 		} catch (e) { /* status move, no band */ }
-	}
+	});
+	const foeRolls = Object.keys(foeBands).map(k => k + '=' + foeBands[k]);
+	const foeCrit = '';
 
 	let rolls = [], critRolls = '';
 	if (d.best.action.type === 'move') {
