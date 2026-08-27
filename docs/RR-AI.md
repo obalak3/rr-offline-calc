@@ -262,3 +262,27 @@ not in this repo -- only these notes citing it -- so the correct next step is to
 read `src/Battle_AI/ai_script.c` for how Focus Energy and the other setup moves
 are actually scored, and port that, rather than pattern-matching from the
 neighbouring branch.
+
+### Does the byte ever hold the NEXT turn's decision? — not supported
+
+James asked a sharp question: if the value has moved on by 100 frames, does it
+move on to the opponent's NEXT decision? If so, reading late would be genuine
+foresight and the capability comes back in full.
+
+Sampled at 45, 100, 150, 220 and 320 frames and compared against the FOLLOWING
+turn's action. The first cut looked mildly encouraging (3/6) until the confound
+was removed: when an opponent uses the same move twice in a row, "matches this
+turn" and "matches next turn" both score. Restricted to pairs where the opponent
+actually CHANGED move:
+
+    sample point   predicted the next turn
+    45 frames      0/3
+    100 frames     0/3
+    150 frames     0/1
+    220 frames     0/1
+    320 frames     0/1
+
+Zero at every point. Not supported — though three informative pairs is thin, and
+the reason it is thin is that the easy save states are dominated by opponents
+that spam a single move. The rotation now targets ss4 and ss5, whose opponents
+vary their moves and switch, which is also what the switch-scoring port needs.
