@@ -400,23 +400,17 @@ function decide(st, obs) {
 		});
 	}
 	rows.sort((x, y) => y.score - x.score);
-	// VOLUNTARY SWITCHING IS DISABLED, deliberately and temporarily.
+	// Voluntary switching is ENABLED again. It was disabled for most of the
+	// night because the Shift confirmation never took, and that turned out to
+	// be three separate errors in the actuator rather than anything about the
+	// decision: the party screen lists the ACTIVE Pokemon first so a party
+	// index is not a screen position, SCREEN_ID 9 is not the submenu, and the
+	// navigation presses were landing while the screen was still fading in.
+	// All three were found by screenshotting the emulator, and switching has
+	// committed twenty times since.
 	//
-	// The Shift confirmation does not take. Grid navigation now works -- the
-	// log shows "at slot 2 after 1 presses" -- but pressing A on the submenu
-	// closes it without switching, and a whole interval spent on it produced no
-	// progress while the agent resolved ONE turn in fifteen minutes. Moves are
-	// proven over ninety-nine resolved turns.
-	//
-	// So the agent plays moves, and only touches the party screen when a faint
-	// FORCES it -- a path that has no Shift submenu at all, per the screenshot,
-	// and so is not affected by this. That trades some decision quality for a
-	// loop that actually collects data, which is what the calibration run is
-	// for. It is a limitation to lift, not a fix.
-	if (obs.kind !== 'forced' && !process.env.SWITCH) {
-		const moves = rows.filter(r => r.action.type !== 'switch');
-		if (moves.length) return {best: moves[0], all: rows, theirs, src};
-	}
+	// This matters beyond the feature: every simulation result measured while
+	// it was off was measuring a crippled agent, and should not be quoted.
 	return {best: rows[0], all: rows, theirs, src};
 }
 
