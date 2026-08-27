@@ -295,11 +295,33 @@ function chooseAction(ctx, state, opts) {
 			catch (e) { ahead = 0; }
 		}
 		const score = item.here + ahead;
+		item.ahead = ahead;
 		if (!best || score < best.score) {
 			best = {score, here: item.here, ahead, cand: item.cand, r: item.r,
 				illegal: item.illegal};
 		}
 	});
+	// RR_EXPLAIN=1 prints the whole market: every finalist's price split into
+	// its parts, plus the simulated line, so a bad decision can be read
+	// instead of guessed at.
+	if (process.env.RR_EXPLAIN) {
+		shortlist.slice(0, Math.max(FINALISTS, 8)).forEach((item, i) => {
+			const r = item.r;
+			let sp = 0;
+			for (const k in r.spend) sp += Math.max(0, r.spend[k]);
+			console.log('[explain] #' + i + ' here=' + item.here.toFixed(2)
+				+ (item.ahead !== undefined ? ' ahead=' + item.ahead.toFixed(2) : ' ahead=?')
+				+ ' | spend=' + sp.toFixed(2)
+				+ ' illegalDead=' + JSON.stringify(item.illegal)
+				+ ' dead=' + JSON.stringify(r.dead)
+				+ ' deathRisk=' + r.deathRisk.toFixed(2)
+				+ ' turns=' + r.turns + ' outcome=' + r.outcome
+				+ ' | ' + item.cand.why);
+			(r.log || []).forEach(l => console.log('[explain]      t' + l.turn
+				+ ' we ' + l.we + ' / they ' + l.they
+				+ '  us ' + l.us + '  them ' + l.them));
+		});
+	}
 	// NOTHING KILLS IT? THEN DO THE BEST YOU CAN, still inside the planner.
 	// Requiring a kill (or a pivot) is what produced "no plan found", and every
 	// one of those turns fell through to one-turn scoring, which has no notion

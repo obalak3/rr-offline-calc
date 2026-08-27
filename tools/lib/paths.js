@@ -28,6 +28,7 @@
  */
 'use strict';
 const P = require('./policy.js');
+const {committedChoice} = require('./duels.js');
 const FLAGS = {checkBadMove: true, checkGoodMove: true};
 
 /**
@@ -154,11 +155,11 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		if (st.foe.active !== fi) { outcome = 'left'; break; }
 		if (st.me.team.every(m => m.fainted)) { outcome = 'wiped'; break; }
 
+		// Their best COMMITTED action, never a voluntary exit from the duel --
+		// see committedChoice in duels.js for the live turn-592 evidence.
 		const scored = RRAI.scoreAll(st, 'foe', FLAGS, {});
 		if (!scored.length) { outcome = 'error'; break; }
-		let bs = -Infinity;
-		scored.forEach(e => { if (e.score > bs) bs = e.score; });
-		const theirs = scored.filter(e => e.score === bs)[0].action;
+		const theirs = committedChoice(B, scored);
 
 		// The same entry signal the live agent supplies, so a priced line and a
 		// played line agree about when an entry-only move is available. The

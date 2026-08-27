@@ -104,13 +104,10 @@ function runDuel(engine, state, strategy, opts) {
 		const mine = legal.find(a => a.type === 'move' && a.move === want);
 		if (!mine) { outcome = 'nomove'; break; }
 
-		// Their real choice, over their whole action set, switches included.
+		// Their best COMMITTED choice -- see committedChoice.
 		const scored = RRAI.scoreAll(st, 'foe', flags, {});
 		if (!scored.length) { outcome = 'nomove'; break; }
-		let best = -Infinity;
-		scored.forEach(e => { if (e.score > best) best = e.score; });
-		const ties = scored.filter(e => e.score === best);
-		const theirs = ties[0].action;
+		const theirs = committedChoice(B, scored);
 
 		// The turn's real odds, enumerated once: crit, roll, accuracy,
 		// secondaries and move order all included, because they are all already
@@ -294,4 +291,29 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
 	return lines;
 }
 
-module.exports = {duelLines, runDuel, strategiesFor, MEDIAN};
+/**
+ * Their best COMMITTED action: no voluntary exit from the duel.
+ *
+ * The doctrine at the top of policy.js -- their switching only reorders the
+ * duels, it never invalidates one -- has to hold in the pricer too. Giving
+ * the simulated foe its literal argmax meant a Manectric whose best score was
+ * Volt Switch left every simulated duel on turn one: at live turn 592 all 68
+ * candidates priced identically (one turn of tempo, nothing simulated), the
+ * 68-way tie was broken by generation order, and the winner flipped with
+ * whoever was standing -- the 16-switch loop. A real pivot only POSTPONES the
+ * duel, so the duel is measured as fought: pivot moves and hard switches are
+ * excluded from the sim foe's choice unless they are all it has.
+ */
+function committedChoice(B, scored) {
+	const committed = scored.filter(e => {
+		if (e.action.type !== 'move') return false;
+		const d = B.moveData(e.action.move);
+		return !(d && d.effect && d.effect.kind === 'selfSwitch');
+	});
+	const pool = committed.length ? committed : scored;
+	let best = -Infinity;
+	pool.forEach(e => { if (e.score > best) best = e.score; });
+	return pool.filter(e => e.score === best)[0].action;
+}
+
+module.exports = {duelLines, runDuel, strategiesFor, MEDIAN, committedChoice};

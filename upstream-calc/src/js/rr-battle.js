@@ -1579,6 +1579,15 @@ var RRBattle = (function () {
 			if (absorbed.boosts) applyBoosts(defender, absorbed.boosts);
 			return;
 		}
+		// A damaging move an immune target shrugs off FAILS OUTRIGHT: no
+		// secondary, no recoil, no self-debuff, and critically no pivot.
+		// Falling through here pivoted Manectric out through a Volt Switch
+		// that a Ground type had just nullified, which the real game refuses
+		// -- an immune Volt Switch strands its user on the field.
+		if (rolls.immune) {
+			note(state, moveName + " does not affect " + defender.set.species);
+			return;
+		}
 		var dealt;
 		if (ctx.mode === "odds" && !rolls.immune) {
 			var split = damageOutcomes(rolls, defender.curHP, key);
