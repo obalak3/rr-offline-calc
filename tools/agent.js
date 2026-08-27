@@ -450,7 +450,7 @@ const PRED_HEADER = 'turn\tus\tthem\tour_action\ttheir_predicted\t'
 	+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 	+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
 	+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\t'
-	+ 'foe_status_after\tme_status_after\tai_menu\tai_movelist\tai_committed\tai_resolving\tai_late\n';
+	+ 'foe_status_after\tme_status_after\tai_menu\tai_movelist\tai_committed\tai_resolving\tai_late\tai_t150\tai_t220\tai_t320\n';
 if (fs.existsSync(PRED)) {
 	const first = fs.readFileSync(PRED, 'utf8').split('\n')[0] + '\n';
 	if (first !== PRED_HEADER) {
@@ -463,7 +463,7 @@ if (!fs.existsSync(PRED)) {
 		+ 'their_actual\tpredictor_ok\tbyte_said\tmodel_said\tbyte_stale\t'
 		+ 'pred_our_dmg\tpred_their_dmg\tactual_our_dmg\tactual_their_dmg\t'
 		+ 'rng_before\tdraws\trolls\tcrit_rolls\tfoe_rolls\tfoe_crit\t'
-	+ 'foe_status_after\tme_status_after\tai_menu\tai_movelist\tai_committed\tai_resolving\tai_late\n');
+	+ 'foe_status_after\tme_status_after\tai_menu\tai_movelist\tai_committed\tai_resolving\tai_late\tai_t150\tai_t220\tai_t320\n');
 }
 
 let lastTurn = 0, awaiting = null;
@@ -558,7 +558,8 @@ setInterval(() => {
 					// the rate the Surge labels did; the log will say which.
 					sampleName(res, 'menu'), sampleName(res, 'movelist'),
 					sampleName(res, 'committed'), sampleName(res, 'resolving'),
-					sampleName(res, 'late')
+					sampleName(res, 'late'), sampleName(res, 't150'),
+					sampleName(res, 't220'), sampleName(res, 't320')
 					].join('\t') + '\n');
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));

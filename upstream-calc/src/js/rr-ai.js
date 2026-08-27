@@ -263,6 +263,25 @@ var RRAI = (function () {
 				bad(10, "target cannot be " + effect.status);
 			}
 			break;
+		case "focusEnergy":
+			// FOCUS ENERGY IS A SETUP MOVE and was scored as nothing at all.
+			// It has its own effect kind rather than being a stat boost, so it
+			// fell through every branch and any attack outranked it -- which is
+			// the single largest miss in the live log: Falinks used Focus Energy
+			// and the model said Headbutt, every time.
+			//
+			// CFRU treats raising the crit rate as viability in the same family
+			// as a stat boost, so it is gated the same way: worth doing only if
+			// you survive long enough to use it, and best from full health.
+			if (self.volatiles && self.volatiles.focusEnergy) {
+				bad(10, "already pumped up");
+			} else {
+				var incFE = worstIncomingDamage(state, key);
+				if (incFE >= self.curHP) bad(10, "would be knocked out before it pays off");
+				else if (self.curHP === self.maxHP && incFE * 3 < self.curHP) good(7, "safe to set up");
+				else if (incFE * 2 < self.curHP) good(3, "room to set up");
+			}
+			break;
 		case "boost":
 			var target = effect.target === "self" ? self : foe;
 			var maxed = true;

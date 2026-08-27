@@ -216,3 +216,49 @@ guess repeated 24 times.
 **And prefer short lines.** Between two clean lines, the shorter one passes
 through fewer of these. That is a real selection criterion and nothing currently
 uses it.
+
+## Measured port gaps, 2026-08-27 (from live play)
+
+The live agent now yields exact ground truth for the opponent's action on every
+turn (the decision byte read 45 frames after we commit), so the port can be
+scored continuously instead of against a curated fixture. Over 159 move-turns:
+
+    model correct, by turn            114/159  (72%)
+    model correct, distinct positions  20/36   (56%)
+
+The turn-weighted figure is inflated by save-state replays repeating the same
+position; the position-weighted one is the honest measure of the port.
+
+**Only ten distinct miss patterns**, and two of them reproduce misses recorded in
+the original 102-decision scoreboard months earlier — Vikavolt's Mud Shot over
+Bug Buzz, and Manectric's Charge Beam over Volt Switch. Those are persistent
+bugs in the port, not noise.
+
+    x28  Falinks    did Focus Energy   we said Headbutt
+    x4   Lokix      did Leech Life     we said Knock Off
+    x3   Scyther    did Swords Dance   we said Aerial Ace
+    x2   Scizor     did Rock Smash     we said U-turn
+    x2   Vikavolt   did Mud Shot       we said Bug Buzz
+    x2   Manectric  did Hidden Power   we said Flame Burst
+    x1   Manectric  did Charge Beam    we said Volt Switch
+
+The theme is that the real AI values SETUP and STATUS moves more than the port
+does.
+
+### focusEnergy was scored as nothing at all — UNRESOLVED
+
+`Focus Energy` carries its own effect kind, `focusEnergy`, which was not among
+the kinds the scorer handles. It therefore received no viability adjustment and
+any attack outranked it automatically. That is the single largest miss.
+
+A branch was added scoring it like a self-boost, gated on surviving long enough
+to use it. **It does not reproduce the observed behaviour**: Falinks used Focus
+Energy at 77 HP, where that gate only awards +3 and an attack still wins. So the
+real rule is more permissive than a stat boost's, and the branch as written is a
+guess rather than a port.
+
+Tuning it until it matches one position would be overfitting. The CFRU source is
+not in this repo -- only these notes citing it -- so the correct next step is to
+read `src/Battle_AI/ai_script.c` for how Focus Energy and the other setup moves
+are actually scored, and port that, rather than pattern-matching from the
+neighbouring branch.

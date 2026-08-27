@@ -238,7 +238,8 @@ end
 local function samplesJSON()
 	local t = _RR.samples or {}
 	local parts = {}
-	for _, tag in ipairs({"menu", "movelist", "committed", "resolving", "late"}) do
+	for _, tag in ipairs({"menu", "movelist", "committed", "resolving", "late",
+			"t150", "t220", "t320"}) do
 		if t[tag] then parts[#parts + 1] = '"' .. tag .. '":"' .. t[tag] .. '"' end
 	end
 	return "{" .. table.concat(parts, ",") .. "}"
@@ -752,9 +753,17 @@ function tick_inner()
 		-- controller may only write its choice once the player's input is in,
 		-- which would make everything read at the menu a leftover from the
 		-- previous turn. These were lost when the switch phases were rewritten.
+		-- A LADDER OF LATE READS. 45 frames is exact for THIS turn; by 100 the
+		-- value has moved on. James's question is what it moves on TO -- if it
+		-- is the opponent's NEXT decision, then reading late is genuine
+		-- foresight and the whole capability comes back. Three clean pairs
+		-- could not answer it, so sample the whole tail and let volume decide.
 		if timer == 1 then sampleAI("committed") end
 		if timer == 45 then sampleAI("resolving") end
 		if timer == 100 then sampleAI("late") end
+		if timer == 150 then sampleAI("t150") end
+		if timer == 220 then sampleAI("t220") end
+		if timer == 320 then sampleAI("t320") end
 		-- Advance messages ONLY while the game is busy. Pressing A blindly here
 		-- was pressing it at the action menu too, which opens FIGHT -- so the
 		-- agent kept re-opening the move list it had just come back from, never
