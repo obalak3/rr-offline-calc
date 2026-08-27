@@ -433,6 +433,25 @@ function tick_inner()
 			end
 			-- Restart from the save, which is what makes a calibration run a
 			-- LOOP: play, finish, reload, play again, without anybody watching.
+			-- IS THE BATTLE REALLY OVER? "nobattle" only means the main-loop
+			-- callback left its in-battle value, which also happens during
+			-- transitions -- and a restart fired mid-fight throws away a game
+			-- that was going fine, which James watched happen. Now that both
+			-- parties are readable, check: a finished battle has one whole side
+			-- wiped. If both sides still have something standing, this is a
+			-- transition, not an ending.
+			local mineLeft, theirsLeft = 0, 0
+			for i = 0, 5 do
+				if emu:read16(PARTY + i * P_SIZE + P_HP) > 0 then mineLeft = mineLeft + 1 end
+				if emu:read16(FOE_PARTY + i * P_SIZE + P_HP) > 0 then theirsLeft = theirsLeft + 1 end
+			end
+			if mineLeft > 0 and theirsLeft > 0 then
+				if unstick % 300 == 0 then
+					say("nobattle but both sides still standing (" .. mineLeft
+						.. " v " .. theirsLeft .. ") -- treating as a transition")
+				end
+				return
+			end
 			if unstick > 240 and RESTART then
 				-- ROTATE THE SAVE. Replaying one state gives byte-identical
 				-- rolls every time -- turn 1 and turn 14 logged the same seed
