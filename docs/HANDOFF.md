@@ -1,135 +1,139 @@
-# Handoff -- 2026-08-27
+# Handoff -- 2026-08-27 (evening)
 
 Read this, then `docs/VALIDATION-LOG.md`, then `docs/METHOD.md`.
+Domain facts (both teams, why Pawmot is the wall, the Baby-Doll Eyes plan) are
+in memory as `reference-rr-surge-domain` -- read that FIRST, it is the thing
+that keeps having to be re-explained.
 
 ## The goal, unchanged
 
-Beat LT. Surge (`RadicalRed.ss5`) **losing nobody but Lilligant**. James has done
-this himself and says it is comfortably possible. Anything else is not the win.
+Beat LT. Surge (`RadicalRed.ss5`) **losing nobody but Lilligant**. James has
+done this himself. Once it is reliable the target becomes **zero deaths**,
+which he also believes is possible. Anything less is not the win.
+
+## THE OPEN PROBLEM -- late-fight collapse
+
+**This is the only thing that matters right now.** James, watching it live:
+
+> "The problems I am talking about never happen early game, they are all late
+> game... The baby doll eyes plan was great and the current hit pawmot with leaf
+> storm while manectric switches to pawmot is also working great. The problem
+> seems more to me like the model goes crazy after a certain amount of turns
+> pass. The problem isn't the engine, something happens when the game goes too
+> long."
+
+The evidence, from the fight of 18:50 (turns 592-613):
+
+- **Turns 592-607: sixteen consecutive switches**, Mienshao -> Diggersby ->
+  Mienshao -> Breloom -> Mienshao -> Lilligant ..., no attack landed, our side
+  taking a free hit every turn. Diggersby died in it.
+- **Turn 608 onward it simply worked**: Fake Out, then Rock Tomb five times.
+  James: Fake Out + 2 Rock Tombs "would have literally won the game".
+
+What the log shows during the loop, and this is the shape of the bug:
+
+    592  Mienshao out  PLAN "spe -1, psn, then Mienshao KILLS"      -> switch to Diggersby
+         [switch margin 9.93 vs staying in ("... then Mienshao SOFTENS + Breloom closes")]
+    593  Diggersby out PLAN "spe -1, psn, then Mienshao SOFTENS..."  -> switch to Mienshao
+         [switch margin 9.85 vs staying in ("... then Mienshao KILLS")]
+    594  Mienshao out  ... identical to 592
+    595  Diggersby out ... identical to 593
+
+**The same two plans swap prices depending on which Pokemon is standing.**
+Whichever plan needs the Pokemon that is NOT out wins, so the agent switches,
+and next turn the other one wins. The margin is ~10, so the incumbent bonus
+(`STICK`, 0.75) cannot hold it. A margin of ~10 is roughly `illegal death 6 +
+4 * deathRisk`, which suggests every "stay" line is priced as the active dying
+-- so both Pokemon are individually correct to flee, and the fleeing is what
+kills them.
+
+PP was checked and RULED OUT: Mienshao sat on 3,10,4,15 through the whole loop.
+
+Next step: get `planJobs` for turns 592-595 out of `~/rr-agent/turns/` and find
+why the "stay" variant is priced ~10 worse than the "switch" variant when they
+are the same plan seen from two sides.
 
 ## What is running
 
-- mGBA with `tools/lua/bootstrap.lua` loaded; it re-reads `tools/lua/agent_impl.lua`
-  whenever `~/rr-agent/reload` changes (`date +%s > ~/rr-agent/reload`).
-- The brain: `node tools/agent.js`, logging to `~/rr-agent/node.log`.
-- Rotation pinned to Surge via `~/rr-agent/saves.txt`.
-- Outcomes: `~/rr-agent/results.tsv`. Turn archive: `~/rr-agent/turns/`.
-- **One engine only**: `upstream-calc/src/js/rr-battle.js`, loaded by both the live
-  agent and any offline script through `tools/lib/harness.js`. There is no separate
-  offline engine. When an offline test disagrees with the game, the STATE was built
-  wrong, not the engine.
+- mGBA + `tools/lua/bootstrap.lua`. It now watches `agent_impl.lua` itself, so
+  editing the Lua no longer needs `~/rr-agent/reload` touched by hand.
+- `node tools/agent.js`, logging to `~/rr-agent/node.log`.
+- Rotation pinned to ss5 only (`~/rr-agent/saves.txt`). ss1-ss3 are early
+  fights and James does not want them run.
+- Outcomes `~/rr-agent/results.tsv` (now carries a git-version column), turn
+  archive `~/rr-agent/turns/`.
+- mGBA can be restarted entirely from the shell: kill it, relaunch by direct
+  exec, then AppleScript `File > Load recent script > bootstrap.lua`. It no
+  longer needs James to click through the scripting menu.
+- **The agent is a long-running process.** It fingerprints its own sources and
+  announces `STALE` once if they change; restart it after any edit.
 
-## The live record (what actually matters)
+## Fixed today, each verified
 
-11 fights, 11 wins, 0 losses. Casualties:
+All of these are the same underlying shape: **the live agent rebuilds state
+from RAM every turn and `createState` zeroes everything**, so anything tracked
+across turns is lost unless carried explicitly.
 
-| casualties | fights |
-|---|---|
-| Mienshao + Lilligant | 7 |
-| **Lilligant only (the target)** | **1** |
-| other | 3 |
+- **Every observation of the opponent was written to `st.foe.team[0]`** instead
+  of the active. HP, status, PP and STAT STAGES all landed on Pincurchin. This
+  is why Baby-Doll Eyes never handed over: the -1 went onto the wrong Pokemon,
+  Pawmot always read at neutral Attack, and Lilligant stood there clicking until
+  it died. (`abbc732`)
+- **`justEntered` was read in `policy.js` and set nowhere** -- one read, zero
+  writes -- so the entry-only move rule had never once fired and Mienshao never
+  used Fake Out on a switch-in. (`755c4ed`)
+- **`protectChain` was zeroed every rebuild**, so Detect looked like a free turn
+  forever and got spammed in front of a Pawmot on 22 HP. (`d5a2eae`)
+- **Candidates were generated against a FULL-HEALTH target** (cache keyed on
+  foe+terrain only). With Pawmot on 41/99 and a Drain Punch band of 52-63 in
+  hand, no candidate said "finish it" -- so it switched Diggersby in, Diggersby
+  died in one hit, Pawmot drained back to 97. That repeated in five runs.
+  (`afd9db7`)
+- **Plans were PRICED against a full-health target too** -- `chooseAction` built
+  the entry state with our HP and their dead list, and dropped the target's own
+  HP. Same bug, second place. (`1a0eaf3`)
+- **Losses were never recorded**: a whiteout heals the party before the
+  post-battle read, so every loss logged as UNCLEAR and vanished. The 11-0
+  record was never true. Now latched from in-battle reads. (`e4d0961`)
+- **`TEMPO`/`SPEND` were out of scope in the no-kill fallback**, so every
+  fallback turn threw and fell through to greedy one-turn scoring. (`e4d0961`)
+- **Bellibolt has ZERO EVs**, not the sheet's 100: max HP 125, not 133. All five
+  opponents now compute RAM-exact. (`f512e31`)
+- `buildState` no longer hands `createState` a null team, which used to kill the
+  whole agent process and look exactly like the emulator being stuck.
 
-So the target is reachable and not yet reliable, and **Mienshao dying is the
-dominant failure**. **Caveat found 2026-08-27 (evening): those 7 are mostly the
-same trajectory.** Seven rows in results.tsv end with the byte-identical HP
-vector `0/98 112/112 82/139 0/102 95/95 62/108`, ~250s apart -- the reload loop
-replaying a near-deterministic fight. Count the record by distinct trajectory,
-not by row. The conclusion stands (the modal trajectory kills Mienshao) but the
-sample is ~5 distinct outcomes, not 11. Rows now carry a git-version column so
-future changes are judged against the rows they produced; 2-3 replays per change
-is enough.
+## Open, in rough priority order
 
-## THE NEXT THING TO BUILD (James's diagnosis, unaddressed)
-
-> "there is almost never a killing line. There is a multiple moves doing chip
-> damage which ends up killing line"
-> "It was switching lanturn in and out and doing scald damage then killing with
-> something else etc. That is not a OHKO plan, that is a chip plan"
-
-`tools/lib/candidates.js` cannot express that. Every family it builds ends with
-ONE designated Pokemon duelling the foe to death:
-
-1. solo -- `duelLines(...).find(l => l.outcome === 'kill')`
-2. lever + killer -- change the position, then one killer duels it
-3. closer -- hand the last hit to a priority attacker
-
-Measured on 200 live plans: 194 were two-leg, 6 were solo duels. There is no
-family for "A chips, B chips, C finishes" where no single Pokemon has a killing
-line, which is what James actually does and what works.
-
-The job format can already express it -- `jobDone` in `tools/lib/policy.js`
-supports `until: {uses, selfHp, foeHp, foeStatus, foeVolatile, foeBoost, entered}`
--- so a chip line is a list of `{mon, moves: ['*'], until: {selfHp: ...}}` legs.
-What is missing is generation.
-
-Two attempts at the surrounding symptom were rejected by James and should NOT be
-retried as-is: a +2.5 switch penalty in the one-turn fallback, and a best-effort
-chip branch bolted onto `chooseAction`. His objection is architectural and right:
-
-> "this stuff should be internal to the ai not external rules for surge"
-
-Tempo stays for now; **raise it again when moving to the next fight**.
-
-## Fixed and verified today
-
-- **Switching works: 17/17** (was 3/126). Three causes: the party screen is a
-  two-column grid and DOWN only walks one column (cursor cycles 0,2,4,7); screen
-  ids were being used to decide the switch had committed; and the party is
-  renumbered mid-fight. Display slot == RAM slot. Switch commands now carry the
-  target's max HP + level and the actuator re-resolves against live RAM at the
-  moment of the press.
-- **Outcomes are recorded at all.** 239 fights had been played without recording
-  one, so nothing could be judged.
-- **Tempo cost in the planner** stopped a 12-turn Lanturn/Lilligant ping-pong.
-  Value 0.4 swept on this fight; at 0 the team is wiped, at 1.3 it wipes again.
-- **A pivot is no longer a failed line.** Vikavolt Volt Switches away, which
-  discarded 39 of its 48 lines. It went from 8 no-plan/0 plan to 0/2.
-- **Lookahead depth 5, measured.** Depths 12 and 30 lose every run: the
-  continuation prices each remaining opponent INDEPENDENTLY, so it assumes one
-  healthy Pokemon handles all of them, and looking deeper finds more lines that
-  quietly reuse a Pokemon already committed. Fixing that means pricing the
-  remaining opponents as one combination.
-- **Engine: Fake Out off a pivot was impossible.** `turnsOut` was incremented at
-  the end of the switch-in turn, so a Pokemon's first action was refused as "not
-  on the way in". Fixed with `enteredThisTurn`. Verified three ways: pivot Fake
-  Out flinches, the turn after fails, a lead still flinches on turn 1.
-- **turnsOut is now tracked live.** `B.createState` zeroes it for everyone and the
-  agent rebuilds state every turn, so the active always looked freshly arrived and
-  Fake Out was spammed. The agent counts decisions since the active last changed,
-  and `pricePath` carries it through `entry.turnsOut`.
-- **Planned turns now predict.** That branch built its answer with `all: []` and
-  `theirs: null`, which is why the log read "they will: none" and "expecting to
-  take 0" -- the plan was computed against an opponent that does nothing. Added a
-  veto: if the planned action kills our own active this turn and does not KO the
-  foe, take the best non-lethal alternative.
-- **Bellibolt's stats now match RAM (all five opponents do).** The sheet gave
-  it 100 HP EVs; RAM says zero, which reproduces its entire stat line exactly.
-  Fixed in `foeSets` via a RAM-verified corrections table in harness.js, so the
-  live agent, planner, and benchmarks all see it. (The handoff's "Pincurchin
-  99/95" was a mix-up: Pincurchin computes 95 = RAM; the 99 is Pawmot's.) Likely
-  also explains Lanturn's Scald landing above its band max vs Bellibolt: an HP
-  bar converted with max 133 instead of 125 inflates observed damage by 6.4%.
-  Re-verify live.
-- **Predictor ties break on damage.** Against a Victreebel that both moves KO,
-  Thunder Punch (39) and Ice Punch (80) both scored 109 and we answered the weaker
-  one. Now predicts Ice Punch, matching the game.
-
-## Open
-
-- The chip-plan family above. This is the main one.
-- Switch spam persists on fallback turns; the right fix is to stop needing the
-  fallback (see above), not to penalise switching in it.
-- Fitted constants that are not yet internal to the AI: tempo 0.4, `dyingNext` 45,
-  illegal death 6, expendable death 2. James wants these derived, not tuned.
-- Mega evolution is unmodelled: the base form arrives, evolves the same turn, and
-  the ability fires twice (Manectric gets Intimidate twice, so -2).
-- `B.legalActions` does not enforce Fake Out's entry-only restriction; only
-  execution fails. Anything trusting legality can plan an illegal move.
-- Predictor accuracy since turn 2600: Pawmot 47%, Vikavolt 20%, Manectric 0/8,
-  Bellibolt 0/4. Switch *scoring* is still not ported (`rr-ai.js` returns BASE).
+- **The late-fight switch loop above.** Everything else is noise next to it.
+- **The lookahead can invert a better plan.** It prices each remaining opponent
+  independently, assumes one healthy Pokemon handles all of them, and returns a
+  flat 8 when it finds nothing. Depths 12 and 30 lose every run; it sits at 5
+  only because deeper is worse. It has **never been tested off**. Do not retune
+  it without James -- these are the fitted constants he wants derived.
+- **Chip chains (`RR_CHIP_CHAINS`) are default ON and unproven.** They do not
+  displace the Baby-Doll Eyes plan (checked: identical top-6 ordering, BDE at
+  ranks 4/7/13 either way), but they have never been shown to help.
+- **Crits cannot currently be predicted from the decision-time seed.** The LCG
+  is solved (`v*0x41C64E6D + 12345`) and the seed is read every turn as
+  `obs.rng`, but a fixed draw offset fits at 85% against an 82% "always guess
+  no-crit" baseline -- noise. The per-move draw order (one draw per luck event:
+  accuracy, crit, damage, secondary) is the right model and the damage roll IS
+  locatable within a single move+context (Sludge alone: draw 3, consistent
+  across 16 rows, p ~ 1e-10). Refitting needs rows recorded AFTER today's band
+  fixes; the historical ones are contaminated (Scald shows a 67% "crit" rate,
+  which is the old Bellibolt 133-vs-125 error, not crits).
+- Mega evolution unmodelled (Intimidate fires twice).
+- Opponent predictor is 56% live, not the 75.5% the offline fixture claims.
 
 ## How to work on this
 
-Measure live, not offline. A single deterministic offline trajectory said the
-casualty was Lanturn; the live distribution is Mienshao + Lilligant in 7 of 11.
-Tuning against that trajectory produced two wrong conclusions today.
+Measure live. `tools/test_replan.js` never calls `buildState` and therefore
+cannot see any of today's bugs; it reported 0/12 wipes while live play was fine
+and sent a whole investigation the wrong way. Offline is a crash check, not
+evidence.
+
+Reproduce an archived turn directly with
+`node tools/agent.js --probe ~/rr-agent/turns/turnNNNNN.json`, which also prints
+why the planner returned nothing. Note the probe does NOT restore `turnsOut`
+from the archive, so entry-only moves can look legal when live they were not --
+that mistake produced one confident and completely wrong comparison today.

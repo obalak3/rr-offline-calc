@@ -514,3 +514,89 @@ bar was converted to hit points using max 133 instead of 125, every observed
 damage against Bellibolt is inflated by 133/125 = 6.4%, pushing true max rolls
 past the predicted band. Plausible and cheap to check on the next live fight;
 not yet verified.
+
+## 2026-08-27 (evening) -- four instances of one bug, and the late-fight collapse
+
+Every fix below is the same underlying shape: **the live agent rebuilds its
+state from RAM every turn, and `B.createState` zeroes everything**, so anything
+the engine tracks across turns is silently lost unless it is carried explicitly.
+Four separate instances were found in one session. This is the first thing to
+check for any "it plays stupidly live but is fine offline" report.
+
+1. **Every observation of the opponent was written to `st.foe.team[0]`** rather
+   than the active. `st.foe.active` was resolved correctly a few lines earlier
+   and then ignored. HP, status, confusion, PP and STAT STAGES all landed on
+   their FIRST Pokemon. This is why the Baby-Doll Eyes handover never fired: the
+   -1 Attack went onto Pincurchin's boost table, Pawmot always read at neutral,
+   the job's `until: {foeBoost: {atk, atMost: -1}}` never became true, and
+   Lilligant stood there clicking until it died. Verified by replaying archived
+   turn 2752: the one-turn ranking flips from "Mega Drain +1.6" to every move at
+   -62.78 with every switch ahead of them.
+
+2. **`justEntered` was read in `policy.js` and assigned nowhere** -- one read,
+   zero writes across the whole repo -- so the entry-only move rule had never
+   fired, live or in the planner. Mienshao switched in and played Rock Tomb
+   every time. Verified after the fix: Fake Out on entry, Rock Tomb two turns
+   later.
+
+3. **`protectChain` was zeroed on every rebuild**, so Detect was priced as a free
+   turn forever. Watched live: Mienshao Detect-spamming in front of a Pawmot on
+   22 HP while Drain Punch healed it back up.
+
+4. **The target's own HP was dropped from the entry state.** `chooseAction` built
+   the position for `pricePath` with a comment reading "everyone's HP" and
+   recorded ours plus their dead list. So every candidate was priced against a
+   FULL-HEALTH target. The matching half of the same bug was in generation:
+   `cachedCandidates` was keyed on (foe, terrain) and `candidatesFor` ran every
+   duel from a fresh full-health state, so the family "somebody finishes it now"
+   could not exist. Live at turn 81: Mienshao had just taken Pawmot to 41/99 and
+   the same Drain Punch (band 52-63) would finish it. No candidate said so. It
+   switched Diggersby in, Diggersby died in one hit, Pawmot drained back to 97 --
+   and that exact sequence repeated in five separate runs.
+
+**Losses had never been recorded at all.** A whiteout heals the party before the
+post-battle read, so every loss came back "neither side is wiped" and was
+dropped. The "11 wins, 0 losses" record was never true; the archive contains
+full wipes with no row. Now latched from the last in-battle read.
+
+### The open problem: the collapse is late-fight, not general
+
+James, from watching: "The problems I am talking about never happen early game,
+they are all late game... The baby doll eyes plan was great... something happens
+when the game goes too long."
+
+Fight of 18:50, turns 592-613. Sixteen consecutive switches (592-607) with no
+attack landed and a free hit taken every turn; Diggersby died inside the loop.
+Then from 608 it played Fake Out and five Rock Tombs and was winning. The log:
+
+    592  Mienshao out   PLAN "spe -1, psn, then Mienshao KILLS"     -> switch to Diggersby
+         [switch margin 9.93 vs staying in ("...then Mienshao SOFTENS + Breloom closes")]
+    593  Diggersby out  PLAN "spe -1, psn, then Mienshao SOFTENS"   -> switch to Mienshao
+         [switch margin 9.85 vs staying in ("...then Mienshao KILLS")]
+    594  identical to 592, 595 identical to 593, ...
+
+The same two plans swap prices depending on which Pokemon is standing, so the
+plan needing whoever is NOT out wins every turn. The margin is ~10, close to
+`illegal death 6 + 4 * deathRisk`, which suggests every "stay" line is priced as
+the active dying -- both are individually right to flee, and the fleeing is what
+kills them. `STICK` (0.75) is nowhere near enough to hold it.
+
+PP was tested and RULED OUT: Mienshao held 3,10,4,15 throughout.
+
+### Negative result: crits are not predictable from the decision-time seed
+
+The generator is solved (`v * 0x41C64E6D + 12345`) and `obs.rng` is read every
+turn, but nothing consumes it for planning. Fitting a fixed draw index for the
+crit over 131 labelled rows gives 85% against an 82% "always guess no-crit"
+baseline -- noise.
+
+The per-move model (one draw per luck event: accuracy, crit, damage, secondary)
+is the right one and the DAMAGE roll is locatable within a single move plus
+context: for Sludge with the opponent dealing no damage, draw index 3 is
+consistent across all 16 rows, against a measured null of 25% (bands repeat
+values), so p is about 1e-10.
+
+The blocker is contaminated history, not method: Scald shows a 67% "crit" rate,
+which is impossible and is really the old Bellibolt 133-vs-125 max-HP error
+inflating observed damage. Refitting needs rows recorded after today's band
+fixes.
