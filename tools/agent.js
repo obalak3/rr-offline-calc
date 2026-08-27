@@ -142,6 +142,15 @@ function buildState(obs) {
 	// position rather than a fresh one.
 	const me = st.me.team[activeIndex], foe = st.foe.team[0];
 	me.curHP = obs.me.hp; foe.curHP = obs.foe.hp;
+	// A FORCED SWITCH: our Pokemon has fainted and the game is asking who comes
+	// in. Setting HP to zero was not enough -- nothing marked it fainted, so
+	// moves still looked legal, the planner answered with a move, and the
+	// actuator could not play a move on a party screen. It re-asked, got the
+	// same move, and cycled: seventeen turns of that in one interval.
+	if (obs.me.hp <= 0 || obs.kind === 'forced') {
+		me.curHP = 0;
+		me.fainted = true;
+	}
 	me.status = statusOf(obs.me.status); foe.status = statusOf(obs.foe.status);
 	for (let i = 1; i < STAT_ORDER.length; i++) {
 		me.boosts[STAT_ORDER[i]] = (obs.me.stages[i] || 6) - 6;
@@ -331,6 +340,13 @@ setInterval(() => {
 	if (!st) { console.log('turn ' + obs.turn + ': could not identify the position'); return; }
 	const d = decide(st, obs);
 	if (!d.best) { console.log('turn ' + obs.turn + ': no legal action found'); return; }
+	if (obs.kind === 'forced' && d.best.action.type !== 'switch') {
+		// Belt and braces: on a party screen the only executable answer is a
+		// switch. Anything else is unplayable and would cycle.
+		const sw = d.all.find(r => r.action.type === 'switch');
+		if (sw) d.best = sw;
+		else { console.log('turn ' + obs.turn + ': forced switch with nobody to send'); return; }
+	}
 
 	const us = speciesName(obs.me.species), them = speciesName(obs.foe.species);
 	const ourAction = d.best.action.type === 'switch'
