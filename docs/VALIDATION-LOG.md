@@ -275,3 +275,33 @@ rows went 47 -> 147, because save-state replays are byte-identical and because
 identifying a roll requires a band that contains the damage — see above.
 NEXT: read the seed at the moment of the damage calculation from a quicksave,
 rather than trying to advance to it from decision time.
+
+### 2026-08-27 correction — live fidelity is 56%, not 76%
+
+I quoted 41/54 = 76% repeatedly and said it independently confirmed the offline
+scoreboard's 75.5%. Pooling every round of the calibration log — **151
+move-turns with exact ground truth** — the ported model is **84/151 = 56%**. The
+76% was a favourable subset and that confirmation claim does not hold.
+
+The per-trainer AI flags hypothesis, proposed in the same breath, also fails:
+
+    gym leader team (Surge)   37/65  (57%)
+    route trainers            47/86  (55%)
+
+No meaningful difference, so modelling every opponent with a gym leader's flags
+is not what costs the accuracy.
+
+What this changes:
+
+- The offline scoreboard measured 75.5% on 102 curated Surge decisions. Live
+  play across five save states says 56%. The fixture is easier than the real
+  distribution of positions, so it flatters the model and should not be the
+  number planning rests on.
+- `assumePrediction` is on weaker ground than claimed. Committing to a single
+  predicted action is a different proposition at 56% than at 76% — it is wrong
+  nearly half the time. The margin set (100% membership, ~3.5 actions wide)
+  matters more than I have been treating it, not less.
+
+Also measured: the decision byte read 45 frames after commit is EXACT (21/21).
+At 100 frames it is 19/21, because the value moves on to the next decision.
+Forty-five frames is the window.
