@@ -290,6 +290,29 @@ function draws(seed, n) {
 	return out;
 }
 
+/**
+ * The same deliberately-naive policy the simulation baseline uses.
+ *
+ * Set GREEDY=1 to play it live. The point is a like-for-like comparison: in
+ * simulation this policy kills 2 of Surge's 5 in 11 of 20 episodes, 3 in seven,
+ * 4 in two, and never wins. If the REAL fight yields more kills from identical
+ * play, the simulated opponent is too hard and every planner number in this
+ * repo is measuring the wrong fight. If it yields the same, the environment is
+ * fine and our players simply are not good enough.
+ *
+ * It must be the same policy, not a better one, or the comparison says nothing.
+ */
+function greedyAction(st) {
+	const legal = B.legalActions(st, 'me').filter(a => a.type === 'move');
+	let best = null, bestValue = -1;
+	legal.forEach(a => {
+		const r = B.damageRolls(st, 'me', a.move);
+		const d = r && !r.immune ? r.noCrit[8] * (r.hits || 1) : 0;
+		if (d > bestValue) { bestValue = d; best = a; }
+	});
+	return best || B.legalActions(st, 'me')[0];
+}
+
 function decide(st, obs) {
 	const src = foeAction(st, obs);
 	const theirs = src.chosen;
@@ -536,7 +559,15 @@ setInterval(() => {
 
 	const st = buildState(obs);
 	if (!st) { console.log('turn ' + obs.turn + ': could not identify the position'); return; }
-	const d = decide(st, obs);
+	let d;
+	if (process.env.GREEDY && obs.kind !== 'forced') {
+		const a = greedyAction(st);
+		d = {best: {action: a, foeDead: false, mineDead: false, theirLoss: 0, myLoss: 0,
+			unknownTarget: false}, all: [], theirs: null,
+			src: {byte: null, model: null, stale: false}};
+	} else {
+		d = decide(st, obs);
+	}
 	if (!d.best) { console.log('turn ' + obs.turn + ': no legal action found'); return; }
 	if (obs.kind === 'forced' && d.best.action.type !== 'switch') {
 		// Belt and braces: on a party screen the only executable answer is a
