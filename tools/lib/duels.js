@@ -77,10 +77,22 @@ function runDuel(engine, state, strategy, opts) {
 	// engine's exact per-turn odds rather than from a roll assumption.
 	let survive = 1, killOdds = 1;
 
+	// A duel does not have to be fought to the death. `retreatAt` is how a
+	// CHIP job is priced: stay in until HP drops to this fraction, then leave
+	// and hand the finish to somebody else. Nothing on James's team beats
+	// Bellibolt one on one -- Parabolic Charge heals it back faster than most
+	// of us hit -- but Lanturn takes it to 1 HP and anyone finishes from there.
+	// Without a retreat point every duel is fought to a corpse and that pairing
+	// is invisible.
+	const retreatAt = options.retreatAt;
+
 	for (let t = 0; t < cap; t++) {
 		const me = st.me.team[myIndex], foe = st.foe.team[foeIndex];
 		if (foe.fainted) { outcome = 'kill'; break; }
 		if (me.fainted) { outcome = 'died'; break; }
+		if (retreatAt !== undefined && t > 0 && me.curHP / me.maxHP <= retreatAt) {
+			outcome = 'retreat'; break;
+		}
 		if (st.me.active !== myIndex || st.foe.active !== foeIndex) {
 			// Somebody left. Whoever it was, this duel is over.
 			outcome = st.foe.active !== foeIndex ? 'left' : 'weLeft';
@@ -233,6 +245,31 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
 	if (cond.weather !== undefined) stateOpts.weather = cond.weather;
 	const base = B.createState(myTeam, foeTeam, stateOpts);
 	const foe = base.foe.team[0], me = base.me.team[0];
+
+	// The condition vocabulary is GENERAL: any stat stage, any status, any
+	// volatile, on either side. It used to be three hardcoded ideas -- asleep,
+	// slowed, chipped -- and James named exactly what that costs:
+	//
+	//   "The whole idea for this is to be able to have the model use techniques
+	//    that might be intuitive for me but aren't easily observable in
+	//    numbers. If we can't detect that pawmot should get -2 intimidate ...
+	//    and we should switch etc and defeat it then doing this has no point."
+	//
+	// He is right, and Pawmot is the proof: it attacks four different ways and
+	// every one of them is PHYSICAL, so -2 Attack or a burn beats it and no
+	// amount of speed control does. Neither of those could be written down
+	// before this.
+	if (cond.foeBoosts) {
+		for (const k in cond.foeBoosts) {
+			foe.boosts[k] = Math.max(-6, Math.min(6, (foe.boosts[k] || 0) + cond.foeBoosts[k]));
+		}
+	}
+	if (cond.foeStatus) {
+		foe.status = cond.foeStatus;
+		if (cond.foeStatus === 'slp') foe.sleepTurns = cond.sleepTurns || 2;
+	}
+	if (cond.foeVolatiles) Object.assign(foe.volatiles, cond.foeVolatiles);
+	// Kept as aliases because they read better in a report and in a test.
 	if (cond.slowed) foe.boosts.spe = Math.max(-6, foe.boosts.spe - (cond.slowed === true ? 1 : cond.slowed));
 	if (cond.asleep) { foe.status = 'slp'; foe.sleepTurns = cond.asleep === true ? 2 : cond.asleep; }
 	if (cond.foeChip) foe.curHP = Math.max(1, Math.round(foe.maxHP * (1 - cond.foeChip)));

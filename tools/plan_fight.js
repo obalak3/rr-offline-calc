@@ -1,140 +1,79 @@
 /**
- * Reverse-engineer a fight the way James does.
+ * Every priced way to kill every one of their Pokemon. Line by line.
+ *
  * Run: node tools/plan_fight.js [FIGHT]
  *
- * His method, verbatim, which this implements: "When I calculate lines and
- * there is a pokemon that is really hard to kill, I reverse engineer it. I
- * say how do I kill Pawmot, and I see that I can hit it with Bulldoze with
- * Diggersby (super effective and -speed), and then it is slowed down and I
- * can kill it easier. Then I look at how do I bring in Diggersby without
- * bringing it into death range. And I realize I have to either sleep it or
- * sack a pokemon. That's where Lilligant dies."
+ * This replaces the hit-counting prototype that used to live here. That version
+ * divided HP by median damage and compared hit counts, which cannot see Drain
+ * Punch healing Pawmot back out of range, Volt Absorb turning an attack into a
+ * heal, Sitrus Berry, recoil, or Focus Sash -- all of which decide this fight.
+ * Duels are simulated now; see tools/lib/duels.js for how they are priced.
  *
- * That is backward chaining: start from dead(F), find KILL conditions, then
- * ENABLERS for each condition, then enablers for those, bottoming out in
- * facts about the current state. Forward search failed on this fight at
- * every budget tried because the winning corridor looks locally bad; going
- * backward the branching is tiny, because the goals are few and the tables
- * already say who beats whom under what conditions.
- *
- * Vocabulary, all computed from damageRolls + speed, nothing hand-fed:
- *   beats(M, F | conds)  M wins the 1v1 race under conds (median rolls)
- *   conds: asleep(F)     F skips turns; any 3-hits-or-less race wins
- *          slowed(F)     F at -1 speed stage; races recomputed
- *          fresh(M)      M at full HP (i.e. entered safely)
- *   enablers:
- *          sleep   <- a sleeper with Sleep Powder, terrain expired if F is
- *                     grounded, and the sleeper survives one hit or enters free
- *          slow    <- a user of Bulldoze / Rock Tomb / Icy Wind who survives
- *                     one hit of F to click it
- *          free entry <- after our KO, after F is asleep, or by SACRIFICE,
- *                     which is named and priced, because "that's where
- *                     Lilligant dies" is a decision someone should make on
- *                     purpose.
+ * The conditions are the ENABLERS backward chaining bottoms out in. Reading a
+ * row as "X kills Y if Y is asleep, for 0% and no death risk" is only half an
+ * answer; the other half is who puts Y to sleep and what that costs, which is
+ * the assignment step (step 3 of docs/PLAN-LINE-PLANNER.md).
  */
 'use strict';
-
 const H = require('./lib/harness.js');
+const D = require('./lib/duels.js');
 const engine = H.loadEngine();
-const B = engine.B;
-
-const SLOW_MOVES = {Bulldoze: true, 'Rock Tomb': true, 'Icy Wind': true, 'Mud Shot': true, 'Low Sweep': true};
-const SLEEP_MOVES = {'Sleep Powder': true, Hypnosis: true, Spore: true, 'Grass Whistle': true};
 
 const which = process.env.FIGHT || process.argv[2] || 'SURGE';
 const party = H.realTeam();
 const battle = H.earlyBattles(engine, {maxLevel: 40})
 	.filter(b => H.label(b).toUpperCase().includes(which.toUpperCase()))[0];
+if (!battle) { console.log('no fight matching ' + which); process.exit(1); }
 const foeSets = H.foeSets(battle);
 
-function duel(mi, fi, opts) {
-	// One matchup, median rolls, under optional conditions.
-	const st = B.createState(party, foeSets, {});
-	st.me.active = mi; st.foe.active = fi;
-	if (opts && opts.slowed) st.foe.team[fi].boosts.spe = -1;
-	const me = st.me.team[mi], foe = st.foe.team[fi];
-	let bestOut = 0, bestMove = null;
-	(me.set.moves || []).forEach(mv => {
-		const r = B.damageRolls(st, 'me', mv);
-		if (r && !r.immune && r.noCrit) {
-			const med = r.noCrit[Math.floor(r.noCrit.length / 2)];
-			if (med > bestOut) { bestOut = med; bestMove = mv; }
-		}
-	});
-	let bestIn = 0, theirMove = null;
-	(foe.set.moves || []).forEach(mv => {
-		const r = B.damageRolls(st, 'foe', mv);
-		if (r && !r.immune && r.noCrit) {
-			const med = r.noCrit[Math.floor(r.noCrit.length / 2)];
-			if (med > bestIn) { bestIn = med; theirMove = mv; }
-		}
-	});
-	const meFirst = B.finalSpeed(st, 'me') > B.finalSpeed(st, 'foe');
-	const myHits = bestOut > 0 ? Math.ceil(foe.curHP / bestOut) : 99;
-	const theirHits = bestIn > 0 ? Math.ceil(me.curHP / bestIn) : 99;
-	// I win the race if I need fewer hits, or equal hits moving first.
-	const wins = myHits < theirHits || (myHits === theirHits && meFirst);
-	return {wins, myHits, theirHits, meFirst, bestMove, theirMove, bestIn};
-}
+// The conditions worth asking about, cheapest first. `terrain` is passed
+// explicitly rather than inherited, because Pincurchin's Electric Surge is up
+// for most of this fight and it is what blocks sleep on anything grounded.
+const CONDITIONS = [
+	['straight', {}],
+	['slowed', {slowed: true}],
+	['asleep', {asleep: 3}],
+	['half hp', {foeChip: 0.5}],
+	['slowed+half', {slowed: true, foeChip: 0.5}]
+];
 
-console.log('REVERSE-ENGINEERED PLAN: ' + H.label(battle));
-console.log('them: ' + foeSets.map(f => f.species).join(', ') + '\n');
+const pct = x => (x * 100).toFixed(0) + '%';
+
+console.log(H.label(battle));
+console.log('us:   ' + party.map(p => p.species + ' L' + p.level).join(', '));
+console.log('them: ' + foeSets.map(f => f.species + ' L' + f.level).join(', '));
+console.log('\ncost = our HP spent, at the median roll. death = exact chance the'
+	+ '\nduel ends with our Pokemon fainted, over the real roll and crit'
+	+ '\ndistribution. A plan lives inside the cost budget and under the cap.\n');
 
 foeSets.forEach((f, fi) => {
-	console.log('== how to kill ' + f.species);
-	const clean = [], conditional = [];
+	console.log('=================== ' + f.species + '  (' + f.ability
+		+ (f.item ? ', ' + f.item : '') + ')  ' + (f.moves || []).join(' / '));
+	let anyClean = false;
 	party.forEach((p, mi) => {
-		const d = duel(mi, fi, {});
-		if (d.wins) {
-			clean.push('  ' + p.species + ' beats it straight: ' + d.bestMove
-				+ ' (' + d.myHits + ' hits vs their ' + d.theirHits + (d.meFirst ? ', we act first' : '') + ')');
-		} else {
-			const s = duel(mi, fi, {slowed: true});
-			if (s.wins) conditional.push({mi, kind: 'slowed', d: s});
-			else if (d.myHits <= 3) conditional.push({mi, kind: 'asleep', d});
+		const rows = [];
+		for (const [name, entry] of CONDITIONS) {
+			const lines = D.duelLines(engine, party, foeSets, mi, fi, entry, {});
+			const kill = lines.find(l => l.outcome === 'kill');
+			if (!kill) continue;
+			rows.push({name, kill});
+			// Once a cheaper condition already works, the harder ones are noise.
+			if (name === 'straight') break;
 		}
+		if (!rows.length) return;
+		rows.forEach(r => {
+			if (r.name === 'straight' && r.kill.deathRisk < 0.05) anyClean = true;
+			console.log('  ' + p.species.padEnd(11)
+				+ r.name.padEnd(12)
+				+ r.kill.moves.join(' > ').padEnd(28)
+				+ ' cost ' + pct(r.kill.cost).padStart(5)
+				+ '  death ' + pct(r.kill.deathRisk).padStart(4)
+				+ '  ' + r.kill.turns + 't');
+			console.log('      ' + r.kill.log.map(s =>
+				'T' + s.turn + ' ' + s.we + ' / ' + s.they
+				+ ' (' + s.ourHP + ' v ' + s.theirHP + ')').join('  '));
+		});
 	});
-	clean.forEach(l => console.log(l));
-
-	conditional.forEach(c => {
-		const p = party[c.mi];
-		if (c.kind === 'slowed') {
-			// who can apply the slow and survive doing it?
-			const appliers = [];
-			party.forEach((q, qi) => {
-				const hasSlow = (q.set ? q.set.moves : q.moves || []).filter(m => SLOW_MOVES[m]);
-				const qmoves = q.moves || (q.set && q.set.moves) || [];
-				const slows = qmoves.filter(m => SLOW_MOVES[m]);
-				if (!slows.length) return;
-				const dd = duel(qi, fi, {});
-				appliers.push('      ' + q.species + ' clicks ' + slows[0]
-					+ (dd.theirHits >= 2 ? ' (survives a hit to do it)' : ' (DIES doing it unless entering free)'));
-			});
-			console.log('  ' + p.species + ' beats it IF SLOWED: ' + c.d.bestMove
-				+ ' (' + c.d.myHits + ' vs ' + c.d.theirHits + ')');
-			appliers.forEach(a => console.log(a));
-		}
-		if (c.kind === 'asleep') {
-			console.log('  ' + p.species + ' beats it IF ASLEEP (' + c.d.myHits + ' hits while it sleeps)');
-		}
-	});
-
-	// sleep enablers, once per foe
-	const sleepers = [];
-	party.forEach((q, qi) => {
-		const qmoves = q.moves || (q.set && q.set.moves) || [];
-		const sm = qmoves.filter(m => SLEEP_MOVES[m]);
-		if (!sm.length) return;
-		const dd = duel(qi, fi, {});
-		sleepers.push('    sleep it: ' + q.species + ' ' + sm[0]
-			+ (dd.theirHits >= 2 ? ' (survives a hit to click it)'
-				: ' (needs a FREE ENTRY: after our KO, or a SACRIFICE -- price it)'));
-	});
-	if (sleepers.length) {
-		console.log('  enablers:');
-		sleepers.forEach(s => console.log(s));
-		const grounded = true;
-		console.log('    (sleep is blocked while Electric Terrain is up; it expires turn 8 here)');
-	}
+	if (!anyClean) console.log('  NOTHING kills it straight without risking a death.');
 	console.log('');
 });

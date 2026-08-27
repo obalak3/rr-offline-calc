@@ -231,6 +231,10 @@ var RRBattle = (function () {
 		// JSON cannot carry Infinity. These are the only two fields that hold it.
 		if (state.field.weatherTurns === Infinity) copy.field.weatherTurns = Infinity;
 		if (state.field.terrainTurns === Infinity) copy.field.terrainTurns = Infinity;
+		// Nor can it carry a function, and the replacement chooser has to
+		// survive into runTurn's working copy or a plan loses control of its own
+		// bench the first time something faints.
+		if (state.replacementChooser) copy.replacementChooser = state.replacementChooser;
 		return copy;
 	}
 
@@ -946,7 +950,19 @@ var RRBattle = (function () {
 			var side = state[key];
 			if (!active(side) || !active(side).fainted) return;
 			if (!side.team.some(function (m) { return !m.fainted; })) return;
-			var index = chooseReplacement(state, key);
+			// A plan has to be able to choose its own replacement. The game asks
+			// the player which Pokemon comes in after a faint and the switch is
+			// free, so letting the engine's own heuristic answer for our side
+			// would silently overrule the plan at exactly the moment -- the one
+			// Pokemon the cap allows to die has just died -- when who comes in
+			// next is the whole question.
+			var index = -1;
+			if (key === "me" && typeof state.replacementChooser === "function") {
+				var asked = state.replacementChooser(state);
+				if (typeof asked === "number" && asked >= 0 &&
+					side.team[asked] && !side.team[asked].fainted) index = asked;
+			}
+			if (index < 0) index = chooseReplacement(state, key);
 			if (index >= 0) {
 				side.active = index;
 				side.team[index].turnsOut = 0;
