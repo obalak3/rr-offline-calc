@@ -815,6 +815,64 @@ if (process.argv[2] === '--probe') {
 	process.exit(0);
 }
 
+// SCORE-BY-SCORE GRADING. `--score-diff <dir>` walks cases synthesized from
+// the EWRAM dumps -- each carries the full position AND the AI's true four
+// scores read from the thinking struct -- computes our four scores for the
+// same position, and reports the per-move point gaps clustered by move and
+// direction. This is the porting accelerator the RAM read buys: a miss names
+// the exact rule-sized number it is missing, not just a different argmax.
+if (process.argv[2] === '--score-diff') {
+	const dir = process.argv[3];
+	const flags = {checkBadMove: true, semiSmart: true, checkGoodMove: true};
+	const gaps = {};   // "<species> <move>: ours-vs-truth" -> {count, sumGap}
+	let turns = 0, exact = 0, argmaxOK = 0;
+	for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.json')).sort()) {
+		let c;
+		try { c = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); }
+		catch (e) { continue; }
+		const st = buildState(c.obs);
+		if (!st) continue;
+		const foeMon = st.foe.team[st.foe.active];
+		if (!foeMon || foeMon.fainted) continue;
+		let scored;
+		try { scored = RRAI.scoreAll(st, 'foe', flags, {}); }
+		catch (e) { continue; }
+		const bySlot = {};
+		scored.forEach(e2 => {
+			if (e2.action.type !== 'move') return;
+			if (bySlot[e2.action.index] === undefined) bySlot[e2.action.index] = e2;
+		});
+		turns++;
+		let allEq = true;
+		const tScores = c.truth.scores;
+		const usable = i => tScores[i] !== 0;   // 0 = move unusable upstream
+		for (let i = 0; i < 4; i++) {
+			if (!usable(i) || !bySlot[i]) continue;
+			const gap = bySlot[i].score - tScores[i];
+			if (gap !== 0) {
+				allEq = false;
+				const mv = foeMon.set.moves[i] || ('slot' + i);
+				const k = foeMon.set.species + ' ' + mv + ' ' + (gap > 0 ? '+' : '') + gap;
+				gaps[k] = (gaps[k] || 0) + 1;
+			}
+		}
+		if (allEq) exact++;
+		let bt = -Infinity, bo = -Infinity;
+		tScores.forEach(v => { if (v > bt) bt = v; });
+		Object.keys(bySlot).forEach(i => { if (bySlot[i].score > bo) bo = bySlot[i].score; });
+		const tSet = tScores.map((v, i) => v === bt ? i : -1).filter(i => i >= 0);
+		const oSet = Object.keys(bySlot).filter(i => bySlot[i].score === bo).map(Number);
+		if (tSet.length === oSet.length && tSet.every(i => oSet.indexOf(i) >= 0)) argmaxOK++;
+	}
+	console.log('turns ' + turns + '  all-four-scores-exact ' + exact
+		+ ' (' + Math.round(100 * exact / turns) + '%)  identical-argmax-set ' + argmaxOK
+		+ ' (' + Math.round(100 * argmaxOK / turns) + '%)');
+	console.log('\nper-move gaps (ours minus truth), by frequency:');
+	Object.keys(gaps).sort((a, b) => gaps[b] - gaps[a]).slice(0, 20)
+		.forEach(k => console.log('  x' + String(gaps[k]).padStart(4) + '  ' + k));
+	process.exit(0);
+}
+
 // THE PORT'S SCOREBOARD. `node tools/agent.js --score-port <turns-dir>` walks
 // an archive session and scores the AI model against what the opponent
 // ACTUALLY did, recovered from its PP deltas between consecutive turns --
