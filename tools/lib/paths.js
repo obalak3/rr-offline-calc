@@ -111,9 +111,27 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	if (en.foeChip) {
 		st.foe.team[fi].curHP = Math.max(1, Math.round(st.foe.team[fi].maxHP * (1 - en.foeChip)));
 	}
+	// The foe's condition, with real lifetimes: status persists on the whole
+	// party, boosts belong only to the Pokemon on the field and the engine
+	// zeroes them on exit -- carrying them further would make Baby-Doll Eyes
+	// permanent, which James explicitly warned against.
+	if (en.foeStatus) {
+		for (const i in en.foeStatus) {
+			if (st.foe.team[i]) st.foe.team[i].status = en.foeStatus[i];
+		}
+	}
+	if (en.foeBoosts && st.foe.team[fi]) {
+		Object.assign(st.foe.team[fi].boosts, en.foeBoosts);
+	}
 	if (en.active !== undefined) {
 		const i = typeof en.active === 'number' ? en.active : idxOf(en.active);
 		if (i >= 0 && !st.me.team[i].fainted) st.me.active = i;
+	}
+	// Our own active's boosts too -- Victreebel after one Leaf Storm is at
+	// -2 Sp. Atk and was being priced at full power. Same lifetime rule: the
+	// active only; a switch clears them in the engine as in the game.
+	if (en.myBoosts && st.me.team[st.me.active]) {
+		Object.assign(st.me.team[st.me.active].boosts, en.myBoosts);
 	}
 	// AND HOW LONG THEY HAVE BEEN OUT. pricePath builds a fresh state, and a
 	// fresh state has turnsOut 0 for everyone, so the Pokemon on the field
