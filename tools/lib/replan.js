@@ -110,11 +110,30 @@ function chooseAction(ctx, state, opts) {
 	// or it is silently dropped.
 	const status = {};
 	state.me.team.forEach(m => { if (m.status) status[m.set.species] = m.status; });
+	// AND WHAT IS WRONG WITH THE FOE. The entry carried the target's HP and
+	// nothing else about it, so a BURNED Pawmot was re-simulated unburned and
+	// the -1 Attack Baby-Doll Eyes had already banked was re-simulated away --
+	// every turn. That is why the atk-drop looked necessary forever: in the
+	// rebuilt world the debuff never sticks and the burn never happened, so
+	// the ritual (Lilligant drops, Diggersby slows, closer kills) kept
+	// outpricing "it is at 40%, burned, halved Attack: just kill it". James
+	// caught it live against a burned Pawmot.
+	//
+	// LIFETIMES MATTER, his warning verbatim: boosts are removed when the
+	// holder switches out; status and HP persist. So status is carried for
+	// the whole foe party, but boosts only for the Pokemon actually on the
+	// field (both sides), and the engine zeroes them on exit like the real
+	// game, so nothing here outlives its real lifetime.
+	const foeStatus = {};
+	state.foe.team.forEach((m, i) => { if (m.status && !m.fainted) foeStatus[i] = m.status; });
 	const target = state.foe.team[fi];
-	const entry = {hp, dead, foeDead, field, status,
+	const entry = {hp, dead, foeDead, field, status, foeStatus,
 		active: state.me.team[state.me.active].set.species,
 		turnsOut: state.me.team[state.me.active].turnsOut,
 		foeTurnsOut: state.foe.team[fi] && state.foe.team[fi].turnsOut};
+	if (target) entry.foeBoosts = Object.assign({}, target.boosts);
+	const myActive = state.me.team[state.me.active];
+	if (myActive) entry.myBoosts = Object.assign({}, myActive.boosts);
 	if (target && target.maxHP && target.curHP < target.maxHP) {
 		entry.foeChip = 1 - (target.curHP / target.maxHP);
 	}
@@ -211,8 +230,18 @@ function chooseAction(ctx, state, opts) {
 		after.me.team.forEach(m => {
 			if (m.status && !m.fainted) statusAfter[m.set.species] = m.status;
 		});
+		// Status persists on their bench too (a Pawmot burned in this line is
+		// still burned when it comes back); boosts deliberately do NOT carry
+		// into the continuation -- a future opponent enters fresh, and our own
+		// active's stages will have been cleared by whatever switching the
+		// next duel opens with.
+		const foeStatusAfter = {};
+		after.foe.team.forEach((m, i) => {
+			if (m.status && !m.fainted) foeStatusAfter[i] = m.status;
+		});
 		const entryAfter = {
 			hp: hpAfter, dead: deadAfter, foeDead: foeDeadAfter, status: statusAfter,
+			foeStatus: foeStatusAfter,
 			field: {terrain: after.field.terrain, terrainTurns: after.field.terrainTurns},
 			active: after.me.team[after.me.active].set.species,
 			turnsOut: after.me.team[after.me.active].turnsOut
@@ -462,6 +491,30 @@ function chooseAction(ctx, state, opts) {
 			shortlist.push({here: here2, cand, r, illegal: illegal2, finished: false});
 		}
 		shortlist.sort((a, b) => a.here - b.here);
+		// The fallback market was invisible: the explain dump covered only the
+		// killing shortlist, and the Mienshao/Victreebel churn against a
+		// 52-HP Pawmot turned out to live entirely down here, where nobody
+		// could read the prices.
+		if (process.env.RR_EXPLAIN) {
+			console.log('[explain] NO-KILL FALLBACK market:');
+			shortlist.slice(0, 8).forEach((item, i) => {
+				const r = item.r;
+				let sp = 0;
+				for (const k in r.spend) sp += Math.max(0, r.spend[k]);
+				console.log('[explain] #' + i + ' here=' + item.here.toFixed(2)
+					+ ' | spend=' + sp.toFixed(2)
+					+ ' illegalDead=' + JSON.stringify(item.illegal)
+					+ ' deathRisk=' + r.deathRisk.toFixed(2)
+					+ ' turns=' + r.turns + ' outcome=' + r.outcome
+					+ ' foeLeft=' + (r.state && r.state.foe.team[fi]
+						? Math.round(100 * r.state.foe.team[fi].curHP
+							/ r.state.foe.team[fi].maxHP) + '%' : '?')
+					+ ' | ' + item.cand.why);
+				(r.log || []).forEach(l => console.log('[explain]      t' + l.turn
+					+ ' we ' + l.we + ' / they ' + l.they
+					+ '  us ' + l.us + '  them ' + l.them));
+			});
+		}
 		if (shortlist.length) {
 			const it = shortlist[0];
 			best = {score: it.here, here: it.here, ahead: 0, cand: it.cand, r: it.r,
