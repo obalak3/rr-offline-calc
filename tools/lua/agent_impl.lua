@@ -291,6 +291,29 @@ local function sampleAI(tag)
 	_RR.samples[tag] = emu:read8(AI_ACTION) .. "/" .. emu:read8(AI_TARGET)
 end
 
+-- THE AI'S OWN SCORE SHEET, read instead of reconstructed. The thinking
+-- struct (battle.h:480) was located at 0x020003A4 by signature scan over 795
+-- full-EWRAM dumps and verified exactly: across all 737 move turns, the
+-- argmax of score[4] contained the slot the AI really chose, 737/737.
+-- aiFlags reads 7 on every dump -- Surge runs all three AI bits -- and
+-- simulatedRNG holds the pre-drawn bytes that decide its coin-flip branches
+-- and argmax ties. Valid at the same 45-frame mark as the decision byte;
+-- stale before the AI has thought, like everything else in this struct.
+local AI_THINK = 0x020003A4
+local function aiScoresJSON()
+	local s = {}
+	for i = 0, 3 do
+		local v = emu:read8(AI_THINK + 4 + i)
+		if v > 127 then v = v - 256 end
+		s[#s + 1] = tostring(v)
+	end
+	local rng = {}
+	for i = 0, 3 do rng[#rng + 1] = tostring(emu:read8(AI_THINK + 24 + i)) end
+	return string.format('{"scores":[%s],"considered":%d,"flags":%d,"srng":[%s]}',
+		table.concat(s, ","), emu:read16(AI_THINK + 2),
+		emu:read32(AI_THINK + 12), table.concat(rng, ","))
+end
+
 local function samplesJSON()
 	local t = _RR.samples or {}
 	local parts = {}
@@ -1035,6 +1058,7 @@ function tick_inner()
 		if timer == 1 then sampleAI("committed") end
 		if timer == 45 then
 			sampleAI("resolving")
+			_RR.aiThink = aiScoresJSON()
 			-- Dump HERE, not at the menu. Nothing score-shaped exists at the
 			-- menu because the AI has not thought yet -- which is the same
 			-- reason the chosen-move byte is stale there. At 45 frames the
@@ -1087,9 +1111,9 @@ function tick_inner()
 			if positionSignature() ~= lastSig then
 				local f = io.open(DIR .. "result.json", "w")
 				f:write(string.format(
-					'{"turn":%d,"me":%s,"foe":%s,"rng":%d,"ai_samples":%s}\n',
+					'{"turn":%d,"me":%s,"foe":%s,"rng":%d,"ai_samples":%s,"ai_think":%s}\n',
 					turn, battler(MON), battler(MON + SIZE), emu:read32(RNG),
-					samplesJSON()))
+					samplesJSON(), _RR.aiThink or 'null'))
 				f:close()
 				say("turn " .. turn .. ": resolved")
 				emu:setKeys(0)

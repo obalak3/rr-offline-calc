@@ -1107,6 +1107,26 @@ setInterval(() => {
 					// SLOT is what an argmax has to match, not the move name.
 					((res.ai_samples && res.ai_samples.resolving) || '')
 					].join('\t') + '\n');
+				// THE AI'S TRUE SCORE SHEET, one row per resolved turn. The
+				// thinking struct at 0x020003A4 was located by signature scan
+				// and verified 737/737; the Lua reads it at the same 45-frame
+				// mark as the proven decision byte, and this file is what the
+				// port is graded against from now on: not "did the argmax
+				// match" but "is every one of the four scores equal", rule by
+				// rule. srng is the AI's pre-drawn randomness -- the tie-break
+				// and coin-flip bytes, the last non-computed part of its mind.
+				if (res.ai_think && res.ai_think.scores) {
+					try {
+						fs.appendFileSync(path.join(DIR, 'ai_truth.tsv'), [
+							awaiting.turn, awaiting.them, awaiting.foeHP,
+							awaiting.us, awaiting.myHP,
+							res.ai_think.scores.join(','),
+							res.ai_think.considered, res.ai_think.flags,
+							res.ai_think.srng.join(','),
+							((res.ai_samples && res.ai_samples.resolving) || '')
+						].join('\t') + '\n');
+					} catch (e) { /* truth logging must never break play */ }
+				}
 				const ok = (d, p, part) => part ? 'at least ' + d
 					: (d === p ? 'exact' : 'off by ' + (d - p));
 				console.log('  turn ' + awaiting.turn + ' resolved: our damage '
