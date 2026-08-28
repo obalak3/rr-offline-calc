@@ -134,6 +134,7 @@ function chooseAction(ctx, state, opts) {
 	if (target) entry.foeBoosts = Object.assign({}, target.boosts);
 	const myActive = state.me.team[state.me.active];
 	if (myActive) entry.myBoosts = Object.assign({}, myActive.boosts);
+	if (myActive && myActive.pp) entry.myPP = myActive.pp.slice();
 	if (target && target.maxHP && target.curHP < target.maxHP) {
 		entry.foeChip = 1 - (target.curHP / target.maxHP);
 	}

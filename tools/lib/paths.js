@@ -133,6 +133,15 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	if (en.myBoosts && st.me.team[st.me.active]) {
 		Object.assign(st.me.team[st.me.active].boosts, en.myBoosts);
 	}
+	// AND ITS PP. createState deals full PP, so a Mienshao that had spent both
+	// Fake Outs was still simulated flinching Pawmot on every priced entry --
+	// lines the actuator then could not play. (Benched Pokemon's PP is not in
+	// the party read at all yet; that needs the Lua and is logged in HANDOFF.)
+	if (en.myPP && st.me.team[st.me.active]) {
+		en.myPP.forEach((v, i) => {
+			if (v !== undefined && v !== null) st.me.team[st.me.active].pp[i] = v;
+		});
+	}
 	// AND HOW LONG THEY HAVE BEEN OUT. pricePath builds a fresh state, and a
 	// fresh state has turnsOut 0 for everyone, so the Pokemon on the field
 	// always looked like it had just arrived -- which made Fake Out legal on
