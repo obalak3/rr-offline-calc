@@ -370,6 +370,16 @@ local function readCommand()
 		if file then
 			say("loading state " .. file)
 			pcall(function() emu:loadStateFile(file) end)
+			-- The results row labels each fight with _RR.saveName, and this
+			-- branch never set it -- so once the node started driving loads,
+			-- every row inherited the LAST rotation load's label: hours of
+			-- Surge fights recorded as "RadicalRed.ss1". The label follows
+			-- the load, whoever performs it. Fresh dice per episode follow
+			-- the load too, same as the rotation path.
+			_RR.saveName = file:match("[^/]+$")
+			_RR.latch = nil
+			_RR.recorded = false
+			reseed()
 			lastSig = ""
 			os.remove(DIR .. "state.json")
 			os.remove(DIR .. "cmd.json")
