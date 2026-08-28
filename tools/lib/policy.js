@@ -90,6 +90,18 @@ function planAction(engine, state, plan, progress) {
 
 	const legal = B.legalActions(state, 'me');
 	if (state.me.active !== idx) {
+		// EVEN ON THE WAY OUT, a free entry move fires first. This return
+		// used to come before the entry-only check below, so a just-arrived
+		// Mienshao whose plan wanted somebody else in threw Fake Out away and
+		// switched -- during the Pawmot standoff it cycled Mienshao and
+		// Victreebel for eight turns holding a Fake Out that takes a fifth of
+		// Pawmot's HP and denies its turn outright (flinch stops Mach Punch
+		// too). James: "if it was doing fake out with mienshao to lower the
+		// hp I would maybe understand, but it just switched." The switch is
+		// not cancelled, it happens next turn from a better position; the
+		// same check yields to kills and skips flinch-immune targets below.
+		const parting = entryInterject(engine, state, legal);
+		if (parting) return parting;
 		const sw = legal.find(a => a.type === 'switch' && a.index === idx);
 		return sw || null;
 	}
@@ -118,28 +130,9 @@ function planAction(engine, state, plan, progress) {
 	// live agent compares the active against last turn, and pricePath marks the
 	// Pokemon it just brought in. The engine does not enforce the restriction
 	// either, so this is also what keeps us from planning an illegal move.
-	const justIn = mine && mine.volatiles && mine.volatiles.justEntered;
-	if (justIn) {
-		const entryMove = legal.find(a => a.type === 'move' && ENTRY_ONLY[a.move]);
-		if (entryMove) {
-			const foeNow = state.foe.team[state.foe.active];
-			let usable = false, killsNow = false;
-			try {
-				const r = B.damageRolls(state, 'me', entryMove.move);
-				usable = !!(r && !r.immune);
-				const kill = bestDamage(engine, state, legal);
-				if (kill) {
-					const kr = B.damageRolls(state, 'me', kill.move);
-					if (kr && !kr.immune) {
-						const band = kr.noCrit;
-						killsNow = band[Math.floor(band.length / 2)] * (kr.hits || 1)
-							>= foeNow.curHP;
-					}
-				}
-			} catch (e) { usable = false; }
-			const canFlinch = !/Inner Focus|Shield Dust/i.test(foeNow.set.ability || '');
-			if (usable && canFlinch && !killsNow) return entryMove;
-		}
+	{
+		const parting = entryInterject(engine, state, legal);
+		if (parting) return parting;
 	}
 
 	const key = foeSpecies + '/' + ji;
@@ -228,6 +221,38 @@ function jobDone(state, job, progress, foeSpecies, ji) {
  */
 // Moves that are legal only on the turn their user arrives.
 const ENTRY_ONLY = {'Fake Out': true, 'First Impression': true};
+
+/**
+ * The entry-only interject, one implementation for both of planAction's call
+ * sites (the mon executing its own job, and the mon on its way out): if the
+ * ACTIVE Pokemon arrived this turn and holds a usable entry-only move, play
+ * it. Yields to an actual kill, skips flinch-immune and immune targets.
+ */
+function entryInterject(engine, state, legal) {
+	const B = engine.B;
+	const mine = state.me.team[state.me.active];
+	const justIn = mine && mine.volatiles && mine.volatiles.justEntered;
+	if (!justIn) return null;
+	const entryMove = legal.find(a => a.type === 'move' && ENTRY_ONLY[a.move]);
+	if (!entryMove) return null;
+	const foeNow = state.foe.team[state.foe.active];
+	let usable = false, killsNow = false;
+	try {
+		const r = B.damageRolls(state, 'me', entryMove.move);
+		usable = !!(r && !r.immune);
+		const kill = bestDamage(engine, state, legal);
+		if (kill) {
+			const kr = B.damageRolls(state, 'me', kill.move);
+			if (kr && !kr.immune) {
+				const band = kr.noCrit;
+				killsNow = band[Math.floor(band.length / 2)] * (kr.hits || 1)
+					>= foeNow.curHP;
+			}
+		}
+	} catch (e) { usable = false; }
+	const canFlinch = !/Inner Focus|Shield Dust/i.test(foeNow.set.ability || '');
+	return (usable && canFlinch && !killsNow) ? entryMove : null;
+}
 
 function bestDamage(engine, state, legal) {
 	const B = engine.B;
