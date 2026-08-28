@@ -815,6 +815,125 @@ if (process.argv[2] === '--probe') {
 	process.exit(0);
 }
 
+// THE PORT'S SCOREBOARD. `node tools/agent.js --score-port <turns-dir>` walks
+// an archive session and scores the AI model against what the opponent
+// ACTUALLY did, recovered from its PP deltas between consecutive turns --
+// self-contained ground truth, no joins against logs whose turn numbers
+// repeat across sessions. Three properties make this the honest measure:
+//
+//   - "Correct" means the real move is IN THE COMPUTED ARGMAX SET. The AI
+//     picks uniformly among ties (ai_master.c:360), so calling a coin flip
+//     "wrong" when we named both faces would punish the port for the game's
+//     own randomness.
+//   - Every flag combination is scored separately. Which combination scores
+//     best PER TRAINER is evidence of that trainer's real aiFlags -- ROM data
+//     we otherwise do not have. Computed, not predicted.
+//   - It reuses the live buildState, so it sees exactly what the agent sees.
+if (process.argv[2] === '--score-port') {
+	const dir = process.argv[3];
+	const files = fs.readdirSync(dir).filter(f => /^turn\d+\.json$/.test(f)).sort();
+	const flagSets = {
+		'basic          ': {checkBadMove: true},
+		'basic+semi     ': {checkBadMove: true, semiSmart: true},
+		'basic+good     ': {checkBadMove: true, checkGoodMove: true},
+		'basic+semi+good': {checkBadMove: true, semiSmart: true, checkGoodMove: true}
+	};
+	const norm = m => (m || '').startsWith('Hidden Power') ? 'Hidden Power' : m;
+	const tally = {};   // flagSet -> species -> {hit, n}
+	const misses = {};  // "species: actual not in [set]" -> count
+	let prev = null;
+	for (const f of files) {
+		let cur;
+		try { cur = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); }
+		catch (e) { continue; }
+		const o = cur.obs;
+		if (prev) {
+			const po = prev.obs;
+			const sameFoe = po.foe && o.foe && po.foe.species === o.foe.species
+				&& po.foe.maxhp === o.foe.maxhp && o.turn === po.turn + 1;
+			if (sameFoe) {
+				let actual = null;
+				for (let i = 0; i < 4; i++) {
+					if ((o.foe.pp[i] || 0) < (po.foe.pp[i] || 0)) {
+						actual = moveName(po.foe.moves[i]); break;
+					}
+				}
+				if (actual) {
+					const st = buildState(po);
+					if (st && !st.foe.team[st.foe.active].fainted) {
+						if (po.turnsOut !== undefined && st.me.team[st.me.active]) {
+							st.me.team[st.me.active].turnsOut = po.turnsOut;
+						}
+						if (po.foeTurnsOut !== undefined && st.foe.team[st.foe.active]) {
+							st.foe.team[st.foe.active].turnsOut = po.foeTurnsOut;
+						}
+						const species = st.foe.team[st.foe.active].set.species;
+						for (const fsName in flagSets) {
+							let scored;
+							const nts = {};
+							try { scored = RRAI.scoreAll(st, 'foe', flagSets[fsName], nts); }
+							catch (e) { continue; }
+							const movesOnly = scored.filter(e2 => e2.action.type === 'move');
+							if (!movesOnly.length) continue;
+							let best = -Infinity;
+							movesOnly.forEach(e2 => { if (e2.score > best) best = e2.score; });
+							const set = movesOnly.filter(e2 => e2.score === best)
+								.map(e2 => norm(e2.action.move));
+							// EXPECTED accuracy under the AI's own uniform tie
+							// break: a hit inside a k-way tie is worth 1/k.
+							// Plain set-membership scored the do-nothing model
+							// at 100% -- every move ties at base, the set is
+							// everything, and the metric rewards knowing
+							// nothing.
+							const uniq = set.filter((m, i2) => set.indexOf(m) === i2);
+							const t = (tally[fsName] = tally[fsName] || {});
+							const row = (t[species] = t[species] || {hit: 0, ev: 0, n: 0});
+							row.n++;
+							if (uniq.indexOf(norm(actual)) >= 0) {
+								row.hit++;
+								row.ev += 1 / uniq.length;
+							}
+							if (set.indexOf(norm(actual)) < 0 && fsName === 'basic+semi+good') {
+								const k = species + ': did ' + norm(actual) + ', argmax [' + set.join(',') + ']';
+								misses[k] = (misses[k] || 0) + 1;
+								// RR_SCORE_DEBUG=Roost dumps the full scored
+								// market for the first few misses of that move,
+								// so a gate that refuses to fire can be READ.
+								if (process.env.RR_SCORE_DEBUG === norm(actual)
+									&& (misses[k] === 1 || misses[k] === 2)) {
+									console.log('--- miss detail ' + f + ' (foe hp '
+										+ po.foe.hp + '/' + po.foe.maxhp + ', we '
+										+ st.me.team[st.me.active].set.species + ' '
+										+ st.me.team[st.me.active].curHP + ')');
+									scored.forEach(e3 => console.log('   ',
+										e3.score, e3.action.move || ('switch ' + e3.action.index),
+										JSON.stringify(e3.reasons)));
+									console.log('    notes:', JSON.stringify(nts));
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		prev = cur;
+	}
+	for (const fsName in tally) {
+		const t = tally[fsName];
+		let H = 0, N = 0, EV = 0;
+		const per = Object.keys(t).map(sp => {
+			H += t[sp].hit; N += t[sp].n; EV += t[sp].ev;
+			return sp + ' ' + Math.round(100 * t[sp].ev / t[sp].n) + '%';
+		}).join('  ');
+		console.log(fsName + '  expected ' + (N ? Math.round(100 * EV / N) : 0)
+			+ '%  (in-set ' + (N ? Math.round(100 * H / N) : 0) + '%)   ' + per);
+	}
+	console.log('\ntop misses under basic+semi+good:');
+	Object.keys(misses).sort((a, b) => misses[b] - misses[a]).slice(0, 12)
+		.forEach(k => console.log('  x' + String(misses[k]).padStart(3) + '  ' + k));
+	process.exit(0);
+}
+
 // ------------------------------------------------------------------- the loop
 // A THROW ON ONE TURN MUST NOT END THE RUN. The agent died mid-session on a
 // position it could not build, and the emulator went on asking a planner that

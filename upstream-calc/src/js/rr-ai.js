@@ -188,6 +188,179 @@ var RRAI = (function () {
 		return RRBattle._internal.toCalcPokemon(mon).types;
 	}
 
+	// ------------------------------------------------------------ fight class
+	//
+	// PredictFightingStyle, ai_advanced.c:372, singles branch, transcribed.
+	// The class is derived from the MOVESET (plus item), decided once per mon,
+	// and it gates every status-move bonus through IncreaseStatusViability --
+	// which is why the port undervalued status until now: without a class,
+	// Roost and Thunder Wave scored as generic filler. With it, Vikavolt
+	// (three attacks + Roost) is SWEEPER_SETUP_STATUS whose status bonus is
+	// 4+boost RAW -- a justified Roost outranks Bug Buzz, exactly what the
+	// live log shows 184 times.
+	var CLASS = {
+		NONE: 0, SWEEPER_KILL: 1, SWEEPER_SETUP_STATS: 2, SWEEPER_SETUP_STATUS: 3,
+		SWEEPER_SETUP_SCREENS: 4, STALL: 5, BATON_PASS: 6, CLERIC: 7,
+		SCREENS: 8, PHAZING: 9, HAZARDS: 10
+	};
+
+	function fightClass(mon) {
+		var cls = CLASS.NONE;
+		var attackNum = 0, statusNum = 0, reflectionNum = 0;
+		var boosting = false, healing = false, leechSeed = false,
+			protection = false, phazing = false, hazardNum = 0;
+		var item = mon.set.item || "";
+		var choicey = /^Choice |Assault Vest/.test(item);
+		var moves = mon.set.moves || [];
+		for (var i = 0; i < moves.length; i++) {
+			var d = RRBattle.moveData(moves[i]);
+			if (!d) continue;
+			var k = (d.effect && d.effect.kind) || "";
+			if (moves[i] === "Baton Pass") { cls = CLASS.BATON_PASS; break; }
+			if (k === "forceSwitch") { phazing = true; }
+			else if (k === "haze" || k === "clearBoosts") { cls = CLASS.PHAZING; break; }
+			else if (k === "wish" || k === "healBell") { cls = CLASS.CLERIC; break; }
+			else if (k === "trap" || moves[i] === "Mean Look") { cls = CLASS.STALL; break; }
+			else if (k === "screen" || moves[i] === "Reflect" || moves[i] === "Light Screen") { reflectionNum++; }
+			else if (k === "leechSeed") { leechSeed = true; }
+			else if (k === "protect") { protection = true; }
+			else if (k === "hazard") { hazardNum++; }
+			else if (choicey) { cls = CLASS.SWEEPER_KILL; break; }
+			else if (k === "heal") { healing = true; }
+			if (d.split !== "Status") attackNum++;
+			if (k === "boost" && d.effect.target === "self") boosting = true;
+			else if (d.split === "Status") statusNum++;
+		}
+		if (cls !== CLASS.NONE) return cls;
+		if (reflectionNum >= 2) return attackNum >= 2 ? CLASS.SWEEPER_SETUP_SCREENS : CLASS.SCREENS;
+		if (hazardNum >= 1) return phazing ? CLASS.PHAZING : CLASS.HAZARDS;
+		if (attackNum >= 3) {
+			if (boosting) return CLASS.SWEEPER_SETUP_STATS;
+			if (statusNum > 0 || phazing) return CLASS.SWEEPER_SETUP_STATUS;
+			return CLASS.SWEEPER_KILL;
+		}
+		if (leechSeed && protection) return CLASS.STALL;
+		if (attackNum >= 2 && (boosting || statusNum > 0 || phazing)) {
+			if (boosting) return CLASS.SWEEPER_SETUP_STATS;
+			return CLASS.SWEEPER_SETUP_STATUS;
+		}
+		return CLASS.STALL;   // healingMove and the default both land here
+	}
+
+	// IncreaseStatusViability, ai_advanced.c:1726. RAW viability, class-gated.
+	// A kill-sweeper gets NOTHING from status moves; a status-setup sweeper
+	// gets 4+boost. `can2hkoUs` feeds the SETUP_STATS case only.
+	function statusViability(cls, boost, can2hkoUs) {
+		switch (cls) {
+		case CLASS.SWEEPER_KILL: return 0;
+		case CLASS.SWEEPER_SETUP_STATS: return can2hkoUs ? 0 : 3;
+		case CLASS.SWEEPER_SETUP_STATUS: return 4 + boost;
+		case CLASS.STALL: return 3 + boost;
+		case CLASS.BATON_PASS: return boost >= 3 ? 1 : 0;
+		case CLASS.CLERIC: return 3 + boost;
+		case CLASS.SCREENS: case CLASS.SWEEPER_SETUP_SCREENS: return 2 + boost;
+		case CLASS.PHAZING: return 4 + boost;
+		case CLASS.HAZARDS: return 3;
+		default: return boost;   // classless: the plain boost, conservative
+		}
+	}
+
+	// The AI's own idea of the damage it faces: CFRU's CanKnockOut/Can2HKO
+	// calculate WITHOUT crits. worstIncomingDamage (crit-inclusive) fed into
+	// these gates said 84 where the real AI computed ~56, so a Vikavolt at
+	// 87/104 read "healing cannot save you" and the port never Roosted --
+	// while the real one Roosted right there. Crit pessimism belongs to OUR
+	// safety checks, never to a transcription of THEIR arithmetic.
+	function maxIncomingNoCrit(state, key) {
+		var foeKey = RRBattle.other(key);
+		var worst = 0;
+		RRBattle.legalActions(state, foeKey).forEach(function (action) {
+			if (action.type !== "move") return;
+			var rolls = RRBattle.damageRolls(state, foeKey, action.move);
+			if (rolls && !rolls.immune) {
+				var top = rolls.noCrit[rolls.noCrit.length - 1] * (rolls.hits || 1);
+				if (top > worst) worst = top;
+			}
+		});
+		return worst;
+	}
+
+	// ShouldRecover, ai_advanced.c:1029, transcribed. The 50% coin on the
+	// 2HKO-heal branch reads the AI's PRE-DRAWN RNG parity
+	// (simulatedRNG[1] & 1); until the seed pipeline computes that draw, the
+	// branch is scored TRUE and flagged in notes so callers know the move
+	// may be a coin flip rather than certain.
+	function shouldRecover(state, key, healAmount, notes) {
+		var self = RRBattle.active(state[key]);
+		var heal = Math.floor(healAmount);
+		var inc = maxIncomingNoCrit(state, key);
+		// Breadcrumbs for the scoreboard: the sandbox has no process/env, so
+		// gate diagnostics travel in notes instead of prints.
+		notes.recover = {hp: self.curHP + "/" + self.maxHP, heal: heal, inc: inc,
+			faster: movesFirstStatus(state, key)};
+		var koNow = inc >= self.curHP;
+		var twoHKO = inc * 2 >= self.curHP;
+		var healed = Math.min(self.curHP + heal, self.maxHP);
+		var fasterOrItem = movesFirstStatus(state, key);
+		if (fasterOrItem) {
+			if (koNow && !(inc >= healed)) return true;
+			if (twoHKO && heal > self.curHP) {   // literal upstream comparison
+				notes.recoverCoin = true;
+				return true;
+			}
+		} else {
+			if (!koNow && twoHKO) {
+				var afterHitAndHeal = Math.min(self.curHP - inc + heal, self.maxHP);
+				if (!(inc >= afterHitAndHeal)) return true;
+			}
+		}
+		return false;
+	}
+
+	// "Do I act before the foe", both sides at priority zero: a plain speed
+	// comparison, which is what MoveWouldHitFirst reduces to for a status move.
+	function movesFirstStatus(state, key) {
+		return RRBattle.finalSpeed(state, key) > RRBattle.finalSpeed(state, RRBattle.other(key));
+	}
+
+	// GoodIdeaToLowerSpeed, ai_util.c:3368, transcribed.
+	function goodIdeaToLowerSpeed(state, key) {
+		var self = RRBattle.active(state[key]);
+		var foe = RRBattle.active(state[RRBattle.other(key)]);
+		// "Don't bother lowering stats if can kill enemy" (while slower).
+		var bestOut = 0;
+		RRBattle.legalActions(state, key).forEach(function (a) {
+			if (a.type !== "move") return;
+			var r = RRBattle.damageRolls(state, key, a.move);
+			if (r && !r.immune && r.noCrit[r.noCrit.length - 1] > bestOut) {
+				bestOut = r.noCrit[r.noCrit.length - 1];
+			}
+		});
+		if (!movesFirstStatus(state, key) && bestOut >= foe.curHP) return false;
+		if (RRBattle.finalSpeed(state, key) > RRBattle.finalSpeed(state, RRBattle.other(key))) return false;
+		var defAbility = foe.set.ability || "";
+		if (/Contrary|Clear Body|White Smoke|Full Metal Body|Clear Amulet/.test(defAbility)) return false;
+		return true;
+	}
+
+	// BadIdeaToParalyze, ai_util.c:2918, transcribed (frontier and doubles
+	// clauses omitted: this fight is neither).
+	function badIdeaToParalyze(state, key) {
+		var foe = RRBattle.active(state[RRBattle.other(key)]);
+		if (!RRBattle._internal.canTakeStatus(foe, "par")) return true;
+		var ab = foe.set.ability || "";
+		if (/Shed Skin|Quick Feet/.test(ab)) return true;
+		var foeMoves = foe.set.moves || [];
+		var physical = foeMoves.some(function (m) {
+			var d = RRBattle.moveData(m); return d && d.split === "Physical";
+		});
+		if (ab === "Marvel Scale" && physical) return true;
+		if (ab === "Guts" && physical) return true;
+		if (foeMoves.indexOf("Facade") >= 0 || foeMoves.indexOf("Psycho Shift") >= 0
+			|| foeMoves.indexOf("Rest") >= 0) return true;
+		return false;
+	}
+
 	/**
 	 * Score one action the way CFRU would, and record why.
 	 * `flags` is a set of the AI bits this trainer is assumed to have.
@@ -238,6 +411,18 @@ var RRAI = (function () {
 					if (kills && first && accurate) good(9, "KOs and moves first");
 					else if (kills) good(3, "KOs but is slower");
 					else if (isStrongest(state, key, action.move)) good(3, "strongest move");
+					// EFFECT_SPEED_DOWN_HIT, ai_positives.c:838: a reliable
+					// speed-dropping hit gets +3 RAW, "increase past strongest
+					// move", whenever lowering speed makes sense (slower
+					// attacker, no kill in hand, no Contrary/Clear Body). This
+					// is why the real Vikavolt clicks Mud Shot over Bug Buzz,
+					// 104 recorded misses of the old port.
+					var sec = effect.kind === "secondary" && effect.secondary;
+					if (flags[GOOD] && sec && sec.boosts && sec.boosts.spe < 0
+						&& (data.secondaryChance || 0) >= 50
+						&& goodIdeaToLowerSpeed(state, key)) {
+						good(3, "speed control past strongest move");
+					}
 				} else if (flags[BASIC_KILL]) {
 					// The basic-AI kill block (ai_negatives.c) is wrapped in
 					// #ifdef AI_TRY_TO_KILL_RATE, which CFRU itself never
@@ -258,9 +443,27 @@ var RRAI = (function () {
 		// ------------------------------------------------------ status moves
 		switch (effect.kind) {
 		case "status":
-			if (foe.status) bad(10, "target already has a status");
-			else if (!RRBattle._internal.canTakeStatus(foe, effect.status)) {
+			if (foe.status) { bad(10, "target already has a status"); break; }
+			if (!RRBattle._internal.canTakeStatus(foe, effect.status)) {
 				bad(10, "target cannot be " + effect.status);
+				break;
+			}
+			// EFFECT_PARALYZE, ai_positives.c:800: paralysis is worth 2 when
+			// it flips the speed order (their target is faster now and will
+			// not be at quarter speed) and 1 otherwise, then class-gated.
+			// Bellibolt (attacks + Thunder Wave) is SWEEPER_SETUP_STATUS, so
+			// the wave scores 4+2=+6 raw -- the port's second-biggest miss,
+			// 153 live turns of "we said Parabolic Charge, it Thunder Waved".
+			if ((flags[GOOD] || flags[SEMI]) && effect.status === "par"
+				&& !badIdeaToParalyze(state, key)) {
+				var defSpe = RRBattle.finalSpeed(state, RRBattle.other(key));
+				var atkSpe = RRBattle.finalSpeed(state, key);
+				var flips = defSpe >= atkSpe && defSpe / 2 < atkSpe;
+				var boostP = (flips || foe.volatiles.confusion) ? 2 : 1;
+				var clsP = fightClass(self);
+				var twoP = maxIncomingNoCrit(state, key) * 2 >= self.curHP;
+				var bumpP = statusViability(clsP, boostP, twoP);
+				if (bumpP) good(bumpP, "paralysis is useful (class " + clsP + ")");
 			}
 			break;
 		case "focusEnergy":
@@ -311,7 +514,19 @@ var RRAI = (function () {
 			break;
 		case "heal":
 		case "wish":
-			if (self.curHP === self.maxHP) bad(10, "already at full HP");
+			if (self.curHP === self.maxHP) { bad(10, "already at full HP"); break; }
+			// EFFECT_RESTORE_HP, ai_positives.c:652: a justified recovery gets
+			// the class-gated status bonus. Vikavolt is SWEEPER_SETUP_STATUS
+			// (three attacks + Roost), so ShouldRecover makes Roost 4+3=+7 RAW
+			// -- it outranks Bug Buzz, which the live log shows 184 times and
+			// the port called wrong every one of them.
+			if ((flags[GOOD] || flags[SEMI]) && effect.fraction
+				&& shouldRecover(state, key, self.maxHP * effect.fraction, notes)) {
+				var clsH = fightClass(self);
+				var twoH = maxIncomingNoCrit(state, key) * 2 >= self.curHP;
+				var bumpH = statusViability(clsH, 3, twoH);
+				if (bumpH) good(bumpH, "justified recovery (class " + clsH + ")");
+			}
 			break;
 		case "rest":
 			if (self.curHP === self.maxHP && !self.status) bad(10, "nothing to restore");
