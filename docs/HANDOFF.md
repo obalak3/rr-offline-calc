@@ -107,6 +107,29 @@ across turns is lost unless carried explicitly.
 - `buildState` no longer hands `createState` a null team, which used to kill the
   whole agent process and look exactly like the emulator being stuck.
 
+## THE DECISION WAITING FOR JAMES -- where the last wrong deaths live
+
+34 deaths in the 13:12 session, classified from the archive:
+
+- 13 died ON ENTRY, switched into the killer. Several were priced sacrifices
+  in already-lost endgames; several were healthy bodies (Mienshao 51 died to
+  PINCURCHIN on arrival under a "kills it outright, 0% death" plan -- crit
+  variance the pricer excludes by design).
+- 9 died STAYING under a plan labeled 0-4% death. The risk number is
+  conditioned on the committed foe move; the live foe (56% model) clicked the
+  other plausible one. Victreebel at 57 read 4% death and full Vikavolt's
+  Bug Buzz killed it.
+- Pawmot and Vikavolt own 24 of the 34.
+
+Root: deathRisk still trusts the SINGLE committed foe move, while entry
+damage now hedges the whole plausible set. The candidate fix -- worst
+plausible move on EVERY simulated turn -- is the recorded 0/40 trap's next
+door neighbour (all-pessimism made everything read death and wiped every
+episode), so it is NOT being done unilaterally. Options to discuss:
+(a) worst-plausible everywhere (risk: pessimism paralysis),
+(b) deathRisk-only vs worst plausible, damage trajectory stays committed,
+(c) accept the tax; sharpen only entries further.
+
 ## Open, in rough priority order
 
 - **Reliability of the win.** One zero-death episode is n=1; the 11-0 record
