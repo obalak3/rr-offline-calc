@@ -11,16 +11,34 @@ Beat LT. Surge (`RadicalRed.ss5`) **losing nobody but Lilligant**. James has
 done this himself. Once it is reliable the target becomes **zero deaths**,
 which he also believes is possible. Anything less is not the win.
 
-## STATE: the cap is beaten -- first ZERO-DEATH win, 2026-08-27 19:30
+## STATE at 2026-08-28 13:35 -- honest seeds, measured distribution
 
-The late-fight switch loop is root-caused and fixed (`6f7cc5e`), and the first
-clean episode on that commit beat Surge with ALL SIX ALIVE:
+Episodes now run with an independent RNG seed written per load and recorded
+in results.tsv (replayable). On honest dice, across the afternoon's commits:
 
-    54/98  112/112  54/139  70/102  95/95  61/108   their five all at 0
+    5e1499b (7 episodes): 7 wins; cap met 3/7 (one zero-death);
+                          wrong-death episodes 4/7 (deaths 2,1,1,5)
+    ce98a16 (5 episodes): 5 wins; cap met 2/5 (BOTH zero-death);
+                          wrong-death episodes 3/5 (deaths 1,1,4)
 
-That exceeds the cap (lose nobody but Lilligant). It is ONE episode. The open
-question is now RELIABILITY: let the rotation run and count how often the
-zero-death (or Lilligant-only) win repeats, per git version, in results.tsv.
+Switch rate per decision: 78% on 5e1499b, 40% on ce98a16 -- the unified
+worst-plausible entry pricing cut the entry-hit grind nearly in half.
+
+The remaining failure shape, every bad episode: a healthy LATE Pawmot or
+Vikavolt against a team ground to 40-50%, no kill line exists, the fallback
+feeds bodies one at a time. The cap is won or lost in the early game's HP
+preservation; the late-game answers (Baby-Doll Eyes into Pawmot, Fake Out +
+Rock Tombs into Vikavolt) only work from health.
+
+Afternoon commits, each revertable alone: 4cb095d foe status/boosts carried
+(lifetimes per James), 8ce7f40 fallback market printed, 5748391 Fake Out
+fires before a switch-away, fe47fd2 active PP carried, 5e1499b answer
+re-stamped to the current question (the 60s ask-expiry lag spiral froze the
+loop for 40 minutes), 97661cd row label + reseed follow every load, ce98a16
+every simulated entry eats the worst plausible move + append-only archive
+(the flat archive had been OVERWRITING old turns as the counter wrapped;
+pre-13:12 turnNNNNN references are partially destroyed -- session folders
+under turns/ from now on).
 
 ### What the loop was (full decomposition in docs/VALIDATION-LOG.md)
 
