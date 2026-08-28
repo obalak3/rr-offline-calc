@@ -131,10 +131,15 @@ function chooseAction(ctx, state, opts) {
 		active: state.me.team[state.me.active].set.species,
 		turnsOut: state.me.team[state.me.active].turnsOut,
 		foeTurnsOut: state.foe.team[fi] && state.foe.team[fi].turnsOut};
-	if (target) entry.foeBoosts = Object.assign({}, target.boosts);
+	// RR_ENTRY_MASK: comma list to DISABLE entry ingredients for bisection
+	// (diagnostic only): status,foeStatus,foeBoosts,myBoosts,myPP,threats
+	const mask = (process.env.RR_ENTRY_MASK || '').split(',');
+	if (mask.includes('status')) entry.status = {};
+	if (mask.includes('foeStatus')) entry.foeStatus = {};
+	if (target && !mask.includes('foeBoosts')) entry.foeBoosts = Object.assign({}, target.boosts);
 	const myActive = state.me.team[state.me.active];
-	if (myActive) entry.myBoosts = Object.assign({}, myActive.boosts);
-	if (myActive && myActive.pp) entry.myPP = myActive.pp.slice();
+	if (myActive && !mask.includes('myBoosts')) entry.myBoosts = Object.assign({}, myActive.boosts);
+	if (myActive && myActive.pp && !mask.includes('myPP')) entry.myPP = myActive.pp.slice();
 	if (target && target.maxHP && target.curHP < target.maxHP) {
 		entry.foeChip = 1 - (target.curHP / target.maxHP);
 	}
@@ -330,6 +335,7 @@ function chooseAction(ctx, state, opts) {
 	// hurts the incoming, stays free. Computed once; the position is the same
 	// for every candidate.
 	let entryThreats = null;
+	if (!mask.includes('threats'))
 	try {
 		entryThreats = engine.sandbox.RRAI.plausible(state, 'foe').actions
 			.filter(a => a.type === 'move' && !(function () {
@@ -344,6 +350,8 @@ function chooseAction(ctx, state, opts) {
 	const foeMon = state.foe.team[fi];
 	const ideas = cachedCandidates(fi, field,
 		foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined);
+	const drops = process.env.RR_EXPLAIN ? {} : null;
+	const drop = (why) => { if (drops) drops[why] = (drops[why] || 0) + 1; };
 	for (const cand of ideas) {
 		if (!cand.jobs.length) continue;
 		// ANY dead leg disqualifies the candidate, not just all of them. The
@@ -353,10 +361,10 @@ function chooseAction(ctx, state, opts) {
 		// James watched exactly that plan win six straight turns. Its honest
 		// twin without the dead leg is generated separately and can compete
 		// under its own name.
-		if (cand.jobs.some(j => dead.includes(j.mon))) continue;
+		if (cand.jobs.some(j => dead.includes(j.mon))) { drop('dead leg'); continue; }
 		let r;
 		try { r = pricePath(ctx, fi, cand.jobs, entry, {expendable, entryThreats}); }
-		catch (e) { continue; }
+		catch (e) { drop('threw: '+e.message); continue; }
 		// A POKEMON THAT PIVOTS OUT HAS NOT BEATEN US. Requiring every line to
 		// end in a kill threw away every line against Vikavolt, whose set is
 		// Volt Switch / Bug Buzz / Roost / Mud Shot: it leaves on its own, so
@@ -373,7 +381,36 @@ function chooseAction(ctx, state, opts) {
 		// standing, so the cost of finishing it later is counted there. A line
 		// that kills outright removes that charge and wins on its own merits.
 		const finished = r.kills;
-		if (!finished && r.outcome !== 'left') continue;
+		if (!finished && r.outcome !== 'left') {
+			// A LINE THAT DIED MID-EXECUTION IS PRICED AS WRECKAGE, not
+			// discarded. Since entries eat the worst plausible move instead of
+			// being vetoed, a fatal switch-in continues the simulation, the
+			// follow-up legs (also nearly dead) return nothing, and the line
+			// ends 'stuck' -- WITH a real body and real damage already on the
+			// books. Dropping those lines silently deleted 48 of 49 candidates
+			// at live turn 2035 and left a market of one: the Lanturn
+			// sacrifice, played into a 3 HP Lanturn while Mienshao had the
+			// kill in front of it. Wreckage is priced with the same formula
+			// the no-kill fallback has always used -- spend, deaths, risk,
+			// tempo, and 6 * the target's remaining fraction -- so it competes
+			// honestly and loses to any line that actually works. Lines that
+			// never executed a turn (entry blocked at the door) stay dropped.
+			if (!r.turns || !r.log || !r.log.length) {
+				drop(r.outcome + (r.blockedEntries ? ' (entry blocked)' : '')
+					+ ' | ' + cand.why);
+				continue;
+			}
+			const spentW = r.dead.filter(n => expendable.includes(n));
+			const illegalW = r.dead.filter(n => !expendable.includes(n));
+			let spendW = 0;
+			for (const k in r.spend) spendW += Math.max(0, r.spend[k]);
+			const leftW = r.state && r.state.foe.team[fi]
+				? r.state.foe.team[fi].curHP / r.state.foe.team[fi].maxHP : 1;
+			const hereW = spendW + illegalW.length * 6 + spentW.length * SPEND
+				+ 4 * r.deathRisk + TEMPO * (r.turns || 0) + 6 * leftW;
+			shortlist.push({here: hereW, cand, r, illegal: illegalW, finished: false});
+			continue;
+		}
 		// ALLOWED TO DIE IS NOT FREE TO DIE. An expendable death cost exactly
 		// zero, so the planner spent Lilligant the moment it was convenient --
 		// and Lilligant is the answer to Pawmot, whose killing lines nearly all
@@ -435,6 +472,7 @@ function chooseAction(ctx, state, opts) {
 	// its parts, plus the simulated line, so a bad decision can be read
 	// instead of guessed at.
 	if (process.env.RR_EXPLAIN) {
+		if (drops) console.log('[explain] dropped: ' + JSON.stringify(drops));
 		console.log('[explain] turn price ' + TEMPO.toFixed(2)
 			+ (process.env.RR_DERIVED_TEMPO ? ' (derived from position)' : ' (fixed)'));
 		shortlist.slice(0, Math.max(FINALISTS, 8)).forEach((item, i) => {
