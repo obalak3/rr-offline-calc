@@ -1264,8 +1264,36 @@ setInterval(() => {
 			return;
 		}
 	}
+	// ANSWER THE QUESTION AS CURRENTLY NUMBERED. The Lua expires a question
+	// after 60 seconds and re-asks the SAME position under a new turn id --
+	// and it rejects any answer whose id does not match. When a decision runs
+	// long, the answer arrives numbered for a question that no longer exists,
+	// the Lua re-asks, the node answers one generation behind, forever: cmd
+	// turn 615 landed while the question was 617, the fight froze at
+	// 'Victreebel vs Bellibolt' for 130 asked-turns, and 'no answer in 60s'
+	// filled the log while both sides worked diligently. If the live question
+	// is still the same position (same kind, same actives, same HP on both
+	// sides), the answer is stamped with ITS number; if the position has
+	// actually moved, the stale answer is withheld and the loop decides fresh.
+	let answerTurn = obs.turn;
+	try {
+		const nowQ = readJSONSync(STATE);
+		if (nowQ && nowQ.turn !== obs.turn) {
+			const same = nowQ.kind === obs.kind
+				&& nowQ.me && obs.me && nowQ.me.species === obs.me.species
+				&& nowQ.me.hp === obs.me.hp
+				&& nowQ.foe && obs.foe && nowQ.foe.species === obs.foe.species
+				&& nowQ.foe.hp === obs.foe.hp;
+			if (!same) {
+				console.log('withholding answer for turn ' + obs.turn
+					+ ': the position moved on (question is now turn ' + nowQ.turn + ')');
+				return;
+			}
+			answerTurn = nowQ.turn;
+		}
+	} catch (e) { /* an unreadable question changes nothing */ }
 	fs.writeFileSync(CMD, JSON.stringify({
-		turn: obs.turn,
+		turn: answerTurn,
 		action: d.best.action.type === 'switch' ? 'switch' : 'move',
 		slot: slot,
 		// THE TARGET AS A FINGERPRINT, not just an index. Every switching bug
