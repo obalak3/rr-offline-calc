@@ -96,8 +96,22 @@ function chooseAction(ctx, state, opts) {
 	// a second place: generation and pricing each kept their own idea of the
 	// position and disagreed. Live at turn 81 that meant a Pawmot on 41 of 99
 	// was priced as a Pawmot on 99, so "finish it now" never won.
+	// AND WHAT IS WRONG WITH THEM. `pricePath` has always accepted an entry
+	// status map and NOTHING EVER FILLED IT, so every plan on this project has
+	// been priced against a team with no paralysis, no burn, no poison and no
+	// sleep. James caught it from the log: the planner offered "Mienshao Drain
+	// Punch kills it, 0% death" for a Mienshao that was paralysed at 35 of 98,
+	// where paralysis halves its Speed to Vikavolt's and costs it a quarter of
+	// its turns outright. Burned Breloom on 8 HP read as a healthy attacker the
+	// same way.
+	//
+	// This is the recurring shape once more: createState builds a clean team,
+	// and anything the live position carries has to be handed over explicitly
+	// or it is silently dropped.
+	const status = {};
+	state.me.team.forEach(m => { if (m.status) status[m.set.species] = m.status; });
 	const target = state.foe.team[fi];
-	const entry = {hp, dead, foeDead, field,
+	const entry = {hp, dead, foeDead, field, status,
 		active: state.me.team[state.me.active].set.species,
 		turnsOut: state.me.team[state.me.active].turnsOut,
 		foeTurnsOut: state.foe.team[fi] && state.foe.team[fi].turnsOut};
@@ -190,8 +204,15 @@ function chooseAction(ctx, state, opts) {
 		const foeDeadAfter = [];
 		after.foe.team.forEach((m, i) => { if (m.fainted) foeDeadAfter.push(i); });
 		if (killedIdx >= 0 && !foeDeadAfter.includes(killedIdx)) foeDeadAfter.push(killedIdx);
+		// Status carries into the rest of the fight too: a Pokemon that ends
+		// this line paralysed is still paralysed when the next one arrives, and
+		// the lookahead was pricing it as cured.
+		const statusAfter = {};
+		after.me.team.forEach(m => {
+			if (m.status && !m.fainted) statusAfter[m.set.species] = m.status;
+		});
 		const entryAfter = {
-			hp: hpAfter, dead: deadAfter, foeDead: foeDeadAfter,
+			hp: hpAfter, dead: deadAfter, foeDead: foeDeadAfter, status: statusAfter,
 			field: {terrain: after.field.terrain, terrainTurns: after.field.terrainTurns},
 			active: after.me.team[after.me.active].set.species,
 			turnsOut: after.me.team[after.me.active].turnsOut
@@ -265,6 +286,29 @@ function chooseAction(ctx, state, opts) {
 		: (options.tempo === undefined ? 0.4 : options.tempo);
 	const SPEND = options.spend === undefined ? 2 : options.spend;
 
+	// WHAT MIGHT ACTUALLY HIT A SWITCH-IN. The entry turn is the one turn
+	// where their choice is uncertain to us: the ROM AI picks its move looking
+	// at the OUTGOING Pokemon, and our port of that choice is right 56% of the
+	// time. Measured over the turn archive: of 602 switch-ins that took real
+	// damage, 219 were hit by a move we had NOT predicted (Volt Switch
+	// predicted, Bug Buzz arrived; Hidden Power predicted, Flame Burst
+	// arrived). So a line that opens with a switch is priced against the most
+	// damaging move in RRAI.plausible's margin set -- their real candidates,
+	// not every move they own -- and the damage flows into the plan's own
+	// simulation. A Breloom that arrives at 15 HP and cannot do its job any
+	// more prices itself out; a genuine absorb pivot, where nothing plausible
+	// hurts the incoming, stays free. Computed once; the position is the same
+	// for every candidate.
+	let entryThreats = null;
+	try {
+		entryThreats = engine.sandbox.RRAI.plausible(state, 'foe').actions
+			.filter(a => a.type === 'move' && !(function () {
+				const d = engine.B.moveData(a.move);
+				return d && d.effect && d.effect.kind === 'selfSwitch';
+			})());
+		if (!entryThreats.length) entryThreats = null;
+	} catch (e) { entryThreats = null; }
+
 	let best = null;
 	const shortlist = [];
 	const foeMon = state.foe.team[fi];
@@ -272,9 +316,16 @@ function chooseAction(ctx, state, opts) {
 		foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined);
 	for (const cand of ideas) {
 		if (!cand.jobs.length) continue;
-		if (cand.jobs.every(j => dead.includes(j.mon))) continue;
+		// ANY dead leg disqualifies the candidate, not just all of them. The
+		// executor skips dead legs, so "Lanturn absorbs, then Victreebel
+		// kills" with Lanturn dead silently becomes "switch to Victreebel" --
+		// but keeps the absorb label and the absorb story in its price, and
+		// James watched exactly that plan win six straight turns. Its honest
+		// twin without the dead leg is generated separately and can compete
+		// under its own name.
+		if (cand.jobs.some(j => dead.includes(j.mon))) continue;
 		let r;
-		try { r = pricePath(ctx, fi, cand.jobs, entry, {expendable}); }
+		try { r = pricePath(ctx, fi, cand.jobs, entry, {expendable, entryThreats}); }
 		catch (e) { continue; }
 		// A POKEMON THAT PIVOTS OUT HAS NOT BEATEN US. Requiring every line to
 		// end in a kill threw away every line against Vikavolt, whose set is
@@ -387,9 +438,16 @@ function chooseAction(ctx, state, opts) {
 	if (!shortlist.length) {
 		for (const cand of ideas) {
 			if (!cand.jobs.length) continue;
-			if (cand.jobs.every(j => dead.includes(j.mon))) continue;
+			// ANY dead leg disqualifies the candidate, not just all of them. The
+		// executor skips dead legs, so "Lanturn absorbs, then Victreebel
+		// kills" with Lanturn dead silently becomes "switch to Victreebel" --
+		// but keeps the absorb label and the absorb story in its price, and
+		// James watched exactly that plan win six straight turns. Its honest
+		// twin without the dead leg is generated separately and can compete
+		// under its own name.
+		if (cand.jobs.some(j => dead.includes(j.mon))) continue;
 			let r;
-			try { r = pricePath(ctx, fi, cand.jobs, entry, {expendable}); }
+			try { r = pricePath(ctx, fi, cand.jobs, entry, {expendable, entryThreats}); }
 			catch (e) { continue; }
 			const spent2 = r.dead.filter(n => expendable.includes(n));
 			const illegal2 = r.dead.filter(n => !expendable.includes(n));
@@ -429,7 +487,19 @@ function chooseAction(ctx, state, opts) {
 	// that this stuff is internal to the AI, and internal means here: the
 	// planner walks its shortlist in score order and returns the best line
 	// whose first action is not a death on arrival.
-	const theirsNow = predictFoe(engine, state);
+	// A REPLACEMENT IS NOT A SWITCH. When our active has fainted, the only
+	// legal actions are switches and the incoming Pokemon takes NO hit -- the
+	// opponent already moved this turn, which is what killed the last one.
+	// Applying the death-on-arrival veto here vetoed EVERYTHING: live at turn
+	// 145, Diggersby dead in front of a Vikavolt on 20 HP, the planner held
+	// five killing lines ("Mienshao Drain Punch kills it, 0% death") and threw
+	// away all of them because Mienshao would supposedly die walking in. It
+	// returned nothing, the turn fell through to one-turn greedy scoring, and
+	// greedy fed Lilligant and then Breloom into the fight one at a time.
+	// Three of the four planless turns in that collapse were replacements.
+	const replacing = !!(state.me.team[state.me.active]
+		&& state.me.team[state.me.active].fainted);
+	const theirsNow = replacing ? null : predictFoe(engine, state);
 	const firstAction = item => {
 		const plan = {};
 		plan[state.foe.team[fi].set.species] = item.cand.jobs;

@@ -159,7 +159,7 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		// see committedChoice in duels.js for the live turn-592 evidence.
 		const scored = RRAI.scoreAll(st, 'foe', FLAGS, {});
 		if (!scored.length) { outcome = 'error'; break; }
-		const theirs = committedChoice(B, scored);
+		let theirs = committedChoice(B, scored);
 
 		// The same entry signal the live agent supplies, so a priced line and a
 		// played line agree about when an entry-only move is available. The
@@ -172,7 +172,33 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		}
 		st.replacementChooser = chooser;
 		let mine = P.planAction(engine, st, plan, prog);
-		if (mine && mine.type === 'switch' && !survivesEntry(B, st, mine.index, theirs)) {
+		// THE ENTRY TURN IS PRICED AGAINST WHAT MIGHT ACTUALLY ARRIVE. On the
+		// line's first turn only -- the turn played from the live position,
+		// where our 56% model of their choice is the whole uncertainty -- a
+		// switch is charged with the most damaging move in their plausible
+		// set (passed down from chooseAction), and the simulation continues
+		// from the damaged position. James's framing, which is the spec: the
+		// question is not "does the predicted move kill the incoming Pokemon",
+		// it is "is the predicted move going to stop me from doing this plan".
+		// Breloom arriving on a plausible Flame Burst at 15 HP fails its job
+		// INSIDE the line and the plan prices itself out; a line that eats the
+		// hit and still finishes (the Mach Punch play) keeps its price and
+		// stays available. No veto here for the same reason: a death on entry
+		// becomes a priced death, and the shortlist compares honest numbers.
+		if (t === 0 && mine && mine.type === 'switch'
+			&& options.entryThreats && options.entryThreats.length) {
+			let worst = null, worstDmg = -1;
+			const probe = B.clone(st);
+			probe.me.active = mine.index;
+			for (const threat of options.entryThreats) {
+				let r;
+				try { r = B.damageRolls(probe, 'foe', threat.move); } catch (e) { continue; }
+				const dmg = (r && !r.immune && r.noCrit && r.noCrit.length)
+					? r.noCrit[r.noCrit.length - 1] * (r.hits || 1) : 0;
+				if (dmg > worstDmg) { worstDmg = dmg; worst = threat; }
+			}
+			if (worst) theirs = worst;
+		} else if (mine && mine.type === 'switch' && !survivesEntry(B, st, mine.index, theirs)) {
 			// The path wants a Pokemon in that would die on the way in. That is
 			// the transition cost, and it is the question James asks out loud:
 			// "how do I bring in Diggersby without bringing it into death
@@ -210,8 +236,15 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 			// A plan should assume its own damage is typical and that the
 			// damage it takes is the worst of the band, which is the half of
 			// the honest-dice fix that was identified hours ago and never done.
+			// AND A PARALYSED POKEMON LOSES A TURN. The engine budgets full
+			// paralysis for our side -- a fixed number of skips across a line,
+			// rather than every turn, because paralysed-forever is a state
+			// nothing escapes -- and the planner was the one caller that never
+			// asked for it, so every plan built on a paralysed Pokemon assumed
+			// it acted on schedule. 1 is the solver's existing budget
+			// (rr-solver.js), not a new number.
 			out = B.step(st, mine, theirs, median
-				? {mode: 'maxroll', risks: {roll: 'median',
+				? {mode: 'maxroll', risks: {roll: 'median', paralysis: 1,
 					foeRoll: (options.pessimism === false) ? 'median' : 'max'}}
 				: {mode: 'odds', forkBudget: 3});
 		} catch (e) { outcome = 'error'; break; }

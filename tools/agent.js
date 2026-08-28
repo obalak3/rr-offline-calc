@@ -750,8 +750,13 @@ if (process.argv[2] === '--probe') {
 		+ '  turnsOut ' + act.turnsOut
 		+ '  hp ' + act.curHP + '/' + act.maxHP + '  fainted=' + act.fainted);
 	console.log('its moves: ' + JSON.stringify(act.set.moves) + '  pp ' + JSON.stringify(act.pp));
+	// STATUS IS PART OF THE POSITION. A paralysed Mienshao is a different
+	// Pokemon from a healthy one -- half speed and a quarter of its turns lost
+	// -- and a probe that hides it invites exactly the plan James caught:
+	// "Mienshao kills it" priced off a Mienshao that could not move.
 	console.log('team: ' + st.me.team.map((m, i) =>
-		i + ':' + m.set.species + (m.fainted ? '(X)' : '') + ' ' + m.curHP).join('  '));
+		i + ':' + m.set.species + (m.fainted ? '(X)' : '') + ' ' + m.curHP
+		+ (m.status ? '[' + m.status + ']' : '')).join('  '));
 	console.log('THEIR team: ' + st.foe.team.map((m, i) =>
 		(i === st.foe.active ? '>' : ' ') + i + ':' + m.set.species
 		+ (m.fainted ? '(X)' : ' ' + m.curHP + '/' + m.maxHP)).join('  '));
@@ -1182,6 +1187,15 @@ setInterval(() => {
 	try {
 		const dir = path.join(DIR, 'turns');
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
+		// HOW LONG EACH SIDE HAD BEEN OUT, recorded so the position can be
+		// REPRODUCED. Nothing in the RAM observation carries it -- it is
+		// counted by the running agent -- so a probe rebuilt every archived
+		// turn with turnsOut 0, made Fake Out legal where live it was not, and
+		// answered a different question than the one being investigated. The
+		// probe reads these back; HANDOFF's warning about it is now obsolete.
+		obs.turnsOut = st.me.team[st.me.active] ? st.me.team[st.me.active].turnsOut : 0;
+		obs.foeTurnsOut = st.foe.team[st.foe.active]
+			? st.foe.team[st.foe.active].turnsOut : 0;
 		fs.writeFileSync(path.join(dir, 'turn' + String(obs.turn).padStart(5, '0') + '.json'),
 			JSON.stringify({obs,
 				played: ourAction,
