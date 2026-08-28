@@ -33,6 +33,8 @@ const R = require('./lib/replan.js');
 const DIR = path.join(process.env.HOME, 'rr-agent');
 const STATE = path.join(DIR, 'state.json');
 const CMD = path.join(DIR, 'cmd.json');
+// Names this agent session's append-only archive folder (see the archiver).
+const SESSION = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
 const RESULT = path.join(DIR, 'result.json');
 const PRED = path.join(DIR, 'predictions.tsv');
 
@@ -1185,7 +1187,13 @@ setInterval(() => {
 		else { protectRun.key = key; protectRun.chain = 0; }
 	}
 	try {
-		const dir = path.join(DIR, 'turns');
+		// ONE FOLDER PER AGENT SESSION. The Lua's turn counter restarts, so
+		// the flat archive silently overwrote old positions as the counter
+		// passed their numbers again -- turn00592.json stopped being the
+		// Manectric flip-flop evidence and became an unrelated Bellibolt
+		// turn, and an hour of regression probes compared different battles.
+		// Evidence must be append-only.
+		const dir = path.join(DIR, 'turns', SESSION);
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
 		// HOW LONG EACH SIDE HAD BEEN OUT, recorded so the position can be
 		// REPRODUCED. Nothing in the RAM observation carries it -- it is

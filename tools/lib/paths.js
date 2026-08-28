@@ -199,20 +199,23 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		}
 		st.replacementChooser = chooser;
 		let mine = P.planAction(engine, st, plan, prog);
-		// THE ENTRY TURN IS PRICED AGAINST WHAT MIGHT ACTUALLY ARRIVE. On the
-		// line's first turn only -- the turn played from the live position,
-		// where our 56% model of their choice is the whole uncertainty -- a
-		// switch is charged with the most damaging move in their plausible
-		// set (passed down from chooseAction), and the simulation continues
-		// from the damaged position. James's framing, which is the spec: the
-		// question is not "does the predicted move kill the incoming Pokemon",
-		// it is "is the predicted move going to stop me from doing this plan".
-		// Breloom arriving on a plausible Flame Burst at 15 HP fails its job
-		// INSIDE the line and the plan prices itself out; a line that eats the
-		// hit and still finishes (the Mach Punch play) keeps its price and
-		// stays available. No veto here for the same reason: a death on entry
-		// becomes a priced death, and the shortlist compares honest numbers.
-		if (t === 0 && mine && mine.type === 'switch'
+		// EVERY ENTRY IS PRICED AGAINST WHAT MIGHT ACTUALLY ARRIVE. A switch
+		// turn is where our 56% model of their choice hurts most, and it
+		// hurts the same at turn one and at turn four: "Mienshao chips, then
+		// Lanturn finishes" walked a 15 HP Lanturn into Vikavolt on the
+		// strength of "the committed move is Electric and Lanturn absorbs it"
+		// -- live, Bug Buzz killed it on arrival. So on ANY simulated switch,
+		// the foe plays the most damaging move in its plausible set (passed
+		// down from chooseAction; the duel target is fixed for the whole
+		// line, so the decision-time set stays valid), and the simulation
+		// continues from the damaged position. James's framing, which is the
+		// spec: the question is not "does the predicted move kill the
+		// incoming Pokemon", it is "is the predicted move going to stop me
+		// from doing this plan". A death on entry becomes a PRICED death,
+		// never a veto -- a first version vetoed deep entries instead and
+		// promptly threw away good lines over survivable hits. The committed
+		// -move veto below remains only for callers that supply no threat set.
+		if (mine && mine.type === 'switch'
 			&& options.entryThreats && options.entryThreats.length) {
 			let worst = null, worstDmg = -1;
 			const probe = B.clone(st);
