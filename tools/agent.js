@@ -51,13 +51,43 @@ const party = H.realTeam();
 const ALL_BATTLES = H.earlyBattles(engine, {maxLevel: 60});
 const battleCache = {};
 function planCtx(obs) {
-	const b = battleOf(obs);
-	const sets = b ? H.foeSets(b) : null;
 	return {
 		engine, party,
-		foeSets: (sets && sets.length) ? sets : [setFromBattler(obs.foe, null)],
+		foeSets: foeTeamFor(obs),
 		expendable: (process.env.EXPENDABLE || 'Lilligant').split(',').filter(Boolean)
 	};
+}
+
+/**
+ * THEIR TEAM AS SETS -- one answer, shared by the state builder and the
+ * planner context.
+ *
+ * These were two separate constructions that disagreed: `buildState` padded
+ * the team to one slot per occupied party slot, while `planCtx` returned a
+ * SINGLE set whenever the trainer was not in the dataset. Indices from one
+ * were then used against the other, so the moment their active resolved to
+ * anything but slot 0 the planner threw `foeSets[fi].species` and every turn
+ * printed "no plan found". Same shape as every bug on this project: two parts
+ * keeping their own idea of the position.
+ */
+function foeTeamFor(obs) {
+	const foeSet = setFromBattler(obs.foe, null);
+	const bt = battleOf(obs);
+	const known = bt ? (H.foeSets(bt) || []) : [];
+	let team = null;
+	if (obs.foeparty && obs.foeparty.length && known.length) {
+		team = [];
+		obs.foeparty.forEach((row, i) => {
+			if (!row.maxhp) return;               // empty slot: they carry fewer
+			team.push(known[i] || Object.assign({}, foeSet));
+		});
+	}
+	if (!team || !team.length) {
+		const n = (obs.foeparty || []).filter(r => r && r.maxhp).length || 1;
+		team = [];
+		for (let i = 0; i < n; i++) team.push(Object.assign({}, foeSet));
+	}
+	return team;
 }
 
 function battleOf(obs) {
@@ -269,28 +299,11 @@ function buildState(obs) {
 	// than its own maximum. The active index then pointed at a clone, the
 	// predictor returned nothing, and the planner re-planned the same broken
 	// position forever.
-	let foeTeam = null;
-	const bt = battleOf(obs);
-	const known = bt ? (H.foeSets(bt) || []) : [];
-	if (obs.foeparty && obs.foeparty.length && known.length) {
-		foeTeam = [];
-		obs.foeparty.forEach((row, i) => {
-			if (!row.maxhp) return;               // empty slot: they carry fewer
-			foeTeam.push(known[i] || Object.assign({}, foeSet));
-		});
-	}
-	// NEVER HAND createState A NULL TEAM. When the position is not a fight we
-	// have trainer data for -- the boot screen, a wild battle, any fight before
-	// the rotation has loaded its save -- `known` is empty, foeTeam stayed null
-	// and createState threw, which killed the whole agent PROCESS rather than
-	// skipping one turn. The emulator then sat asking a planner that was no
-	// longer running. Fall back to what we can actually see: the Pokemon in
-	// front of us, one slot per occupied slot of their party.
-	if (!foeTeam || !foeTeam.length) {
-		const n = (obs.foeparty || []).filter(r => r && r.maxhp).length || 1;
-		foeTeam = [];
-		for (let i = 0; i < n; i++) foeTeam.push(Object.assign({}, foeSet));
-	}
+	// Built by the shared helper, so the planner context and this state always
+	// describe the same team. NEVER HAND createState A NULL TEAM: outside a
+	// known trainer battle that used to throw and kill the whole agent process,
+	// which looked exactly like the emulator being stuck.
+	const foeTeam = foeTeamFor(obs);
 	const st = B.createState(mySets, foeTeam, {});
 	// Put THEIR active where it really is, and apply what we can see of them.
 	// THEIR ACTIVE, matched on the base name too. A mega arrives as its base
@@ -299,12 +312,42 @@ function buildState(obs) {
 	// modelled a FAINTED Pincurchin as the Pokemon in front of us. The
 	// predictor then returned nothing at all ("they will: none") and the
 	// planner was pricing a position that did not exist.
+	// MATCHED ON A FINGERPRINT, NOT A NAME. Species alone picks the FIRST slot
+	// carrying that name, and a trainer may field two of the same Pokemon: the
+	// ss1 fight has two Emolgas, the first one died, and every turn afterwards
+	// the planner aimed at the corpse. pricePath opens with "is the target
+	// already fainted? then this plan kills it" -- so every candidate priced
+	// 0.00 at zero turns, the whole market tied, the tie broke by generation
+	// order, and the winner flipped with whoever was standing. Mienshao and
+	// Lanturn ping-ponged 98 -> 24 without attacking once and two Pokemon died
+	// in a level-27 fight. Same disease as the Volt Switch tie, different door.
+	//
+	// Our own side has always been fingerprinted (max HP + level); their side
+	// was never given the same treatment, and Surge's five distinct species
+	// hid it. Rank the candidates: alive beats fainted, then exact HP, then
+	// max HP. `obs.foeparty` is the RAM party read, which is what says who is
+	// really still standing.
 	const rawName = speciesName(obs.foe.species);
 	const baseOf = n => String(n || '').split('-')[0];
-	let activeFoe = foeTeam.findIndex(f => f && f.species === rawName);
-	if (activeFoe < 0) {
-		activeFoe = foeTeam.findIndex(f => f && baseOf(f.species) === baseOf(rawName));
-	}
+	const nameHit = (f, exact) => f && (exact ? f.species === rawName
+		: baseOf(f.species) === baseOf(rawName));
+	const pickFoe = exact => {
+		let bestI = -1, bestScore = -1;
+		foeTeam.forEach((f, i) => {
+			if (!nameHit(f, exact)) return;
+			const row = (obs.foeparty || [])[i];
+			// No party row for this slot is not evidence of death; an
+			// unreadable party must not outrank a slot we can see is alive.
+			const alive = !row || !row.maxhp || row.hp > 0;
+			const score = (alive ? 4 : 0)
+				+ (row && row.maxhp === obs.foe.maxhp && row.hp === obs.foe.hp ? 2 : 0)
+				+ (row && row.maxhp === obs.foe.maxhp ? 1 : 0);
+			if (score > bestScore) { bestScore = score; bestI = i; }
+		});
+		return bestI;
+	};
+	let activeFoe = pickFoe(true);
+	if (activeFoe < 0) activeFoe = pickFoe(false);
 	if (activeFoe >= 0) st.foe.active = activeFoe;
 	(obs.foeparty || []).forEach((row, i) => {
 		const m = st.foe.team[i];
