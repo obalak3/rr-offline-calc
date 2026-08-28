@@ -38,6 +38,28 @@ local RNG           = 0x020386D0
 
 local S_ACTION, S_MOVES, S_PARTY, S_BUSY = 0x0802E439, 0x0802EA11, 0x08030685, 0x0802E3B5
 
+-- INDEPENDENT DICE PER EPISODE.
+--
+-- A save state restores the RNG, and the planner is deterministic, so
+-- replaying one state replays one fight EXACTLY: the zero-death Surge win of
+-- 2026-08-27 came back HP for HP the next morning, and three ss1 sweeps were
+-- byte-identical to each other. Counting such episodes measures reproducibility
+-- and nothing else -- a "10/10" from them would be the false 11-0 record all
+-- over again, in a new costume.
+--
+-- So every episode gets a fresh 32-bit seed written into the generator after
+-- the state loads: same position, independent dice. The seed goes into the
+-- results row, so a bad episode can be replayed exactly rather than described.
+-- Frame-idling was considered and rejected on evidence: turns 64 and 65 logged
+-- the identical seed, so the generator advances on consumption, not per frame.
+math.randomseed(os.time() + math.floor((os.clock() * 1000) % 1000))
+local function reseed()
+	local seed = math.random(0, 65535) * 65536 + math.random(0, 65535)
+	local ok = pcall(function() emu:write32(RNG, seed) end)
+	_RR.seed = ok and seed or nil
+	if ok then say("seeded RNG " .. string.format("0x%08X", seed)) end
+end
+
 -- IS A BATTLE EVEN RUNNING. The agent had no concept that a fight can END, so
 -- when one did it went on reading gBattleMons -- which keeps the corpse of the
 -- last battler -- and reported a live position from stale memory: "them hp=0,
@@ -516,9 +538,13 @@ function tick_inner()
 				if vf then ver = vf:read("*l") or "?"; vf:close() end
 				local rf = io.open(DIR .. "results.tsv", "a")
 				if rf then
-					rf:write(string.format("%d\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+					-- The SEED is part of the result: without it an episode
+					-- cannot be replayed, only described. "none" means the
+					-- fight ran on whatever dice the save state carried.
+					rf:write(string.format("%d\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n",
 						os.time(), res, _RR.saveName or "?", ml, tl,
-						table.concat(mine, " "), table.concat(theirs, " "), ver))
+						table.concat(mine, " "), table.concat(theirs, " "), ver,
+						_RR.seed and string.format("0x%08X", _RR.seed) or "none"))
 					rf:close()
 				end
 				say("RESULT " .. res .. " -- ours left " .. ml .. ", theirs left " .. tl)
@@ -579,6 +605,7 @@ function tick_inner()
 				if file ~= "" and pcall(function() emu:loadStateFile(file) end) then
 					_RR.fights = (_RR.fights or 0) + 1
 					_RR.recorded = false
+					reseed()
 					-- The latch belongs to the fight that just ended; carrying
 					-- it into the next one would record a stale ending.
 					_RR.latch = nil
@@ -1088,6 +1115,8 @@ if ldf then
 	if file ~= "" then
 		if pcall(function() emu:loadStateFile(file) end) then
 			say("loaded " .. file)
+			_RR.saveName = file:match("[^/]+$")
+			reseed()
 		else
 			say("COULD NOT LOAD " .. file)
 		end
