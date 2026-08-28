@@ -854,6 +854,12 @@ if (process.argv[2] === '--score-diff') {
 				const mv = foeMon.set.moves[i] || ('slot' + i);
 				const k = foeMon.set.species + ' ' + mv + ' ' + (gap > 0 ? '+' : '') + gap;
 				gaps[k] = (gaps[k] || 0) + 1;
+				if (process.env.RR_DIFF_DETAIL === mv && gaps[k] <= 2) {
+					console.log('--- ' + k + '  (' + f + ')  truth ' + tScores.join(',')
+						+ '  we ' + st.me.team[st.me.active].set.species
+						+ ' ' + st.me.team[st.me.active].curHP);
+					console.log('    our reasons: ' + JSON.stringify(bySlot[i].reasons));
+				}
 			}
 		}
 		if (allEq) exact++;

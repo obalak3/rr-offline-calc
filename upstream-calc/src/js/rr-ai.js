@@ -343,6 +343,84 @@ var RRAI = (function () {
 		return true;
 	}
 
+	// ShouldPivot, ai_advanced.c:1468, transcribed for singles. The verdict
+	// enum: DONT (score -9, and the move loses strongest-move eligibility --
+	// upstream literally recalculates the strongest move ignoring it), TRY
+	// (neutral: the pivot is scored as a plain damaging move), GO (the
+	// class-gated pivot bonus, +3 for a kill-sweeper, +9 for everyone else).
+	// Bench-quality switchFlags (WALLS_FOE, RESIST_ALL_MOVES, ...) are from
+	// the unported half of ai_switching.c and are approximated as ZERO, which
+	// silences some PIVOT branches -- conservative: a pivot we fail to
+	// predict stays neutral, a DONT we fail to predict was already the
+	// default. Hazards and Wish clauses omitted: absent from this fight.
+	// The tree's own default is DONT_PIVOT -- most positions do not pivot.
+	var PIVOT = {DONT: 0, TRY: 1, GO: 2};
+
+	function theirBestDamage(state, key, excludeMove) {
+		var worst = 0;
+		RRBattle.legalActions(state, key).forEach(function (a) {
+			if (a.type !== "move" || a.move === excludeMove) return;
+			var r = RRBattle.damageRolls(state, key, a.move);
+			if (r && !r.immune) {
+				var top = r.noCrit[r.noCrit.length - 1] * (r.hits || 1);
+				if (top > worst) worst = top;
+			}
+		});
+		return worst;
+	}
+
+	function shouldPivot(state, key, moveName, cls) {
+		var self = RRBattle.active(state[key]);
+		var us = RRBattle.active(state[RRBattle.other(key)]);
+		var benched = state[key].team.filter(function (m, i) {
+			return i !== state[key].active && !m.fainted;
+		});
+		if (!benched.length) return PIVOT.TRY;
+		var damager = cls === CLASS.SWEEPER_KILL || cls === CLASS.SWEEPER_SETUP_STATS
+			|| cls === CLASS.SWEEPER_SETUP_STATUS || cls === CLASS.SWEEPER_SETUP_SCREENS;
+		var boost = damager && ((self.boosts.atk || 0) > 0 || (self.boosts.spa || 0) > 0);
+		var aiFirst = movesFirstStatus(state, key);
+		var usKOsAI = maxIncomingNoCrit(state, key) >= self.curHP;
+		var us2HKOsAI = maxIncomingNoCrit(state, key) * 2 >= self.curHP;
+		var aiBest = theirBestDamage(state, key, null);
+		var aiKOsUs = aiBest >= us.curHP;
+		var ai2HKOsUs = aiBest * 2 >= us.curHP;
+		var koWithoutThis = theirBestDamage(state, key, moveName) >= us.curHP;
+		if (aiFirst) {
+			if (koWithoutThis) return PIVOT.DONT;
+			if (aiKOsUs) return PIVOT.TRY;
+			if (damager && ai2HKOsUs && usKOsAI) return PIVOT.GO;
+			return PIVOT.DONT;
+		}
+		if (usKOsAI) return PIVOT.TRY;
+		if (us2HKOsAI) {
+			if (aiKOsUs && !koWithoutThis) return PIVOT.TRY;
+			return PIVOT.DONT;
+		}
+		if (aiKOsUs && !koWithoutThis && !boost) return PIVOT.TRY;
+		return PIVOT.DONT;
+	}
+
+	// The DONT-verdict pivot to ignore when naming the strongest move: this
+	// is upstream's RecalcStrongestMoveIgnoringMove seen from the other side.
+	// Computed only when the asking move is NOT itself the pivot.
+	function dontPivotMove(state, key, flags, askingMove) {
+		var self = RRBattle.active(state[key]);
+		var moves = self.set.moves || [];
+		for (var i = 0; i < moves.length; i++) {
+			if (moves[i] === askingMove) continue;
+			var d = RRBattle.moveData(moves[i]);
+			if (!d || !d.effect || d.effect.kind !== "selfSwitch" || d.split === "Status") continue;
+			if (shouldPivot(state, key, moves[i], fightClass(self)) === PIVOT.DONT) return moves[i];
+		}
+		return null;
+	}
+
+	// IncreasePivotViability, ai_advanced.c:2658, singles column.
+	function pivotViability(cls) {
+		return cls === CLASS.SWEEPER_KILL ? 3 : 9;
+	}
+
 	// BadIdeaToParalyze, ai_util.c:2918, transcribed (frontier and doubles
 	// clauses omitted: this fight is neither).
 	function badIdeaToParalyze(state, key) {
@@ -408,9 +486,26 @@ var RRAI = (function () {
 					var kills = rolls.noCrit[0] >= foe.curHP;
 					var first = movesFirst(state, key, action);
 					var accurate = data.accuracy === null || data.accuracy >= 70;
+					// EFFECT_BATON_PASS pivots, ai_positives.c:1496: the
+					// verdict comes first because DONT strips this move of
+					// strongest-move eligibility -- upstream recalculates the
+					// strongest move ignoring it, so the +3 lands on the best
+					// COMMITTED move instead. Measured before this rule: our
+					// Volt Switch ran +9..+12 hot against the true score
+					// sheet on 86 turns while Bug Buzz ran -2..-5 cold.
+					var pivotVerdict = null;
+					if (flags[GOOD] && effect.kind === "selfSwitch") {
+						pivotVerdict = shouldPivot(state, key, action.move, fightClass(self));
+					}
+					var strongestIgnoring = pivotVerdict === PIVOT.DONT ? action.move : null;
+					if (pivotVerdict === PIVOT.DONT) bad(9, "pivoting is a bad idea here");
+					else if (pivotVerdict === PIVOT.GO) {
+						good(pivotViability(fightClass(self)), "pivots out profitably");
+					}
 					if (kills && first && accurate) good(9, "KOs and moves first");
 					else if (kills) good(3, "KOs but is slower");
-					else if (isStrongest(state, key, action.move)) good(3, "strongest move");
+					else if (pivotVerdict !== PIVOT.DONT
+						&& isStrongest(state, key, action.move, dontPivotMove(state, key, flags, action.move))) good(3, "strongest move");
 					// EFFECT_SPEED_DOWN_HIT, ai_positives.c:838: a reliable
 					// speed-dropping hit gets +3 RAW, "increase past strongest
 					// move", whenever lowering speed makes sense (slower
@@ -625,11 +720,15 @@ var RRAI = (function () {
 		return order ? order[0] === key : false;   // a speed tie is not "first"
 	}
 
-	function isStrongest(state, key, moveName) {
+	function isStrongest(state, key, moveName, excludeMove) {
 		var actions = RRBattle.legalActions(state, key);
 		var best = -1, bestName = null;
+		var seen = {};
 		for (var i = 0; i < actions.length; i++) {
 			if (actions[i].type !== "move") continue;
+			if (seen[actions[i].move]) continue;   // pivots repeat per bench target
+			seen[actions[i].move] = true;
+			if (actions[i].move === excludeMove) continue;
 			var rolls = RRBattle.damageRolls(state, key, actions[i].move);
 			var value = rolls && !rolls.immune ? rolls.noCrit[0] : 0;
 			if (value > best) { best = value; bestName = actions[i].move; }
