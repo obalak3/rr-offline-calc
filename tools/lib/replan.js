@@ -25,6 +25,51 @@ const C = require('./candidates.js');
 const P = require('./policy.js');
 const {pricePath, survivesEntry} = require('./paths.js');
 
+/**
+ * The price of a turn, DERIVED FROM THE POSITION instead of tuned.
+ *
+ * TEMPO=0.4 was fitted by sweeping whole episodes and James called it out:
+ * "this stuff should be internal to the ai not external rules for surge."
+ * The internal quantity it was approximating is what a turn actually hands
+ * the opponent -- one free action. So the rate is measured, per position:
+ * the median damage of the standing foe's best committed damaging move
+ * against our current active, as a fraction of that active's max HP, capped
+ * at the HP it actually has left. Dawdling in front of Pincurchin (kills
+ * nobody) is near-free; dawdling in front of Pawmot is not; a Volt Absorb
+ * body in front of an Electric attacker prices the turn at zero, which is
+ * exactly why the absorb pivot is good. 0.4, it turns out, is about what a
+ * typical mid-fight hit takes -- the sweep had rediscovered the average of
+ * this quantity.
+ *
+ * Enabled by RR_DERIVED_TEMPO=1 so the fixed-0.4 baseline and the derived
+ * version can be compared on live episodes, the same A/B pattern as
+ * RR_NO_CHIP_CHAINS.
+ */
+function turnRate(engine, state, foeIdx) {
+	const B = engine.B;
+	let probe = state;
+	if (state.foe.active !== foeIdx) {
+		probe = B.clone(state);
+		probe.foe.active = foeIdx;
+	}
+	const foe = probe.foe.team[foeIdx];
+	if (!foe || foe.fainted) return 0;
+	const active = probe.me.team[probe.me.active];
+	if (!active || active.fainted) return 0;
+	let worst = 0;
+	for (const mv of foe.set.moves || []) {
+		const d = B.moveData(mv);
+		if (d && d.effect && d.effect.kind === 'selfSwitch') continue;
+		let r;
+		try { r = B.damageRolls(probe, 'foe', mv); } catch (e) { continue; }
+		if (!r || r.immune || !r.noCrit || !r.noCrit.length) continue;
+		const med = r.noCrit[Math.floor(r.noCrit.length / 2)] * (r.hits || 1);
+		const frac = Math.min(med, active.curHP) / active.maxHP;
+		if (frac > worst) worst = frac;
+	}
+	return worst;
+}
+
 function chooseAction(ctx, state, opts) {
 	const engine = ctx.engine, B = engine.B;
 	const options = opts || {};
@@ -183,8 +228,10 @@ function chooseAction(ctx, state, opts) {
 				let sp = 0;
 				for (const k in rr.spend) sp += Math.max(0, rr.spend[k]);
 				const bad = rr.dead.filter(n => !expendable.includes(n)).length;
-				const c = sp + bad * 6 + 2 * rr.deathRisk
-					+ (options.tempo === undefined ? 0.4 : options.tempo) * (rr.turns || 0);
+				const rate = process.env.RR_DERIVED_TEMPO
+					? turnRate(engine, after, gi)
+					: (options.tempo === undefined ? 0.4 : options.tempo);
+				const c = sp + bad * 6 + 2 * rr.deathRisk + rate * (rr.turns || 0);
 				if (cheapest === null || c < cheapest) cheapest = c;
 			}
 			// Nothing kills it from here. That is the expensive outcome and the
@@ -213,7 +260,9 @@ function chooseAction(ctx, state, opts) {
 	// lived inside the loop every fallback turn threw "SPEND is not defined"
 	// and the agent silently fell through to one-turn greedy scoring -- 24
 	// times in the live log, all on the hardest positions.
-	const TEMPO = options.tempo === undefined ? 0.4 : options.tempo;
+	const TEMPO = process.env.RR_DERIVED_TEMPO
+		? turnRate(engine, state, fi)
+		: (options.tempo === undefined ? 0.4 : options.tempo);
 	const SPEND = options.spend === undefined ? 2 : options.spend;
 
 	let best = null;
@@ -305,6 +354,8 @@ function chooseAction(ctx, state, opts) {
 	// its parts, plus the simulated line, so a bad decision can be read
 	// instead of guessed at.
 	if (process.env.RR_EXPLAIN) {
+		console.log('[explain] turn price ' + TEMPO.toFixed(2)
+			+ (process.env.RR_DERIVED_TEMPO ? ' (derived from position)' : ' (fixed)'));
 		shortlist.slice(0, Math.max(FINALISTS, 8)).forEach((item, i) => {
 			const r = item.r;
 			let sp = 0;

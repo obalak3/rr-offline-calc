@@ -693,6 +693,11 @@ if (process.argv[2] === '--probe') {
 	// agent could never have played.
 	if (obs.turnsOut !== undefined && st.me.team[st.me.active]) {
 		st.me.team[st.me.active].turnsOut = obs.turnsOut;
+		// The volatile has to follow, or the probe offers Fake Out on a
+		// Pokemon that has been out for eight turns -- which it did, and the
+		// live agent had (correctly) played Rock Tomb, so the probe was
+		// contradicting reality on the exact position it was asked to explain.
+		st.me.team[st.me.active].volatiles.justEntered = (obs.turnsOut || 0) === 0;
 	}
 	if (obs.foeTurnsOut !== undefined && st.foe.team[st.foe.active]) {
 		st.foe.team[st.foe.active].turnsOut = obs.foeTurnsOut;
