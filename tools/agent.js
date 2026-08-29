@@ -1475,7 +1475,21 @@ setInterval(() => {
 		? (plannerSaid.overridden ? 'PLAN (OVERRIDDEN by the death veto): ' : 'PLAN: ')
 			+ plannerSaid.path.cand.why
 			+ '   [this kill ' + plannerSaid.path.here.toFixed(2)
-			+ ', rest of the fight ' + plannerSaid.path.ahead.toFixed(2) + ']'
+			+ ', rest of the fight ' + plannerSaid.path.ahead.toFixed(2)
+			// THE PRICED REALITY, next to the label. The label is written by
+			// GENERATION, which measures a duel with both Pokemon already on
+			// the field; the price is PAID in the real position, where we may
+			// have to switch in and eat a hit first. They routinely disagree:
+			// sampled over recent turns the label averaged 0% death while the
+			// priced line averaged 21%, and one line labelled "0% death"
+			// priced at 100% with Victreebel dying. Every log line, and every
+			// human read of this agent, has been optimistic by that margin.
+			+ (plannerSaid.path.r
+				? '; priced death ' + Math.round(100 * plannerSaid.path.r.deathRisk) + '%'
+					+ ((plannerSaid.path.r.dead || []).length
+						? ' losing ' + plannerSaid.path.r.dead.join(',') : '')
+				: '')
+			+ ']'
 		: 'no plan found, falling back to one-turn scoring'));
 	console.log('  [turnsOut: us ' + st.me.team[st.me.active].turnsOut
 		+ ', them ' + (st.foe.team[st.foe.active] || {}).turnsOut + ']');
