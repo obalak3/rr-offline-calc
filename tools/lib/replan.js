@@ -223,7 +223,13 @@ function chooseAction(ctx, state, opts) {
 	//
 	// Fixing that properly means pricing the remaining opponents as one
 	// combination rather than as separate problems. Until then, 5.
-	const LOOKAHEAD = options.lookahead === false ? 0 : (options.lookahead || 5);
+	// RR_NO_LOOKAHEAD=1 answers "how many of our switches are caused by the
+	// lookahead rather than by the position in front of us". The lookahead is
+	// the crudest term in the score -- it prices each remaining opponent
+	// INDEPENDENTLY, so one healthy Pokemon is assumed to answer all of them,
+	// and returns a flat 8 when it finds nothing.
+	const LOOKAHEAD = (options.lookahead === false || process.env.RR_NO_LOOKAHEAD)
+		? 0 : (options.lookahead || 5);
 	const ENOUGH = options.enough || 3;
 
 	// Candidate generation depends only on WHO we are facing and the field, not
