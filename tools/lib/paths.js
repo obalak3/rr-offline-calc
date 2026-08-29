@@ -137,6 +137,14 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	// Fake Outs was still simulated flinching Pawmot on every priced entry --
 	// lines the actuator then could not play. (Benched Pokemon's PP is not in
 	// the party read at all yet; that needs the Lua and is logged in HANDOFF.)
+	// A PROTECT ALREADY SPENT IS SPENT. createState zeroes volatiles, so every
+	// priced line simulated Detect as fresh -- free damage prevention, every
+	// turn, forever -- while the engine itself correctly fails a repeated
+	// protect. The live state has carried protectChain since the Detect-spam
+	// fix, but the PRICER never saw it, because pricing rebuilds from `entry`.
+	if (en.protectChain && st.me.team[st.me.active]) {
+		st.me.team[st.me.active].volatiles.protectChain = en.protectChain;
+	}
 	if (en.myPP && st.me.team[st.me.active]) {
 		en.myPP.forEach((v, i) => {
 			if (v !== undefined && v !== null) st.me.team[st.me.active].pp[i] = v;

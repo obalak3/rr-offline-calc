@@ -761,6 +761,13 @@ if (process.argv[2] === '--probe') {
 	if (obs.foeTurnsOut !== undefined && st.foe.team[st.foe.active]) {
 		st.foe.team[st.foe.active].turnsOut = obs.foeTurnsOut;
 	}
+	// RR_PROBE_PROTECT=n reproduces a live protect chain, which the archive
+	// does not record: it is counted by the running agent, so a probe always
+	// rebuilds the position as though Detect were fresh.
+	if (process.env.RR_PROBE_PROTECT && st.me.team[st.me.active]) {
+		st.me.team[st.me.active].volatiles.protectChain =
+			Number(process.env.RR_PROBE_PROTECT);
+	}
 	const act = st.me.team[st.me.active];
 	console.log('active index ' + st.me.active + ' = ' + act.set.species
 		+ '  turnsOut ' + act.turnsOut
