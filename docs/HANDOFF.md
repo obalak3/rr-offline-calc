@@ -130,6 +130,32 @@ episode), so it is NOT being done unilaterally. Options to discuss:
 (b) deathRisk-only vs worst plausible, damage trajectory stays committed,
 (c) accept the tax; sharpen only entries further.
 
+## DIAGNOSED, NOT FIXED -- the entry job hands over too early
+
+At live turns 2030/2031 the agent switches a 3 HP Lanturn OUT to Breloom,
+then next turn switches Breloom back IN to Lanturn to be sacrificed. It looks
+like the old oscillation and it is NOT: at 2031 the chosen line is genuinely
+best (sacrifice a 3 HP Lanturn, take the free replacement, Fake Out + Drain
+Punch kills Pawmot) because bringing Mienshao in directly costs it a Thunder
+Punch on ENTRY and a second one before it can act -- Pawmot outspeeds, so
+Mienshao never lands Drain Punch and dies instead. Verified by probe: the
+"Mienshao kills it outright" line exists, is priced, and ends with Mienshao
+dead. The market is right.
+
+What is wrong is turn 2030, where Lanturn was ALREADY standing in the exact
+position the next turn pays a turn and a hit to reach. It cannot express
+"stay and absorb": the absorb job is written with `until: {entered: true}`,
+which is satisfied the instant that Pokemon is active, so with Lanturn in
+front the job immediately hands over and the plan degenerates to "switch to
+the finisher".
+
+NOT FIXED DELIBERATELY. Changing entry-job semantics is the same surgery
+that would touch the Volt Absorb pivot James built over a week and named a
+deliberate feature. The fix probably belongs in policy.js, making an entry
+job that is ALREADY satisfied and whose holder is about to absorb the
+incoming move hold its ground for one turn -- but that needs James, and it
+needs a live A/B, not an argument.
+
 ## Open, in rough priority order
 
 - **Reliability of the win.** One zero-death episode is n=1; the 11-0 record
