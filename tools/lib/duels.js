@@ -306,15 +306,35 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
  * excluded from the sim foe's choice unless they are all it has.
  */
 function committedChoice(B, scored) {
-	const committed = scored.filter(e => {
-		if (e.action.type !== 'move') return false;
-		const d = B.moveData(e.action.move);
-		return !(d && d.effect && d.effect.kind === 'selfSwitch');
-	});
-	const pool = committed.length ? committed : scored;
+	// A PIVOT STILL HITS YOU. The first version of this DROPPED pivot moves
+	// from the foe's choice so a duel could not end on turn one -- and in
+	// doing so it deleted their damage as well. Volt Switch is 70 BP and
+	// Manectric's alternatives are 50; every Surge Pokemon but Pawmot carries
+	// a pivot, so every priced duel understated the incoming damage by the
+	// difference. Live at turn 334 the simulation gave Manectric-Mega a Charge
+	// Beam for 37-45, called Mienshao safe at 1% death risk, and the real
+	// Manectric used Volt Switch for 52-63 and killed it -- a forbidden death
+	// that cost the cap.
+	//
+	// The move is kept and only the SWITCH is stripped: the engine applies the
+	// damage and then finds no target to pivot to, so the duel continues
+	// against the same Pokemon. That is what "committed" was always supposed
+	// to mean -- their switching reorders the duels, it does not invalidate
+	// one -- and it no longer costs us the arithmetic.
+	const moves = scored.filter(e => e.action.type === 'move');
+	const pool = moves.length ? moves : scored;
 	let best = -Infinity;
 	pool.forEach(e => { if (e.score > best) best = e.score; });
-	return pool.filter(e => e.score === best)[0].action;
+	const pick = pool.filter(e => e.score === best)[0].action;
+	if (pick.type === 'move' && pick.switchTo !== undefined) {
+		const d = B.moveData(pick.move);
+		if (d && d.effect && d.effect.kind === 'selfSwitch') {
+			const stay = Object.assign({}, pick);
+			delete stay.switchTo;
+			return stay;
+		}
+	}
+	return pick;
 }
 
 module.exports = {duelLines, runDuel, strategiesFor, MEDIAN, committedChoice};
