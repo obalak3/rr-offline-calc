@@ -583,10 +583,29 @@ var RRAI = (function () {
 		// ------------------------------------------------------ status moves
 		switch (effect.kind) {
 		case "status":
-			if (foe.status) { bad(10, "target already has a status"); break; }
-			if (!RRBattle._internal.canTakeStatus(foe, effect.status)) {
-				bad(10, "target cannot be " + effect.status);
+			// AN ABSORBED STATUS MOVE IS STILL ABSORBED. CFRU's Volt Absorb
+			// branch has the status-move exclusion COMMENTED OUT, so Thunder
+			// Wave into a Volt Absorb Lanturn takes the full -20 and returns
+			// immediately -- the sheet reads exactly 80. Our absorb check
+			// lived in the damaging branch only, so status moves walked past
+			// it entirely.
+			var absorbSt = ABSORB[foe.set.ability];
+			if (absorbSt && data && absorbSt === data.type) {
+				bad(20, foe.set.ability + " absorbs " + data.type);
 				break;
+			}
+			// AND THE PENALTY DOES NOT SWALLOW THE BONUS. Same two-pass shape
+			// as healing and immunity: the negatives pass docks a status that
+			// cannot land, the positives pass still pays the class-gated
+			// bonus, and both apply. Thunder Wave into a Ground type reads 96
+			// on the sheet -- minus ten plus six -- and we stopped at the
+			// penalty. The move's TYPE is passed now too, so canTakeStatus can
+			// see that an Electric move does not reach a Ground type at all;
+			// without it we thought Diggersby was paralysable.
+			if (foe.status) bad(10, "target already has a status");
+			else if (!RRBattle._internal.canTakeStatus(foe, effect.status, state,
+				data ? data.type : undefined)) {
+				bad(10, "target cannot be " + effect.status);
 			}
 			// EFFECT_PARALYZE, ai_positives.c:800: paralysis is worth 2 when
 			// it flips the speed order (their target is faster now and will

@@ -884,6 +884,13 @@ if (process.argv[2] === '--score-live') {
 			if (o && o.me && o.foe && o.me.hp === usHP && o.foe.hp === themHP) { obs = o; break; }
 		}
 		if (!obs) continue;
+		// RR_LIVE_FIELD_ONLY grades only positions we can rebuild FAITHFULLY.
+		// Archives written before the terrain read carry no terrainTurns, so
+		// they rebuild with the phantom Electric Terrain that createState
+		// inherits from Pincurchin -- which inflates every Electric move by
+		// 1.3x and can flip which move we call strongest. Scoring against them
+		// measures our own stale reconstruction, not the port.
+		if (process.env.RR_LIVE_FIELD_ONLY && obs.terrainTurns === undefined) continue;
 		const st = buildState(obs);
 		if (!st) continue;
 		const foeMon = st.foe.team[st.foe.active];
