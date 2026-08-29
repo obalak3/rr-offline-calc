@@ -304,6 +304,10 @@ function chooseAction(ctx, state, opts) {
 		for (let gi = 0; gi < ctx.foeSets.length; gi++) {
 			if (foeDeadAfter.includes(gi)) continue;
 			let cheapest = null;
+			// How far the BEST line gets against this opponent, whether or not
+			// it finishes the job. This is what makes the no-answer case a
+			// measurement instead of a constant.
+			let bestLeft = 1;
 			let ahead;
 			try {
 				const fm = after.foe.team[gi];
@@ -322,6 +326,11 @@ function chooseAction(ctx, state, opts) {
 					: entryAfter;
 				try { rr = pricePath(ctx, gi, cand.jobs, eAfter, {expendable}); }
 				catch (e) { continue; }
+				const fmAfter = rr.state && rr.state.foe.team[gi];
+				const left = rr.kills ? 0
+					: (fmAfter && fmAfter.maxHP
+						? Math.max(0, Math.min(1, fmAfter.curHP / fmAfter.maxHP)) : 1);
+				if (left < bestLeft) bestLeft = left;
 				if (!rr.kills) continue;
 				found++;
 				let sp = 0;
@@ -333,9 +342,29 @@ function chooseAction(ctx, state, opts) {
 				const c = sp + bad * 6 + 2 * rr.deathRisk + rate * (rr.turns || 0);
 				if (cheapest === null || c < cheapest) cheapest = c;
 			}
-			// Nothing kills it from here. That is the expensive outcome and the
-			// whole reason for looking ahead at all.
-			total += (cheapest === null) ? 8 : cheapest;
+			// NOTHING KILLS IT FROM HERE -- graded, not flat.
+			//
+			// This was a constant 8, and a constant cannot distinguish "Pawmot
+			// is untouchable" from "Pawmot survives on 5%". Worse, it made the
+			// dominant term of the whole score a STEP: whether an opponent
+			// counts as answered depends on a truncated search (the first
+			// LOOKAHEAD candidates, stopping after ENOUGH successes) whose
+			// ordering shifts with HP, so one point of damage could flip a foe
+			// between answered and unanswered and move the score by 8 -- or 16
+			// when two flipped together. Measured between adjacent turns
+			// against the SAME opponent, the lookahead moved 25.70 -> 11.90 in
+			// one turn and 11.90 -> 26.50 in another, while the immediate cost
+			// moved by about 2. Plans separated by a point or two of real,
+			// simulated cost were being reshuffled by that.
+			//
+			// So the cost of failing to kill is now the fraction of that
+			// opponent we cannot remove, priced with the SAME 6-per-whole-
+			// Pokemon convention the no-kill fallback already uses above. It
+			// is continuous, so it cannot jump; it is informative, so the
+			// lookahead can finally prefer keeping the Pokemon that gets
+			// closest; and it is not a new tuned number -- it is the one this
+			// file had already settled on, now used in both places.
+			total += (cheapest === null) ? 6 * bestLeft : cheapest;
 		}
 		return total;
 	}

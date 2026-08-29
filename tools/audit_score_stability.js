@@ -10,6 +10,10 @@ for(const d of fs.readdirSync(ROOT).filter(x=>/^2026-08-29-0[45]/.test(x)).sort(
     let a,b; try{a=JSON.parse(fs.readFileSync(fa,'utf8'));b=JSON.parse(fs.readFileSync(fb,'utf8'));}catch(e){continue;}
     if(!a.planJobs||!b.planJobs||b.obs.turn!==a.obs.turn+1) continue;
     if(a.obs.foe.maxhp!==b.obs.foe.maxhp||b.obs.kind==='forced') continue;
+    // A FIXED SAMPLE. The archive grows while the agent plays, so an
+    // unbounded sample silently changes between two arms of a comparison and
+    // the numbers are not comparable. RR_AUDIT_MAXTURN pins it.
+    if(process.env.RR_AUDIT_MAXTURN && a.obs.turn>Number(process.env.RR_AUDIT_MAXTURN)) continue;
     runs.push([fa,fb]);
   }
 }
