@@ -508,9 +508,23 @@ var RRAI = (function () {
 						&& bestKOSet(state, key, notes, true).indexOf(action.move) >= 0) {
 						good(9, "KOs and moves first (best of the killing moves)");
 					}
-					else if (kills) good(3, "KOs but is slower");
+					// The slow-KO branch is gated on the SAME best-accuracy
+					// set as the fast one (checkGoingFirst FALSE upstream), so
+					// again only one killing move earns it -- Pawmot's Drain
+					// Punch was collecting it while the real AI gave it
+					// nothing, because Mach Punch's priority owns the set.
+					else if (kills
+						&& bestKOSet(state, key, notes, false).indexOf(action.move) >= 0) {
+						good(slowKOBonus(fightClass(self)), "KOs but is slower");
+					}
 					else if (pivotVerdict !== PIVOT.DONT
-						&& isStrongest(state, key, action.move, dontPivotMove(state, key, flags, action.move))) good(3, "strongest move");
+						&& isStrongest(state, key, action.move, dontPivotMove(state, key, flags, action.move))) {
+						// Class-scaled only on the untouched-viability KO
+						// branch; a plain strongest move is worth 2.
+						var clsS = fightClass(self);
+						good(score === BASE && kills ? strongestMoveBonus(clsS) : 2,
+							"strongest move");
+					}
 					// EFFECT_SPEED_DOWN_HIT, ai_positives.c:838: a reliable
 					// speed-dropping hit gets +3 RAW, "increase past strongest
 					// move", whenever lowering speed makes sense (slower
@@ -778,20 +792,75 @@ var RRAI = (function () {
 		return good;
 	}
 
+	/**
+	 * CalcStrongestMove's selection, ai_util.c, transcribed for singles.
+	 *
+	 * Damage decides first. On a DAMAGE TIE upstream compares accuracy (a
+	 * strictly better accuracy wins only while the incumbent is below 100),
+	 * and when accuracy also ties it assigns `strongestMove = move` -- the
+	 * LATER move wins. Ours kept the FIRST, which is the opposite, and on
+	 * Pawmot that matters constantly: Drain Punch, Thunder Punch and Ice
+	 * Punch are all 75 BP Iron Fist punches that tie against a neutral
+	 * target, so the two implementations disagreed about which one carries
+	 * the strongest-move bonus. Zero-power moves are skipped, as upstream
+	 * skips `gBattleMoves[move].power == 0`.
+	 */
 	function isStrongest(state, key, moveName, excludeMove) {
 		var actions = RRBattle.legalActions(state, key);
-		var best = -1, bestName = null;
+		var best = -1, bestAcc = 0, bestName = null;
 		var seen = {};
 		for (var i = 0; i < actions.length; i++) {
 			if (actions[i].type !== "move") continue;
 			if (seen[actions[i].move]) continue;   // pivots repeat per bench target
 			seen[actions[i].move] = true;
 			if (actions[i].move === excludeMove) continue;
+			var d = RRBattle.moveData(actions[i].move);
+			if (!d || !d.power) continue;          // status / zero-power
 			var rolls = RRBattle.damageRolls(state, key, actions[i].move);
 			var value = rolls && !rolls.immune ? rolls.noCrit[0] : 0;
-			if (value > best) { best = value; bestName = actions[i].move; }
+			var acc = (d.accuracy === null || d.accuracy === undefined) ? 100 : d.accuracy;
+			if (value > best) { best = value; bestAcc = acc; bestName = actions[i].move; }
+			else if (value === best && best >= 0) {
+				if (acc > bestAcc && bestAcc < 100) { bestAcc = acc; bestName = actions[i].move; }
+				else if (acc === bestAcc || acc >= 100) bestName = actions[i].move;
+			}
 		}
 		return bestName === moveName;
+	}
+
+	/**
+	 * IncreaseViabilityForSlowKOMove, ai_advanced.c:2764. EIGHT for an
+	 * ordinary attacker, not the three this port used to award. The
+	 * BetterToKOLastFoeMon variants (which raise some classes to 9) are not
+	 * ported, so the lower value of each pair is used -- understating a bonus
+	 * only widens the plausible set, which is the safe direction.
+	 */
+	function slowKOBonus(cls) {
+		switch (cls) {
+		case CLASS.SWEEPER_SETUP_STATS: return 6;
+		case CLASS.BATON_PASS: return 3;
+		case CLASS.CLERIC: return 6;
+		case CLASS.SCREENS: case CLASS.SWEEPER_SETUP_SCREENS: return 6;
+		default: return 8;   // SWEEPER_KILL, SETUP_STATUS, STALL, PHAZING
+		}
+	}
+
+	/**
+	 * The strongest-move bonus, ai_positives.c STRONGEST_MOVE_CHECK. It is
+	 * TWO for an ordinary attacker, not the three this port used to award;
+	 * the class-scaled values apply only on the branch where viability is
+	 * still untouched and the move would KO.
+	 */
+	function strongestMoveBonus(cls) {
+		switch (cls) {
+		case CLASS.CLERIC: return 5;
+		case CLASS.SCREENS: case CLASS.SWEEPER_SETUP_SCREENS: return 6;
+		case CLASS.BATON_PASS: return 6;
+		case CLASS.PHAZING: return 8;
+		case CLASS.STALL: return 8;
+		case CLASS.HAZARDS: return 4;
+		default: return 2;
+		}
 	}
 
 	/** Score every legal action for one side under one assumed flag set. */
