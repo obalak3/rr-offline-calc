@@ -1154,7 +1154,10 @@ try {
 	const hash = cp.execSync('git rev-parse --short HEAD', {cwd: __dirname}).toString().trim();
 	const dirty = cp.execSync('git status --porcelain', {cwd: __dirname}).toString().trim() ? '+' : '';
 	VERSION = hash + dirty;
-	fs.writeFileSync(path.join(DIR, 'version.txt'), VERSION + '\n');
+	// The experiment arm rides in the version stamp, so results.tsv records
+	// which behaviour produced each episode instead of it living in my head.
+	fs.writeFileSync(path.join(DIR, 'version.txt'),
+		VERSION + (process.env.RR_NO_DEATH_VETO ? '+noveto' : '') + '\n');
 } catch (e) { /* not fatal: the row just reads "?" */ }
 
 // THE AGENT MUST NOTICE ITS OWN CODE IS STALE.
