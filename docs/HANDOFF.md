@@ -11,52 +11,49 @@ Beat LT. Surge (`RadicalRed.ss5`) **losing nobody but Lilligant**. James has
 done this himself. Once it is reliable the target becomes **zero deaths**,
 which he also believes is possible. Anything less is not the win.
 
-## STATE at 2026-08-28 13:35 -- honest seeds, measured distribution
+## STATE -- 2026-08-29, early hours
 
-Episodes now run with an independent RNG seed written per load and recorded
-in results.tsv (replayable). On honest dice, across the afternoon's commits:
+Episodes carry an independent RNG seed (recorded in results.tsv), so results
+are a rate, not one replayed trajectory. On the rebuilt decision layer there
+have been several cap-meeting wins and FOUR zero-death wins, alongside
+collapses; roughly half of episodes meet the cap. n is small and the build
+changed underneath most of it, so re-derive per build and never quote a rate
+across builds.
 
-    5e1499b (7 episodes): 7 wins; cap met 3/7 (one zero-death);
-                          wrong-death episodes 4/7 (deaths 2,1,1,5)
-    ce98a16 (5 episodes): 5 wins; cap met 2/5 (BOTH zero-death);
-                          wrong-death episodes 3/5 (deaths 1,1,4)
+### Read this before believing any number
 
-Switch rate per decision: 78% on 5e1499b, 40% on ce98a16 -- the unified
-worst-plausible entry pricing cut the entry-hit grind nearly in half.
+Three times today the "biggest bug" was the MEASUREMENT, and twice a correct
+piece of code was nearly patched to match a broken yardstick.
 
-The remaining failure shape, every bad episode: a healthy LATE Pawmot or
-Vikavolt against a team ground to 40-50%, no kill line exists, the fallback
-feeds bodies one at a time. The cap is won or lost in the early game's HP
-preservation; the late-game answers (Baby-Doll Eyes into Pawmot, Fake Out +
-Rock Tombs into Vikavolt) only work from health.
+- **The log lied about planlessness.** The death veto in agent.js nulled
+  plannerSaid when it overrode a plan, so the turn printed "no plan found".
+  Every "N% planless" figure was wrong. Genuine planlessness is now ZERO
+  across 81 consecutive decisions; overrides print
+  "PLAN (OVERRIDDEN by the death veto)".
+- **The dump-based score corpus is mispaired.** EWRAM dumps are taken 45
+  frames after we commit, so gBattleMons need not hold the position the AI
+  scored against. Grade with `--score-live`, which joins ai_truth.tsv and is
+  paired by construction. `--score-diff` (dumps) is kept only as history.
+- **Pre-terrain archives rebuild with a phantom field.** No terrainTurns
+  means Electric Terrain is inherited from Pincurchin and never expires,
+  inflating Electric moves 1.3x. `RR_LIVE_FIELD_ONLY=1` restricts grading to
+  faithfully rebuildable turns; doing so made the table's largest gap
+  (Thunder Punch +2, 45 rows) vanish, because it was never a rule.
 
-Afternoon commits, each revertable alone: 4cb095d foe status/boosts carried
-(lifetimes per James), 8ce7f40 fallback market printed, 5748391 Fake Out
-fires before a switch-away, fe47fd2 active PP carried, 5e1499b answer
-re-stamped to the current question (the 60s ask-expiry lag spiral froze the
-loop for 40 minutes), 97661cd row label + reseed follow every load, ce98a16
-every simulated entry eats the worst plausible move + append-only archive
-(the flat archive had been OVERWRITING old turns as the counter wrapped;
-pre-13:12 turnNNNNN references are partially destroyed -- session folders
-under turns/ from now on).
+### The enemy AI is now READ, not guessed
 
-### What the loop was (full decomposition in docs/VALIDATION-LOG.md)
+Thinking struct at 0x020003A4 (battle.h:480): scores +4, moveConsidered +2,
+aiFlags +12 (reads 7: Surge runs all three bits), simulatedRNG +24. Verified
+737/737 against the chosen slot. Port accuracy 56% -> 59% exact-score / 77%
+argmax on faithful positions, every opponent improved.
 
-The pricer gave the simulated foe its literal argmax; late-fight that argmax
-is Volt Switch, so every simulated duel ended turn one with outcome 'left'.
-All 68 candidates at turn 592 priced identically -- one turn of tempo plus the
-same flat lookahead -- and the 68-way tie broke by generation order, flipping
-with whoever was standing. Both directions of the flip priced their switch as
-a free absorb entry. Sixteen switches, two deaths, no attack landed.
-
-Fix, no new constants: `committedChoice` (duels.js, shared with paths.js) --
-the sim foe plays its best COMMITTED action, because their switching only
-reorders the duels (policy.js doctrine). And the engine now fails an immune
-damaging move outright: Volt Switch into a Ground type strands its user.
-
-`RR_EXPLAIN=1 node tools/agent.js --probe <turn.json>` prints the finalist
-market with price decomposition and sim lines. This is what cracked it; use
-it first on any future bad decision.
+Two facts that will save the next reader a day:
+- **Their arithmetic is theirs.** CanKnockOut/Can2HKO compute WITHOUT crits;
+  feeding our crit-inclusive damage into transcribed gates broke Roost.
+- **The two scoring passes are independent.** A penalty and a bonus both
+  apply to the same move; short-circuiting after either loses the other.
+  Found three separate times (healing, immunity, status). Suspect it first
+  for any remaining gap.
 
 ## What is running
 
