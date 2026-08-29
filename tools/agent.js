@@ -815,6 +815,121 @@ if (process.argv[2] === '--probe') {
 	process.exit(0);
 }
 
+// SCORE-BY-SCORE GRADING AGAINST CORRECTLY-PAIRED TRUTH.
+//
+// `--score-live` joins ai_truth.tsv (the AI's real score sheet, written when
+// a turn RESOLVES and therefore paired with the position the node actually
+// asked about) against that turn's archived observation, recomputes our four
+// scores, and reports the per-move point gaps.
+//
+// This exists because the dump-based corpus is MISPAIRED and its numbers
+// cannot be trusted. The EWRAM dumps are taken 45 frames after we commit, so
+// the position in gBattleMons is not necessarily the one the AI scored
+// against; the same matchup (Bellibolt vs our Volt Absorb Lanturn at 139)
+// reads 102 for Parabolic Charge in a dump and 80 -- the correct -20 absorb
+// penalty, which our model already applies -- in the live log. Every gap
+// table built on the dumps inherits that error.
+//
+// Rows are matched on turn number AND both HP values, so a turn counter that
+// restarts across sessions cannot silently pair the wrong battle.
+if (process.argv[2] === '--score-live') {
+	const truthFile = process.argv[3] || path.join(DIR, 'ai_truth.tsv');
+	const turnsRoot = process.argv[4] || path.join(DIR, 'turns');
+	const flags = {checkBadMove: true, semiSmart: true, checkGoodMove: true};
+	// Index every archived observation by turn number.
+	const byTurn = {};
+	const walk = d => {
+		let ents = [];
+		try { ents = fs.readdirSync(d, {withFileTypes: true}); } catch (e) { return; }
+		for (const e of ents) {
+			const full = path.join(d, e.name);
+			if (e.isDirectory()) { walk(full); continue; }
+			const m = /^turn(\d+)\.json$/.exec(e.name);
+			if (!m) continue;
+			(byTurn[Number(m[1])] = byTurn[Number(m[1])] || []).push(full);
+		}
+	};
+	walk(turnsRoot);
+	const gaps = {}, perMon = {};
+	let rows = 0, paired = 0, exact = 0, argmaxOK = 0;
+	for (const line of fs.readFileSync(truthFile, 'utf8').split('\n')) {
+		if (!line.trim()) continue;
+		const f = line.split('\t');
+		if (f.length < 9) continue;
+		rows++;
+		const turn = Number(f[0]), themHP = Number(f[2]), usHP = Number(f[4]);
+		const tScores = f[5].split(',').map(Number);
+		let obs = null;
+		for (const cand of (byTurn[turn] || [])) {
+			let d;
+			try { d = JSON.parse(fs.readFileSync(cand, 'utf8')); } catch (e) { continue; }
+			const o = d.obs;
+			if (o && o.me && o.foe && o.me.hp === usHP && o.foe.hp === themHP) { obs = o; break; }
+		}
+		if (!obs) continue;
+		const st = buildState(obs);
+		if (!st) continue;
+		const foeMon = st.foe.team[st.foe.active];
+		if (!foeMon || foeMon.fainted) continue;
+		if (obs.turnsOut !== undefined && st.me.team[st.me.active]) {
+			st.me.team[st.me.active].turnsOut = obs.turnsOut;
+			st.me.team[st.me.active].volatiles.justEntered = (obs.turnsOut || 0) === 0;
+		}
+		if (obs.foeTurnsOut !== undefined && foeMon) foeMon.turnsOut = obs.foeTurnsOut;
+		let scored;
+		try { scored = RRAI.scoreAll(st, 'foe', flags, {}); }
+		catch (e) { continue; }
+		paired++;
+		const bySlot = {};
+		scored.forEach(e2 => {
+			if (e2.action.type !== 'move') return;
+			if (bySlot[e2.action.index] === undefined) bySlot[e2.action.index] = e2;
+		});
+		const sp = foeMon.set.species;
+		const row = (perMon[sp] = perMon[sp] || {n: 0, exact: 0, slots: 0, hit: 0});
+		row.n++;
+		let allEq = true;
+		for (let i = 0; i < 4; i++) {
+			if (tScores[i] === 0 || !bySlot[i]) continue;   // 0 = unusable upstream
+			row.slots++;
+			const gap = bySlot[i].score - tScores[i];
+			if (gap === 0) { row.hit++; continue; }
+			allEq = false;
+			const mv = foeMon.set.moves[i] || ('slot' + i);
+			const k = sp + ' ' + mv + ' ' + (gap > 0 ? '+' : '') + gap;
+			gaps[k] = (gaps[k] || 0) + 1;
+			if (process.env.RR_LIVE_DETAIL === mv && gaps[k] <= 2) {
+				console.log('--- ' + k + '  turn ' + turn + '  truth ' + tScores.join(',')
+					+ '  we ' + st.me.team[st.me.active].set.species + ' ' + usHP
+					+ '  foe ' + sp + ' ' + themHP);
+				console.log('    ours: ' + bySlot[i].score + ' ' + JSON.stringify(bySlot[i].reasons));
+			}
+		}
+		if (allEq) { exact++; row.exact++; }
+		let bt = -Infinity, bo = -Infinity;
+		tScores.forEach(v => { if (v > bt) bt = v; });
+		Object.keys(bySlot).forEach(i => { if (bySlot[i].score > bo) bo = bySlot[i].score; });
+		const tSet = tScores.map((v, i) => v === bt ? i : -1).filter(i => i >= 0);
+		const oSet = Object.keys(bySlot).filter(i => bySlot[i].score === bo).map(Number);
+		if (tSet.length === oSet.length && tSet.every(i => oSet.indexOf(i) >= 0)) argmaxOK++;
+	}
+	console.log('truth rows ' + rows + ', paired to an archived position ' + paired);
+	if (!paired) { console.log('nothing paired -- is the turn archive present?'); process.exit(0); }
+	console.log('all-four-exact ' + exact + ' (' + Math.round(100 * exact / paired)
+		+ '%)   identical-argmax-set ' + argmaxOK + ' (' + Math.round(100 * argmaxOK / paired) + '%)');
+	console.log('\nper-mon (exact turns / per-slot agreement):');
+	Object.keys(perMon).sort().forEach(sp => {
+		const r = perMon[sp];
+		console.log('  ' + sp.padEnd(16) + ' turns ' + String(r.n).padStart(4)
+			+ '  exact ' + String(Math.round(100 * r.exact / r.n)).padStart(3) + '%'
+			+ '  slots ' + String(Math.round(100 * r.hit / Math.max(1, r.slots))).padStart(3) + '%');
+	});
+	console.log('\nper-move gaps (ours minus truth):');
+	Object.keys(gaps).sort((a, b) => gaps[b] - gaps[a]).slice(0, 18)
+		.forEach(k => console.log('  x' + String(gaps[k]).padStart(4) + '  ' + k));
+	process.exit(0);
+}
+
 // SCORE-BY-SCORE GRADING. `--score-diff <dir>` walks cases synthesized from
 // the EWRAM dumps -- each carries the full position AND the AI's true four
 // scores read from the thinking struct -- computes our four scores for the

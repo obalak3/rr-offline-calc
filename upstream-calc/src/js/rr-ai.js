@@ -502,7 +502,12 @@ var RRAI = (function () {
 					else if (pivotVerdict === PIVOT.GO) {
 						good(pivotViability(fightClass(self)), "pivots out profitably");
 					}
-					if (kills && first && accurate) good(9, "KOs and moves first");
+					// Only the best-accuracy / highest-priority killing move
+					// earns this, not every move that happens to kill.
+					if (kills && first && accurate
+						&& bestKOSet(state, key, notes, true).indexOf(action.move) >= 0) {
+						good(9, "KOs and moves first (best of the killing moves)");
+					}
 					else if (kills) good(3, "KOs but is slower");
 					else if (pivotVerdict !== PIVOT.DONT
 						&& isStrongest(state, key, action.move, dontPivotMove(state, key, flags, action.move))) good(3, "strongest move");
@@ -718,6 +723,59 @@ var RRAI = (function () {
 			? RRBattle.turnOrder(state, action, reference)
 			: RRBattle.turnOrder(state, reference, action);
 		return order ? order[0] === key : false;   // a speed tie is not "first"
+	}
+
+	/**
+	 * MoveKnocksOutPossiblyGoesFirstWithBestAccuracy, ai_util.c -- singles
+	 * subset, transcribed.
+	 *
+	 * The KO bonus does NOT go to every move that kills. Upstream builds a
+	 * SET: the killing moves with the best accuracy, and among equal accuracy
+	 * a strictly higher priority WIPES the set rather than joining it. Only
+	 * members of that set are worth +9.
+	 *
+	 * Measured against the AI's own score sheet at live turn 1934: our
+	 * Lilligant on 16 HP, every one of Pawmot's four punches kills and every
+	 * one moves first, so the old port awarded +9 four times; the real AI
+	 * awarded it ONCE, to Mach Punch, because its +1 priority wiped the other
+	 * three out of the set. That single mistake was the largest error mass in
+	 * the corrected scoreboard -- 77 rows of "+9" across Pawmot's punches and
+	 * Manectric's Volt Switch.
+	 *
+	 * Memoised on `notes`, which lives for exactly one scoreAll pass over one
+	 * unchanging position.
+	 */
+	function bestKOSet(state, key, notes, requireFirst) {
+		var cacheKey = "_koSet" + key + (requireFirst ? "1" : "0");
+		if (notes[cacheKey]) return notes[cacheKey];
+		var self = RRBattle.active(state[key]);
+		var foe = RRBattle.active(state[RRBattle.other(key)]);
+		var bestAcc = 0, bestPriority = 0, good = [];
+		(self.set.moves || []).forEach(function (mv, i) {
+			var d = RRBattle.moveData(mv);
+			if (!d || d.split === "Status") return;
+			if (self.pp && self.pp[i] === 0) return;          // unusable
+			var r;
+			try { r = RRBattle.damageRolls(state, key, mv); } catch (e) { return; }
+			if (!r || r.immune || !r.noCrit || !r.noCrit.length) return;
+			if (r.noCrit[0] * (r.hits || 1) < foe.curHP) return;   // does not KO
+			var act = {type: "move", index: i, move: mv};
+			if (requireFirst && !movesFirst(state, key, act)) return;
+			var acc = d.accuracy === null ? 100 : d.accuracy;
+			var pri = d.priority || 0;
+			if (!good.length || (acc > bestAcc && bestAcc < 100)) {
+				bestAcc = acc; bestPriority = pri; good = [mv];
+			} else if (acc === bestAcc || acc >= 100) {
+				// A strictly higher priority replaces everything; anything
+				// else joins the set -- upstream adds on the else branch even
+				// when the priority is lower, and that quirk is transcribed
+				// rather than tidied.
+				if (pri > bestPriority) { bestAcc = acc; bestPriority = pri; good = [mv]; }
+				else good.push(mv);
+			}
+		});
+		notes[cacheKey] = good;
+		return good;
 	}
 
 	function isStrongest(state, key, moveName, excludeMove) {
