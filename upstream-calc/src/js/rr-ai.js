@@ -628,7 +628,16 @@ var RRAI = (function () {
 			break;
 		case "heal":
 		case "wish":
-			if (self.curHP === self.maxHP) { bad(10, "already at full HP"); break; }
+			// THE TWO PASSES ARE INDEPENDENT. ai_negatives.c docks a healing
+			// move at high HP (-10 at full, -9 from 90% up) and ai_positives.c
+			// separately pays the class-gated recovery bonus if ShouldRecover
+			// justifies it -- and ShouldRecover asks whether healing averts a
+			// knockout, not whether there is damage to heal, so it can say yes
+			// at full HP. This branch used to `break` after the penalty and
+			// never reach the bonus, scoring a full-health Vikavolt's Roost at
+			// 90 where the AI's own sheet reads 97: minus ten plus seven.
+			if (self.curHP === self.maxHP) bad(10, "already at full HP");
+			else if (self.curHP * 10 >= self.maxHP * 9) bad(9, "barely hurt");
 			// EFFECT_RESTORE_HP, ai_positives.c:652: a justified recovery gets
 			// the class-gated status bonus. Vikavolt is SWEEPER_SETUP_STATUS
 			// (three attacks + Roost), so ShouldRecover makes Roost 4+3=+7 RAW
