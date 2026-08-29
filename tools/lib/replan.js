@@ -646,7 +646,13 @@ function chooseAction(ctx, state, opts) {
 		best = {score: it.here, here: it.here, ahead: 0, cand: it.cand, r: it.r,
 			illegal: it.illegal};
 	}
-	if (!best) return null;
+	if (!best) {
+		console.log('  [no plan: NO BEST. shortlist=' + shortlist.length
+			+ ' ideas=' + ideas.length
+			+ ' playableIdeas=' + ideas.filter(c => c.jobs && c.jobs.length
+				&& !c.jobs.some(j => dead.includes(j.mon))).length + ']');
+		return null;
+	}
 
 	// The first action of the winning path, taken from the same policy code
 	// that would have executed it, so the choice and the pricing cannot drift.
@@ -721,6 +727,16 @@ function chooseAction(ctx, state, opts) {
 		return {action, path, stay,
 			margin: (stay && action.type === 'switch') ? (stay.score - item.here) : null};
 	}
+	// WHY THE PLANNER GAVE UP, said out loud. "no plan found" was reaching the
+	// log with no reason attached, and offline probes of the very turns that
+	// produced it kept finding a perfectly good plan -- so the cause had to be
+	// something the live process carries and a fresh probe does not. Printing
+	// the shape of the failure costs one line on the rare turns it happens and
+	// turns a mystery into a measurement.
+	console.log('  [no plan: shortlist=' + shortlist.length
+		+ ' ranked=' + ranked.length
+		+ ' nullActions=' + ranked.filter(it => !firstAction(it)).length
+		+ ' ideas=' + ideas.length + ']');
 	return null;
 }
 

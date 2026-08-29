@@ -1377,7 +1377,16 @@ setInterval(() => {
 				const same = (a, b) => a && b && a.type === b.type
 					&& (a.type === 'switch' ? a.index === b.index : a.move === b.move);
 				const mine = oneTurn.all.find(r => same(r.action, chosen));
-				if (mine && mine.mineDead && !mine.foeDead) {
+				// RR_NO_DEATH_VETO turns this override off for A/B measurement.
+				// The veto is an EXTERNAL reflex over an internal market, which
+				// is the pattern James has objected to twice, and it overrules
+				// the planner's deathRisk -- computed against the whole
+				// plausible move set with real crit odds -- using one-turn
+				// scoring, the cruder of the two models. It also predates the
+				// status, boost, terrain and pivot-damage fixes, so the pricing
+				// it distrusts is not the pricing it was written against.
+				if (mine && mine.mineDead && !mine.foeDead
+					&& !process.env.RR_NO_DEATH_VETO) {
 					// It dies this turn and does not take the opponent with it.
 					// A plan is a sequence, so losing the Pokemon it depends on
 					// costs the rest of the plan, not just this turn.
@@ -1389,7 +1398,15 @@ setInterval(() => {
 							+ (alt.action.move || ('switch ' + alt.action.index))
 							+ ' instead]');
 						chosen = alt.action;
-						plannerSaid = null;
+						// THE PLAN STILL EXISTED. Nulling this made the log
+						// print "no plan found", so an override by this veto
+						// was indistinguishable from the planner having
+						// nothing to say -- and that false signal sent hours
+						// of investigation after a planner that was working
+						// fine, with offline probes of the very turns
+						// cheerfully producing the plan the log denied. The
+						// plan is kept and the override is stated instead.
+						plannerSaid = Object.assign({}, pick, {overridden: true});
 					}
 				}
 				d = {best: {action: chosen, foeDead: false, mineDead: false,
@@ -1445,7 +1462,8 @@ setInterval(() => {
 		+ '   [byte ' + byteSays + (d.src.stale ? ' STALE, ignored' : '')
 		+ ' | model ' + modelSays + ']');
 	console.log('  ' + (plannerSaid
-		? 'PLAN: ' + plannerSaid.path.cand.why
+		? (plannerSaid.overridden ? 'PLAN (OVERRIDDEN by the death veto): ' : 'PLAN: ')
+			+ plannerSaid.path.cand.why
 			+ '   [this kill ' + plannerSaid.path.here.toFixed(2)
 			+ ', rest of the fight ' + plannerSaid.path.ahead.toFixed(2) + ']'
 		: 'no plan found, falling back to one-turn scoring'));
