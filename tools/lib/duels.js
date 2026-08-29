@@ -271,6 +271,7 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
 	if (cond.asleep) { foe.status = 'slp'; foe.sleepTurns = cond.asleep === true ? 2 : cond.asleep; }
 	if (cond.foeChip) foe.curHP = Math.max(1, Math.round(foe.maxHP * (1 - cond.foeChip)));
 	if (cond.hpFrac !== undefined) me.curHP = Math.max(1, Math.round(me.maxHP * cond.hpFrac));
+	if (cond.ourStatus) me.status = cond.ourStatus;
 	if (cond.ourBoosts) Object.assign(me.boosts, cond.ourBoosts);
 
 	const lines = [];

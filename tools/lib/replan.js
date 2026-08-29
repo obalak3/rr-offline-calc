@@ -23,7 +23,7 @@
 'use strict';
 const C = require('./candidates.js');
 const P = require('./policy.js');
-const {pricePath, survivesEntry} = require('./paths.js');
+const {pricePath} = require('./paths.js');
 
 /**
  * The price of a turn, DERIVED FROM THE POSITION instead of tuned.
@@ -68,6 +68,43 @@ function turnRate(engine, state, foeIdx) {
 		if (frac > worst) worst = frac;
 	}
 	return worst;
+}
+
+/**
+ * THE MARKET IS NEVER EMPTY. A legal action always exists, and pricing one is
+ * exactly what pricePath does, so "no plan found" should be impossible.
+ *
+ * Generation can now honestly return NOTHING -- once it reads the real
+ * position, a 13 HP Breloom and a 3 HP Victreebel facing a full-health
+ * Manectric produce no killing line, because there is none. The old full-HP
+ * fiction always invented one. Returning null there dropped the turn into
+ * one-turn greedy scoring, which has no notion of a turn costing anything and
+ * is where the switch spam has always lived.
+ *
+ * So when generation is silent, every legal action becomes a one-line
+ * candidate and goes through the same pricer as everything else. The position
+ * may be lost; the decision is still measured rather than guessed.
+ */
+function bareCandidates(engine, state) {
+	const B = engine.B;
+	const active = state.me.team[state.me.active];
+	const out = [];
+	const seen = {};
+	B.legalActions(state, 'me').forEach(a => {
+		if (a.type === 'move') {
+			if (!active || active.fainted || seen['m' + a.move]) return;
+			seen['m' + a.move] = true;
+			out.push({jobs: [{mon: active.set.species, moves: [a.move]}],
+				why: 'nothing kills it: ' + a.move, score: 9});
+		} else if (a.type === 'switch') {
+			const t = state.me.team[a.index];
+			if (!t || t.fainted || seen['s' + a.index]) return;
+			seen['s' + a.index] = true;
+			out.push({jobs: [{mon: t.set.species, moves: ['*']}],
+				why: 'nothing kills it: bring in ' + t.set.species, score: 9});
+		}
+	});
+	return out;
 }
 
 function chooseAction(ctx, state, opts) {
@@ -348,12 +385,37 @@ function chooseAction(ctx, state, opts) {
 	let best = null;
 	const shortlist = [];
 	const foeMon = state.foe.team[fi];
-	const ideas = cachedCandidates(fi, field,
-		foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined);
+	// THE PRIMARY MARKET IS GENERATED FROM THE REAL POSITION -- exact foe HP,
+	// our actual party HP and statuses -- not from the cache's fiction of a
+	// full-health team and a foe rounded to tenths. Which lines EXIST was
+	// being decided in that fiction: a 3 HP Lanturn still offered to chip, a
+	// line present at foe-bucket 5 vanished at bucket 4 one turn later, and
+	// the market's membership flickered with the rounding, which is the churn
+	// James kept catching. The bucketed cache stays for the LOOKAHEAD, where
+	// hundreds of speculative future positions make coarseness the right
+	// trade; the one market whose winner gets PLAYED sees the world as it is.
+	const ourHp = {}, ourStatus = {};
+	state.me.team.forEach(m => {
+		ourHp[m.set.species] = m.fainted ? 0 : m.curHP / m.maxHP;
+		if (m.status && !m.fainted) ourStatus[m.set.species] = m.status;
+	});
+	let ideas = C.candidatesFor(ctx, fi, {field,
+		foeHp: foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined,
+		ourHp, ourStatus});
+	// Generation signals defeat with a SENTINEL candidate carrying zero jobs
+	// ("NO KILL AVAILABLE against X"), so the list is length 1 rather than
+	// empty. Test for a PLAYABLE idea, not for a non-empty list.
+	if (!ideas.some(c => c.jobs && c.jobs.length)) {
+		ideas = ideas.concat(bareCandidates(engine, state));
+	}
 	const drops = process.env.RR_EXPLAIN ? {} : null;
 	const drop = (why) => { if (drops) drops[why] = (drops[why] || 0) + 1; };
+	if (drops && process.env.RR_EXPLAIN_IDEAS) {
+		ideas.forEach(c => console.log('[explain] idea: jobs=' + c.jobs.length
+			+ ' | ' + c.why + ' | ' + JSON.stringify(c.jobs)));
+	}
 	for (const cand of ideas) {
-		if (!cand.jobs.length) continue;
+		if (!cand.jobs.length) { drop('empty jobs'); continue; }
 		// ANY dead leg disqualifies the candidate, not just all of them. The
 		// executor skips dead legs, so "Lanturn absorbs, then Victreebel
 		// kills" with Lanturn dead silently becomes "switch to Victreebel" --
@@ -472,10 +534,20 @@ function chooseAction(ctx, state, opts) {
 	// its parts, plus the simulated line, so a bad decision can be read
 	// instead of guessed at.
 	if (process.env.RR_EXPLAIN) {
-		if (drops) console.log('[explain] dropped: ' + JSON.stringify(drops));
+		if (drops) console.log('[explain] dropped: ' + JSON.stringify(drops)
+			+ ' ideas=' + ideas.length + ' shortlist=' + shortlist.length
+			+ ' best=' + (best ? 'yes' : 'no'));
 		console.log('[explain] turn price ' + TEMPO.toFixed(2)
 			+ (process.env.RR_DERIVED_TEMPO ? ' (derived from position)' : ' (fixed)'));
-		shortlist.slice(0, Math.max(FINALISTS, 8)).forEach((item, i) => {
+		// RR_EXPLAIN_N raises the printed depth; RR_EXPLAIN_GREP filters to
+		// candidates whose description contains a substring, which is how you
+		// ask "was this line even in the market, and what did it price at?"
+		const grep = process.env.RR_EXPLAIN_GREP;
+		const depth = grep ? shortlist.length
+			: Math.max(FINALISTS, Number(process.env.RR_EXPLAIN_N) || 8);
+		shortlist.slice(0, depth)
+			.filter(it => !grep || (it.cand.why || '').includes(grep))
+			.forEach((item, i) => {
 			const r = item.r;
 			let sp = 0;
 			for (const k in r.spend) sp += Math.max(0, r.spend[k]);
@@ -578,29 +650,35 @@ function chooseAction(ctx, state, opts) {
 	// check used to live in agent.js as an external veto; James's standard is
 	// that this stuff is internal to the AI, and internal means here: the
 	// planner walks its shortlist in score order and returns the best line
-	// whose first action is not a death on arrival.
-	// A REPLACEMENT IS NOT A SWITCH. When our active has fainted, the only
-	// legal actions are switches and the incoming Pokemon takes NO hit -- the
+	// A REPLACEMENT IS NOT A SWITCH -- kept as history because it cost a
+	// whole collapse to learn. When our active has fainted the only legal
+	// actions are switches and the incoming Pokemon takes NO hit: the
 	// opponent already moved this turn, which is what killed the last one.
-	// Applying the death-on-arrival veto here vetoed EVERYTHING: live at turn
-	// 145, Diggersby dead in front of a Vikavolt on 20 HP, the planner held
-	// five killing lines ("Mienshao Drain Punch kills it, 0% death") and threw
-	// away all of them because Mienshao would supposedly die walking in. It
-	// returned nothing, the turn fell through to one-turn greedy scoring, and
-	// greedy fed Lilligant and then Breloom into the fight one at a time.
-	// Three of the four planless turns in that collapse were replacements.
-	const replacing = !!(state.me.team[state.me.active]
-		&& state.me.team[state.me.active].fainted);
-	const theirsNow = replacing ? null : predictFoe(engine, state);
+	// The death-on-arrival veto used to fire here anyway and vetoed
+	// EVERYTHING, live at turn 145 throwing away five killing lines and
+	// dropping the turn into greedy one-turn scoring, which fed Lilligant
+	// and then Breloom in one at a time. The veto is gone entirely now, so
+	// the replacement case needs no special pleading.
 	const firstAction = item => {
 		const plan = {};
 		plan[state.foe.team[fi].set.species] = item.cand.jobs;
 		return P.planAction(engine, state, plan, P.newProgress());
 	};
-	const ranked = shortlist.slice().sort((a, b) => a.here - b.here);
+	// THE FALLBACK ORDER IS THE SAME YARDSTICK THAT PICKED THE WINNER. This
+	// list used to be sorted by `here` alone -- the immediate cost -- while
+	// `best` was chosen on `here + ahead`. So the moment the winner could not
+	// be played, the turn was handed to a list ranked by a criterion the
+	// planner had already rejected, and the lookahead silently stopped
+	// mattering. Finalists carry `ahead`; nothing else was ever judged on the
+	// full criterion, so the judged lines come first, in total order, and the
+	// unjudged follow by immediate cost.
+	const totalOf = it => it.here + (it.ahead === undefined ? 0 : it.ahead);
+	const judged = shortlist.filter(x => x.ahead !== undefined)
+		.sort((a, b) => totalOf(a) - totalOf(b));
+	const unjudged = shortlist.filter(x => x.ahead === undefined)
+		.sort((a, b) => a.here - b.here);
+	const ranked = judged.concat(unjudged);
 	if (best && !ranked.some(x => x.cand === best.cand)) ranked.unshift(best);
-	else if (best) ranked.splice(ranked.findIndex(x => x.cand === best.cand), 1),
-		ranked.unshift(best);
 	// WHAT WOULD STAYING HAVE COST? A switch hands the opponent a free move, so
 	// one taken for a hair's advantage is a needless switch -- and needless
 	// switches, not the deliberate absorb pivot, are what make the agent look
@@ -611,11 +689,23 @@ function chooseAction(ctx, state, opts) {
 		const a = firstAction(item);
 		if (a && a.type !== 'switch') { stay = {score: item.here, why: item.cand.why}; break; }
 	}
+	// NO SECOND VETO AT THE DOOR. This walk used to skip any line whose first
+	// action was a switch the incoming Pokemon would not survive -- a reflex
+	// that made sense when pricePath REFUSED lethal entries internally and so
+	// never priced one. Now every entry is charged the worst plausible move
+	// and a death on arrival is priced AS a death, which is strictly more
+	// pessimistic than this check ever was. Keeping both meant the market
+	// could weigh a deliberate sacrifice, choose it knowing the cost, and
+	// then have it thrown out at the door for being what it is: live at turn
+	// 2035 the winner was "sacrifice the 7 HP Lilligant, then Mienshao kills
+	// Pawmot" (total 14.23, only the permitted death) and the veto skipped it
+	// in favour of a line whose own simulation kills Mienshao and leaves
+	// Pawmot standing (total 45.72, death risk 1.00). The market is the
+	// authority; a line it cannot express an action for is the only reason to
+	// move on.
 	for (const item of ranked) {
 		const action = firstAction(item);
 		if (!action) continue;
-		if (action.type === 'switch'
-			&& !survivesEntry(engine.B, state, action.index, theirsNow)) continue;
 		const path = item === best ? best
 			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
 				r: item.r, illegal: item.illegal};
@@ -623,18 +713,6 @@ function chooseAction(ctx, state, opts) {
 			margin: (stay && action.type === 'switch') ? (stay.score - item.here) : null};
 	}
 	return null;
-}
-
-/** Their argmax action from this position, for the entry-survival check. */
-function predictFoe(engine, state) {
-	try {
-		const sc = engine.sandbox.RRAI.scoreAll(state, 'foe',
-			{checkBadMove: true, checkGoodMove: true}, {});
-		if (!sc.length) return null;
-		let bs = -Infinity;
-		sc.forEach(e => { if (e.score > bs) bs = e.score; });
-		return sc.find(e => e.score === bs).action;
-	} catch (e) { return null; }
 }
 
 module.exports = {chooseAction};

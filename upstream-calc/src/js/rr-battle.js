@@ -1046,7 +1046,19 @@ var RRBattle = (function () {
 			if (index >= 0) {
 				side.active = index;
 				side.team[index].turnsOut = 0;
-				side.team[index].volatiles.enteredThisTurn = true;
+				// NO enteredThisTurn here, deliberately. That flag defers the
+				// end-of-turn turnsOut increment, and it is calibrated for
+				// VOLUNTARY switches, which happen at the top of a turn and
+				// have their flag consumed by the same turn's end tick. A
+				// faint replacement enters DURING end-of-turn, after the
+				// tick, so the flag survived a full extra turn -- turnsOut
+				// stayed 0 twice, and priced lines had a returning Mienshao
+				// FAKE OUT TWICE IN A ROW, flinch-locking Pawmot from 35 to 0
+				// for free. Every sacrifice looked profitable with that
+				// fantasy tail attached, which is what kept feeding bodies to
+				// Pawmot. Without the flag: enter at 0, first action next
+				// turn has Fake Out legal, that turn's end ticks it to 1,
+				// second use refused -- the real game's sequence.
 				side.switchCooldown = 1;
 				applyHazards(state, key);
 				applyEntryAbility(state, key);

@@ -230,6 +230,24 @@ function candidatesFor(ctx, fi, options) {
 	const foe = foeSets[fi];
 	const out = [];
 	const seen = {};
+	// THE DUELLIST'S REAL CONDITION. Generation measured every duel with our
+	// whole party at FULL HP, so whether a line EXISTS was decided in a
+	// fiction: a Lanturn at 3 HP still offered to chip, a Mienshao at 70
+	// offered duels only its 98 HP self survives, and market membership
+	// flickered between turns as nothing but the fiction's rounding moved.
+	// Pricing was made honest long ago; existence was not. opts.ourHp and
+	// opts.ourStatus carry the live position; a fainted or empty mon simply
+	// generates nothing.
+	const duelCond = (mi, extra) => {
+		const sp = party[mi].species;
+		const c = Object.assign({}, fieldCond(opts.field, opts.foeHp), extra || {});
+		if (opts.ourHp && opts.ourHp[sp] !== undefined) {
+			if (opts.ourHp[sp] <= 0) return null;
+			c.hpFrac = opts.ourHp[sp];
+		}
+		if (opts.ourStatus && opts.ourStatus[sp]) c.ourStatus = opts.ourStatus[sp];
+		return c;
+	};
 	// `score` only decides which candidates are worth SIMULATING. It is never
 	// the answer: costs are not additive, because they depend on the entry
 	// state, which is the whole reason plans get measured rather than added up.
@@ -245,7 +263,9 @@ function candidatesFor(ctx, fi, options) {
 	// 1. Who kills it with no help at all.
 	const solo = {};
 	party.forEach((p, mi) => {
-		const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field, opts.foeHp), {})
+		const condS = duelCond(mi);
+		if (!condS) return;
+		const line = D.duelLines(engine, party, foeSets, mi, fi, condS, {})
 			.find(l => l.outcome === 'kill');
 		if (!line) return;
 		solo[mi] = true;
@@ -266,8 +286,9 @@ function candidatesFor(ctx, fi, options) {
 		for (const entry of CONDITIONS) {
 			if (found >= (opts.perKiller || 4)) break;
 			if (!achievable(ctx, entry.cond, foe, opts.field)) continue;
-			const line = D.duelLines(engine, party, foeSets, mi, fi,
-				Object.assign({}, entry.cond, fieldCond(opts.field, opts.foeHp)), {})
+			const condE = duelCond(mi, entry.cond);
+			if (!condE) break;
+			const line = D.duelLines(engine, party, foeSets, mi, fi, condE, {})
 				.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
 			if (!line) continue;
 			found++;
@@ -313,7 +334,9 @@ function candidatesFor(ctx, fi, options) {
 		if (!theirTypes.has(l.absorbs)) return;      // nothing here to absorb
 		party.forEach((p, mi) => {
 			if (p.species === l.mon) return;
-			const line = D.duelLines(engine, party, foeSets, mi, fi, fieldCond(opts.field, opts.foeHp), {})
+			const condA = duelCond(mi);
+			if (!condA) return;
+			const line = D.duelLines(engine, party, foeSets, mi, fi, condA, {})
 				.find(x => x.outcome === 'kill');
 			if (!line) return;
 			push([{mon: l.mon, moves: [], until: {entered: true}},
@@ -359,10 +382,12 @@ function candidatesFor(ctx, fi, options) {
 				(node.acc + already) > 0 ? {foeChip: Math.min(0.99, node.acc + already)} : {});
 			party.forEach((p, mi) => {
 				if (node.used[mi]) return;
+				const condC = duelCond(mi, entryCond);
+				if (!condC) return;
 				// Can this one FINISH the remaining fraction? Only meaningful
 				// once at least one chip leg exists: depth-0 kills are family 1.
 				if (node.legs.length) {
-					const fin = D.duelLines(engine, party, foeSets, mi, fi, entryCond, {})
+					const fin = D.duelLines(engine, party, foeSets, mi, fi, condC, {})
 						.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
 					if (fin) {
 						push(node.legs.concat([{mon: p.species, moves: fin.moves}]),
@@ -378,7 +403,7 @@ function candidatesFor(ctx, fi, options) {
 				if (depth < MAX_CHIP_LEGS) {
 					for (const at of RETREATS) {
 						const chip = D.duelLines(engine, party, foeSets, mi, fi,
-							entryCond, {retreatAt: at})
+							condC, {retreatAt: at})
 							.filter(l => l.outcome === 'retreat' || l.outcome === 'left')
 							.sort((a, b) => b.chip - a.chip)[0];
 						if (!chip || chip.chip < CHIP_MIN) continue;
