@@ -35,6 +35,15 @@ local PARTY         = 0x02024284
 local AI_TARGET     = 0x02000091   -- move slot, or destination party index
 local AI_ACTION     = 0x0200005B   -- 1 switch, 0 move
 local RNG           = 0x020386D0
+-- TERRAIN TIMER, found by signature scan over 831 EWRAM dumps: exactly one
+-- byte in the whole address space counts down once per turn through the 0..8
+-- band and resets (5 for a plain terrain, 7-8 with Terrain Extender). Nothing
+-- read the field before this, so every state the planner built inherited
+-- Electric Terrain from Pincurchin's Electric Surge at roster index 0 and
+-- NEVER let it expire -- inflating every Electric move by 1.3x for the whole
+-- fight and blocking Sleep Powder on grounded targets, which is a path James
+-- says he has taken on file.
+local TERRAIN_TIMER = 0x020179BC
 
 local S_ACTION, S_MOVES, S_PARTY, S_BUSY = 0x0802E439, 0x0802EA11, 0x08030685, 0x0802E3B5
 
@@ -369,10 +378,10 @@ local function writeState(kind)
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
-		.. '"ai_action":%d,"ai_target":%d,'
+		.. '"ai_action":%d,"ai_target":%d,"terrainTurns":%d,'
 		.. '"me":%s,"foe":%s,"party":[%s],"foeparty":[%s]}\n',
 		turn, kind, screen(), emu:read32(RNG),
-		emu:read8(AI_ACTION), emu:read8(AI_TARGET),
+		emu:read8(AI_ACTION), emu:read8(AI_TARGET), emu:read8(TERRAIN_TIMER),
 		battler(MON), battler(MON + SIZE), party(), foeParty()))
 	f:close()
 	os.remove(DIR .. "cmd.json")

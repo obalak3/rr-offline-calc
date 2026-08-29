@@ -359,6 +359,20 @@ function buildState(obs) {
 		m.status = statusOf(row.status);
 	});
 	st.me.active = activeIndex;
+	// THE FIELD IS READ, NOT INHERITED. createState fires the entry ability of
+	// whoever sits at roster index 0, and for Surge that is Pincurchin with
+	// Electric Surge -- so every state the planner has ever built carried
+	// Electric Terrain, at a full 8 turns, for the entire fight, long after
+	// the real terrain expired and even after Pincurchin was dead. Two
+	// consequences, both bad and both invisible: every Electric move (this
+	// whole team is Electric) was priced 1.3x too strong, and Sleep Powder was
+	// treated as failing against grounded targets, which is the path James
+	// says he has taken on file. The timer is now read from RAM; when it is
+	// zero the terrain is cleared outright.
+	if (obs.terrainTurns !== undefined) {
+		st.field.terrainTurns = obs.terrainTurns;
+		if (!obs.terrainTurns) st.field.terrain = null;
+	}
 
 	// HOW LONG EACH SIDE HAS BEEN OUT, which nothing was telling the engine.
 	// B.createState sets turnsOut to 0 for every member, and the live agent
@@ -763,6 +777,9 @@ if (process.argv[2] === '--probe') {
 		(i === st.foe.active ? '>' : ' ') + i + ':' + m.set.species
 		+ (m.fainted ? '(X)' : ' ' + m.curHP + '/' + m.maxHP)).join('  '));
 	console.log('legal actions: ' + JSON.stringify(B.legalActions(st, 'me')));
+	console.log('FIELD: terrain=' + (st.field.terrain || 'none')
+		+ ' turns=' + (st.field.terrainTurns || 0)
+		+ '  weather=' + (st.field.weather || 'none'));
 	// Trip the staleness detector the way a running session does, so the probe
 	// exercises the MODEL path and not just the byte path.
 	let d = decide(st, obs);
