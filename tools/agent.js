@@ -832,7 +832,19 @@ if (process.argv[2] === '--probe') {
 		.forEach(k => console.log('   ' + String(tally[k]).padStart(3) + '  ' + k));
 	const R2 = require('./lib/replan.js');
 	let pick = null;
-	try { pick = R2.chooseAction(pctx, st, {}); } catch (e) { console.log('chooseAction THREW: ' + e.message); }
+	// RR_PROBE_PREV=<previous turn json> reproduces the live call, which passes
+	// last turn's plan as the incumbent. Without it a probe judges every
+	// position as though the agent had never had a plan before -- which is
+	// exactly the thing under investigation, so it has to be reproducible.
+	let probeOpts = {};
+	if (process.env.RR_PROBE_PREV) {
+		try {
+			const prev = readJSONSync(process.env.RR_PROBE_PREV);
+			if (prev && prev.planJobs) probeOpts.incumbent = prev.planJobs;
+		} catch (e) { /* no incumbent, as before */ }
+	}
+	if (process.env.RR_PROBE_STICK) probeOpts.stick = Number(process.env.RR_PROBE_STICK);
+	try { pick = R2.chooseAction(pctx, st, probeOpts); } catch (e) { console.log('chooseAction THREW: ' + e.message); }
 	console.log('chooseAction -> ' + (pick
 		? JSON.stringify(pick.action) + '   ' + pick.path.cand.why
 		: 'NULL  (this is what prints "no plan found")'));
