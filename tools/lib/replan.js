@@ -576,6 +576,15 @@ function chooseAction(ctx, state, opts) {
 	// fallback. A line that only chips is still a line, and pricing it here
 	// means it is charged for its turns like everything else.
 	if (!shortlist.length) {
+		// NOTHING SURVIVED THE FILTERS, which is not the same as nothing
+		// having been generated -- the guard above only covers an empty
+		// market. Ideas whose every leg was unusable leave the shortlist
+		// empty just as surely, so the last-resort actions are appended here
+		// too, before the no-kill pricing runs over them.
+		if (!ideas.some(c => c.jobs && c.jobs.length
+			&& !c.jobs.some(j => dead.includes(j.mon)))) {
+			ideas = ideas.concat(bareCandidates(engine, state));
+		}
 		for (const cand of ideas) {
 			if (!cand.jobs.length) continue;
 			// ANY dead leg disqualifies the candidate, not just all of them. The

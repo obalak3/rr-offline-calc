@@ -253,6 +253,16 @@ function candidatesFor(ctx, fi, options) {
 	// state, which is the whole reason plans get measured rather than added up.
 	const push = (jobs, why, score) => {
 		if (!jobs.length) return;
+		// A PLAN MAY NOT NAME A CORPSE. duelCond keeps dead Pokemon from being
+		// DUELLISTS, but the enabler legs come from the party-wide lever table
+		// (leversFor, cached across the whole fight) which has no idea who is
+		// still standing. Live at turn 157 that produced six candidates, every
+		// one of them opening with Mienshao, Diggersby or Victreebel -- all
+		// three already fainted -- so all six were dropped as dead legs, the
+		// market came up empty and the turn fell through to greedy scoring
+		// with a healthy Lilligant and a healthy Vikavolt on the field.
+		if (opts.ourHp && jobs.some(j =>
+			opts.ourHp[j.mon] !== undefined && opts.ourHp[j.mon] <= 0)) return;
 		const key = jobs.map(j => j.mon + ':' + (j.moves || []).join('>')
 			+ ':' + JSON.stringify(j.until || null)).join('|');
 		if (seen[key]) return;
