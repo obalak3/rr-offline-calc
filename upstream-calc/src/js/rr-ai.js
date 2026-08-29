@@ -470,7 +470,33 @@ var RRAI = (function () {
 		if (data.split !== "Status") {
 			var rolls = RRBattle.damageRolls(state, key, action.move);
 			if (!rolls || rolls.immune) {
-				bad(20, "target is immune");
+				// TWO DIFFERENT PENALTIES, and we were charging the bigger one
+				// for both. A damaging move the target simply does not take --
+				// Electric into a Ground type -- is DECREASE_VIABILITY(15) at
+				// AI_STANDARD_DAMAGE in ai_negatives.c. The 20 belongs only to
+				// an ABSORB ABILITY (Volt Absorb and friends), which upstream
+				// also returns on immediately. Confirmed against the AI's own
+				// sheet: Manectric's Charge Beam into Diggersby reads 85, which
+				// is 100 minus 15, and its Volt Switch in the same position
+				// reads 76, which is 100 minus 15 minus the 9 for a pivot that
+				// is a bad idea -- both exact once the values are separated.
+				var absorbAb = ABSORB[foe.set.ability];
+				if (absorbAb && data && absorbAb === data.type) {
+					bad(20, foe.set.ability + " absorbs " + data.type);
+				} else {
+					bad(15, "no effect on this target");
+				}
+				// AND THE PIVOT VERDICT STILL APPLIES. Immunity is scored by
+				// the negatives pass; pivoting is scored by the positives
+				// pass; they are independent, and this branch was skipping the
+				// second one entirely. Manectric's Volt Switch into a Ground
+				// type reads 76 on the AI's sheet -- 100 minus 15 for no
+				// effect minus 9 for a pivot that is a bad idea -- and we were
+				// stopping at 85.
+				if (flags[GOOD] && effect.kind === "selfSwitch"
+					&& shouldPivot(state, key, action.move, fightClass(self)) === PIVOT.DONT) {
+					bad(9, "pivoting is a bad idea here");
+				}
 			} else {
 				var absorbed = ABSORB[foe.set.ability];
 				if (absorbed && absorbed === data.type) {
