@@ -49,6 +49,7 @@ function status() {
 	try { beat = Math.round((Date.now() - fs.statSync(HEARTBEAT).mtimeMs) / 1000); }
 	catch (e) { beat = null; }
 	return {
+		line: readJSON(path.join(DIR, 'line_result.json')),
 		paused: fs.existsSync(PAUSE),
 		// The emulator writes a heartbeat every frame it is alive. Anything
 		// beyond a few seconds means the Lua side is not running, which is
@@ -83,12 +84,30 @@ const PAGE = `<!doctype html><meta charset="utf-8">
  .cost{color:var(--dim);font-size:13px}
  .ask{border-color:var(--warn)}
  .quiet{color:var(--dim);font-size:13px;margin-top:16px}
+ input{width:100%;box-sizing:border-box;font:inherit;margin-top:10px;padding:12px 14px;
+       border-radius:9px;border:1px solid var(--line);background:#0e1016;color:var(--fg)}
+ input:focus{outline:0;border-color:var(--ok)}
+ .verdict{margin-top:12px;padding:12px 14px;border-radius:9px;background:#0e1016;
+          border-left:3px solid var(--line);font-size:13.5px;line-height:1.6}
+ .verdict.good{border-left-color:var(--ok)}
+ .verdict.bad{border-left-color:var(--warn)}
 </style>
 <h1>RADICAL RED — AGENT CONTROL</h1>
 <div id=btn></div>
 <div class=row><span>turn</span><b id=turn>–</b><span>us</span><b id=us>–</b>
   <span>them</span><b id=them>–</b><span>emulator</span><b id=beat>–</b></div>
 <div id=ask></div>
+<div class=card>
+  <b>Your line</b>
+  <div class=cost>Say it the way you would out loud: <i>lilligant sleep powder
+    then diggersby bulldoze</i>, <i>lanturn, mienshao</i>, <i>switch to lanturn</i>.
+    Add <i>x3</i> to repeat a move. It is priced by the same code that prices the
+    planner's own lines, so it can simply win; if it loses you get the number
+    that says why. Empty the box and submit to drop it.</div>
+  <form id=lineform><input id=linebox placeholder="lilligant sleep powder then diggersby bulldoze"
+    autocomplete=off spellcheck=false></form>
+  <div id=lineout></div>
+</div>
 <div class=quiet>Stopping takes effect on the next decision, with the emulator
   left on a clean menu rather than mid-press. Close this tab and the agent stops
   asking and plays on by itself.</div>
@@ -109,6 +128,23 @@ function render(s){
     s.aliveSeconds===null ? 'not running' : (s.aliveSeconds<5?'live':(s.aliveSeconds+'s ago'));
   const key = JSON.stringify(s.ask);
   if (key !== last) { last = key; drawAsk(s.ask); }
+  drawLine(s.line);
+}
+function drawLine(l){
+  const el = document.getElementById('lineout');
+  if (!l) { el.innerHTML = ''; return; }
+  if (l.error) {
+    el.innerHTML = '<div class="verdict bad">' + esc(l.error) + '</div>';
+    return;
+  }
+  const v = l.verdict || {};
+  // The three answers worth telling apart at a glance: it won, it is cheaper
+  // and lost anyway (a defect), or the planner genuinely disagrees on value.
+  const cls = v.won ? 'good'
+    : (v.priced && l.winner && v.total < l.winner.total ? 'bad' : '');
+  el.innerHTML = '<div class="verdict ' + cls + '">'
+    + '<div class=cost>read as: ' + esc(l.reading || '') + ' — vs ' + esc(l.foe || '') + '</div>'
+    + esc(l.summary || '').replace(/\\n/g, '<br>') + '</div>';
 }
 function drawAsk(a){
   const el = document.getElementById('ask');
@@ -148,6 +184,14 @@ async function choose(i){
 // polls, so a backgrounded tab still means somebody is supervising.
 const es = new EventSource('/events');
 es.onmessage = e => render(JSON.parse(e.data));
+document.getElementById('lineform').onsubmit = async e => {
+  e.preventDefault();
+  const t = document.getElementById('linebox').value;
+  document.getElementById('lineout').innerHTML =
+    '<div class=verdict>pricing it against the live position…</div>';
+  await fetch('/line', {method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({text: t})});
+};
 tick();
 </script>`;
 
@@ -187,6 +231,21 @@ http.createServer((req, res) => {
 	if (req.method === 'POST' && req.url === '/resume') {
 		try { fs.unlinkSync(PAUSE); } catch (e) { /* already running */ }
 		return send(200, '{"ok":true}');
+	}
+	if (req.method === 'POST' && req.url === '/line') {
+		let body = '';
+		req.on('data', d => { body += d; });
+		req.on('end', () => {
+			let text = '';
+			try { text = String(JSON.parse(body).text || ''); } catch (e) { text = ''; }
+			// The agent reads this once and deletes it, then keeps the line for
+			// the rest of the duel. Clearing the old verdict here stops a stale
+			// answer sitting under a new question.
+			try { fs.unlinkSync(path.join(DIR, 'line_result.json')); } catch (e) { /* none */ }
+			fs.writeFileSync(path.join(DIR, 'line.json'), JSON.stringify({text: text}));
+			send(200, '{"ok":true}');
+		});
+		return;
 	}
 	if (req.method === 'POST' && req.url === '/choose') {
 		let body = '';

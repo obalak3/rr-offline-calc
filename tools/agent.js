@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const H = require('./lib/harness.js');
 const R = require('./lib/replan.js');
+const UL = require('./lib/userline.js');
 
 const DIR = path.join(process.env.HOME, 'rr-agent');
 const STATE = path.join(DIR, 'state.json');
@@ -44,6 +45,12 @@ const PAUSE = path.join(DIR, 'pause');
 const ASK = path.join(DIR, 'ask.json');
 const CHOICE = path.join(DIR, 'choice.json');
 const PANEL = path.join(DIR, 'panel.alive');
+// A line typed by hand, the verdict on it, and the append-only record of every
+// line ever asked about. The record is the point as much as the answer is:
+// "why didn't it do that" is only worth asking if the answer survives the turn.
+const LINE = path.join(DIR, 'line.json');
+const LINE_RESULT = path.join(DIR, 'line_result.json');
+const LINES_LOG = path.join(DIR, 'lines.jsonl');
 
 const engine = H.loadEngine();
 const B = engine.B;
@@ -1301,7 +1308,62 @@ function positionKey(obs) {
 // turn quietly takes the no-loss line again, instead of re-proposing the
 // sacrifice that was just refused.
 let pendingAsk = null, standingAnswer = null, pauseShown = false;
+// How long a sacrifice question waits for a person before the agent answers it
+// itself. Long enough to walk back to the desk, short enough that a panel left
+// open on another screen does not silently halt an episode.
+const ASK_TIMEOUT = Number(process.env.RR_ASK_TIMEOUT || 300) * 1000;
 const deathKey = list => list.slice().sort().join(',');
+
+// THE LINE THE HUMAN IS CURRENTLY ASKING ABOUT, held for the duel rather than
+// for the turn. A line like "sleep it, then bring Diggersby in" is a SEQUENCE;
+// evaluating it only on the turn it was typed would price the first leg and
+// never watch the rest happen, which is precisely the part he wants checked.
+// It is dropped when the opponent changes, because a line is advice about an
+// opponent and means nothing against the next one.
+let userLine = null;
+
+/** Say what the market did with his line, in the terms he asked it in. */
+function verdictText(v, winner) {
+	if (!v) return 'no verdict (the planner produced nothing this turn)';
+	const money = n => (n === null || n === undefined) ? '?' : n.toFixed(2);
+	const who = list => list && list.length ? list.join(', ') : 'nobody';
+	if (!v.priced) {
+		return 'YOUR LINE WAS NEVER PRICED -- ' + v.dropped
+			+ (v.already ? ' (it was on the table as "' + v.already + '")'
+				: ' (and the generator never proposed it)');
+	}
+	const lines = [];
+	lines.push('your line: total ' + money(v.total) + ' (this kill ' + money(v.here)
+		+ ' + rest of the fight ' + money(v.ahead) + ')'
+		+ ', ' + (v.kills ? 'kills it' : 'does not kill it (' + v.outcome + ')')
+		+ ' in ' + v.turns + ' turns, loses ' + who(v.dead)
+		+ ', death risk ' + Math.round(100 * (v.deathRisk || 0)) + '%');
+	lines.push('it ranked ' + v.rank + ' of ' + v.ofPriced + ' priced lines'
+		+ (v.already ? ' and was already on the table as "' + v.already + '"'
+			: ' and the generator had NOT proposed it'));
+	if (winner) {
+		lines.push('the planner chose: total ' + money(winner.total)
+			+ ' (' + money(winner.here) + ' + ' + money(winner.ahead) + '), loses '
+			+ who(winner.dead) + ' -- ' + winner.why);
+	}
+	if (v.won) {
+		lines.push('=> YOUR LINE WON. It is being played.');
+	} else if (winner && v.total !== null && v.total < winner.total - 1e-9) {
+		// The interesting failure. Only the cheapest few lines ever get their
+		// lookahead priced, so a line can be cheaper on the full criterion and
+		// still lose because it never entered the round where that criterion is
+		// applied. That is a defect in the cut, not a disagreement about value.
+		lines.push('=> YOUR LINE PRICES CHEAPER by ' + money(winner.total - v.total)
+			+ ' AND STILL LOST'
+			+ (v.judged ? '.' : ' -- it was outside the top ' + (v.ofPriced < 4 ? v.ofPriced : 4)
+				+ ' on immediate cost, so its lookahead was never priced when the'
+				+ ' winner was picked. The cut threw away the better line.'));
+	} else if (winner && v.total !== null) {
+		lines.push('=> the planner prices your line ' + money(v.total - winner.total)
+			+ ' more expensive.');
+	}
+	return lines.join('\n     ');
+}
 
 function clearAsk() {
 	pendingAsk = null;
@@ -1432,19 +1494,38 @@ setInterval(() => {
 	// is exactly why the choice is stored as the concrete action it opens with.
 	let chosenByHand = null;
 	if (pendingAsk) {
-		if (pendingAsk.key !== positionKey(obs)) clearAsk();
+		// A LINE TYPED WHILE THE QUESTION IS OPEN REOPENS THE QUESTION. Being
+		// asked "who should die" is exactly the moment for "why not this
+		// instead", and holding the old options while refusing to read the
+		// answer would be the least useful possible time to stop listening.
+		// The line goes into the market, so it comes back as one of the
+		// options on the next pass.
+		if (fs.existsSync(LINE)) {
+			console.log('  [new line typed; re-opening the question with it priced in]');
+			clearAsk();
+		} else if (pendingAsk.key !== positionKey(obs)) clearAsk();
 		else {
 			const ch = readJSON(CHOICE);
 			if (ch && pendingAsk.options[ch.index]) {
 				chosenByHand = pendingAsk.options[ch.index];
 				standingAnswer = {foe: pendingAsk.foe, accept: deathKey(chosenByHand.dead)};
 				clearAsk();
-			} else if (!panelLive()) {
-				// The tab was closed. Waiting for a person who is not there is
-				// how an overnight run turns into an overnight freeze. Taking
-				// the plan's own answer is the pre-panel behaviour exactly, and
-				// it stands so the run does not stall again on the next turn.
-				console.log('  [panel closed with the question open; playing the plan]');
+			} else if (!panelLive() || Date.now() - pendingAsk.asked > ASK_TIMEOUT) {
+				// Nobody is answering. Either the tab was closed, or it is open
+				// on a screen nobody is looking at -- which is the ordinary
+				// case, since the panel gets left up while its owner does
+				// something else entirely. An open tab is evidence of intent to
+				// supervise, not a promise to be present, and treating it as a
+				// promise turns a forgotten tab into a frozen run.
+				//
+				// Taking the plan's own answer is the pre-panel behaviour
+				// exactly, and it stands so the run does not stall again next
+				// turn. The question is recorded as unanswered either way.
+				console.log('  [' + (panelLive()
+					? 'no answer in ' + Math.round(ASK_TIMEOUT / 1000) + 's'
+					: 'panel closed with the question open')
+					+ '; playing the plan, which loses '
+					+ (deathKey(pendingAsk.options[0].dead) || 'nobody') + ']');
 				standingAnswer = {foe: pendingAsk.foe,
 					accept: deathKey(pendingAsk.options[0].dead)};
 				clearAsk();
@@ -1481,9 +1562,68 @@ setInterval(() => {
 			// The line we were already following, so it can defend itself against
 		// this turn's challengers instead of being re-derived from nothing.
 		const foeNow = st.foe.team[st.foe.active].set.species;
+		// A NEWLY TYPED LINE, read against the team as it actually is so the
+		// error message can name the real moves rather than a guess at them.
+		const typed = readJSON(LINE);
+		if (typed) {
+			try { fs.unlinkSync(LINE); } catch (e) { /* read once */ }
+			const text = String(typed.text || '').trim();
+			if (!text) {
+				userLine = null;
+				try { fs.unlinkSync(LINE_RESULT); } catch (e) { /* nothing to clear */ }
+				console.log('  [line cleared]');
+			} else {
+				const parsed = UL.parseLine(st.me.team, text);
+				if (parsed.error) {
+					userLine = null;
+					fs.writeFileSync(LINE_RESULT, JSON.stringify({text: text,
+						error: parsed.error}));
+					console.log('  [your line could not be read: ' + parsed.error + ']');
+				} else {
+					userLine = {foe: foeNow, text: text, jobs: parsed.jobs,
+						reading: parsed.reading};
+					console.log('  [your line: ' + text + '  ->  priced as: '
+						+ parsed.reading + ']');
+				}
+			}
+		}
+		// A line is advice about an OPPONENT, so it expires with that opponent.
+		if (userLine && userLine.foe !== foeNow) {
+			console.log('  [your line was about ' + userLine.foe + '; ' + foeNow
+				+ ' is out now, so it no longer applies]');
+			userLine = null;
+			try { fs.unlinkSync(LINE_RESULT); } catch (e) { /* nothing to clear */ }
+		}
 		const pick = R.chooseAction(planCtx(obs), st,
 			{incumbent: lastPlan.foe === foeNow ? lastPlan.jobs : null,
-				alternatives: panelLive()});
+				alternatives: panelLive(),
+				userLine: userLine ? userLine.jobs : null});
+		if (userLine && pick) {
+			const w = pick.path ? {
+				total: pick.path.here + (pick.path.ahead || 0),
+				here: pick.path.here, ahead: pick.path.ahead || 0,
+				why: pick.path.cand.why,
+				dead: (pick.path.r && pick.path.r.dead) || []
+			} : null;
+			const text = verdictText(pick.userLine, w);
+			console.log('  [YOUR LINE] ' + text);
+			fs.writeFileSync(LINE_RESULT, JSON.stringify({
+				text: userLine.text, reading: userLine.reading,
+				foe: foeNow, turn: obs.turn, verdict: pick.userLine,
+				winner: w, summary: text
+			}));
+			// APPEND-ONLY, with the position attached. A verdict that only
+			// exists on screen cannot be re-examined later, and the whole
+			// reason for asking is to be able to come back to it.
+			try {
+				fs.appendFileSync(LINES_LOG, JSON.stringify({
+					at: new Date().toISOString(), turn: obs.turn, session: SESSION,
+					text: userLine.text, reading: userLine.reading, jobs: userLine.jobs,
+					us: obs.me.species, usHP: obs.me.hp, foe: foeNow, foeHP: obs.foe.hp,
+					verdict: pick.userLine, winner: w
+				}) + '\n');
+			} catch (e) { /* recording must never break play */ }
+		}
 		if (pick && pick.path && pick.path.cand) {
 			lastPlan = {foe: foeNow, jobs: pick.path.cand.jobs};
 		}
@@ -1609,7 +1749,8 @@ setInterval(() => {
 			// An answer left over from an earlier question would satisfy this
 			// one the instant it is asked, and the human would never see it.
 			try { fs.unlinkSync(CHOICE); } catch (e) { /* nothing stale */ }
-			pendingAsk = {key: positionKey(obs), foe: foeName, options: options};
+			pendingAsk = {key: positionKey(obs), foe: foeName, options: options,
+				asked: Date.now()};
 			fs.writeFileSync(ASK, JSON.stringify({
 				turn: obs.turn,
 				position: speciesName(obs.me.species) + ' (' + obs.me.hp + ') vs '

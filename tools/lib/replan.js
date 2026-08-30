@@ -435,13 +435,47 @@ function chooseAction(ctx, state, opts) {
 	if (!ideas.some(c => c.jobs && c.jobs.length)) {
 		ideas = ideas.concat(bareCandidates(engine, state));
 	}
+
+	// A LINE TYPED BY THE HUMAN COMPETES; IT IS NOT OBEYED.
+	//
+	// James: "When I give a path it doesn't mean it is the best option, it is
+	// either a query or a suggestion that in most cases will be better than the
+	// current options." Both halves of that are served by putting it in the
+	// market rather than in front of it. As a suggestion it can simply win, on
+	// the same yardstick as everything else. As a query it produces the number
+	// that answers "why not this", and separates the two failures that look
+	// identical from outside: a line the generator NEVER PROPOSED is a hole in
+	// generation, while a line proposed and priced above the winner is a
+	// disagreement about value. Those need opposite fixes, and until now
+	// nothing could tell them apart.
+	//
+	// Membership is recorded before the injection, so "was it already on the
+	// table" is answered about the market as it would have been without him.
+	const userCand = options.userLine && options.userLine.length
+		? {jobs: options.userLine, why: 'YOUR LINE', score: 9} : null;
+	let userAlready = null;
+	if (userCand) {
+		const key = JSON.stringify(userCand.jobs);
+		const twin = ideas.find(c => JSON.stringify(c.jobs) === key);
+		userAlready = twin ? (twin.why || 'unnamed') : null;
+		if (!twin) ideas = ideas.concat([userCand]);
+	}
+
 	const drops = process.env.RR_EXPLAIN ? {} : null;
-	const drop = (why) => { if (drops) drops[why] = (drops[why] || 0) + 1; };
+	// Which candidate is being priced right now, so a drop can be attributed.
+	// Every `continue` in the loop below already announces its reason; this
+	// just remembers the one that belongs to the human's line.
+	let current = null, userDrop = null;
+	const drop = (why) => {
+		if (userCand && current === userCand) userDrop = why;
+		if (drops) drops[why] = (drops[why] || 0) + 1;
+	};
 	if (drops && process.env.RR_EXPLAIN_IDEAS) {
 		ideas.forEach(c => console.log('[explain] idea: jobs=' + c.jobs.length
 			+ ' | ' + c.why + ' | ' + JSON.stringify(c.jobs)));
 	}
 	for (const cand of ideas) {
+		current = cand;
 		if (!cand.jobs.length) { drop('empty jobs'); continue; }
 		// ANY dead leg disqualifies the candidate, not just all of them. The
 		// executor skips dead legs, so "Lanturn absorbs, then Victreebel
@@ -557,6 +591,42 @@ function chooseAction(ctx, state, opts) {
 				illegal: item.illegal};
 		}
 	});
+	// THE VERDICT ON THE HUMAN'S LINE, on the same criterion as the winner.
+	//
+	// A line outside the top four never had its lookahead priced, and `here`
+	// alone is the criterion the planner itself rejects -- comparing his line's
+	// immediate cost against the winner's total would flatter one of them for
+	// free. So if it reached the shortlist and was not judged, it is judged now.
+	let userLine = null;
+	if (userCand) {
+		const item = shortlist.find(it => it.cand === userCand
+			|| JSON.stringify(it.cand.jobs) === JSON.stringify(userCand.jobs));
+		if (item && item.ahead === undefined && LOOKAHEAD && item.r.state) {
+			try { item.ahead = continuationCost(item.r.state, item.finished ? fi : -1); }
+			catch (e) { item.ahead = 0; }
+		}
+		userLine = {
+			// null means the generator never proposed it; a string is the name
+			// it was already carrying, which makes "you DID have this line" a
+			// checkable claim rather than an impression.
+			already: userAlready,
+			priced: !!item,
+			dropped: item ? null : (userDrop || 'never reached pricing'),
+			here: item ? item.here : null,
+			ahead: item && item.ahead !== undefined ? item.ahead : null,
+			total: item ? item.here + (item.ahead || 0) : null,
+			dead: item ? (item.r.dead || []) : [],
+			deathRisk: item ? item.r.deathRisk : null,
+			outcome: item ? item.r.outcome : null,
+			kills: item ? !!item.r.kills : null,
+			turns: item ? item.r.turns : null,
+			rank: item ? shortlist.indexOf(item) + 1 : null,
+			ofPriced: shortlist.length,
+			judged: !!(item && item.ahead !== undefined),
+			won: !!(best && item && best.cand === item.cand)
+		};
+	}
+
 	// RR_EXPLAIN=1 prints the whole market: every finalist's price split into
 	// its parts, plus the simulated line, so a bad decision can be read
 	// instead of guessed at.
@@ -772,7 +842,7 @@ function chooseAction(ctx, state, opts) {
 		const path = item === best ? best
 			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
 				r: item.r, illegal: item.illegal};
-		return {action, path, stay, alternatives,
+		return {action, path, stay, alternatives, userLine,
 			margin: (stay && action.type === 'switch') ? (stay.score - item.here) : null};
 	}
 	// WHY THE PLANNER GAVE UP, said out loud. "no plan found" was reaching the
