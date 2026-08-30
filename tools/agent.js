@@ -37,6 +37,13 @@ const CMD = path.join(DIR, 'cmd.json');
 const SESSION = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
 const RESULT = path.join(DIR, 'result.json');
 const PRED = path.join(DIR, 'predictions.tsv');
+// THE HUMAN'S TWO CONTROLS (tools/control.js). Files, not a socket, so the
+// agent has no dependency on the panel being up: no pause file means play, no
+// panel heartbeat means nobody is watching and nothing waits on a person.
+const PAUSE = path.join(DIR, 'pause');
+const ASK = path.join(DIR, 'ask.json');
+const CHOICE = path.join(DIR, 'choice.json');
+const PANEL = path.join(DIR, 'panel.alive');
 
 const engine = H.loadEngine();
 const B = engine.B;
@@ -1260,6 +1267,48 @@ function alreadyAnswered(obs) {
 	return !!(cmd && cmd.turn === obs.turn);
 }
 
+// Is somebody actually at the panel? It stamps this file on every poll. The
+// answer decides whether the agent is allowed to wait for a person: an
+// unattended run must never sit on a question nobody is going to answer, and
+// closing the tab is the natural way to say "just play".
+function panelLive() {
+	try { return Date.now() - fs.statSync(PANEL).mtimeMs < 5000; }
+	catch (e) { return false; }
+}
+
+// A question is about a POSITION, not a turn number: the Lua expires an unanswered
+// question after 60 seconds and re-asks the same position under a new id, so
+// keying the pending choice on the turn would throw it away every minute.
+function positionKey(obs) {
+	return [obs.kind, obs.me.species, obs.me.hp, obs.foe.species, obs.foe.hp].join('/');
+}
+
+// The open sacrifice question, and the standing answer to it.
+//
+// A plan that means to spend Lilligant on Pawmot says so again on every turn
+// until it happens, so asking per turn is a nag, not a check. What gets
+// answered is really "against this opponent, who am I willing to lose", so the
+// answer is kept as the accepted CASUALTY SET and honoured until the opponent
+// changes or that outcome stops being available.
+//
+// Storing the outcome rather than the move matters twice over. The position
+// moves every turn, so replaying a stored ACTION would replay a decision about
+// a board that no longer exists. And the option list shrinks as a sacrifice is
+// carried out -- three outcomes become two -- so anything keyed on the shape of
+// the question would ask again halfway through the plan it just approved.
+//
+// It also holds the line the other way: answer "lose nobody" and every later
+// turn quietly takes the no-loss line again, instead of re-proposing the
+// sacrifice that was just refused.
+let pendingAsk = null, standingAnswer = null, pauseShown = false;
+const deathKey = list => list.slice().sort().join(',');
+
+function clearAsk() {
+	pendingAsk = null;
+	try { fs.unlinkSync(ASK); } catch (e) { /* already gone */ }
+	try { fs.unlinkSync(CHOICE); } catch (e) { /* already gone */ }
+}
+
 setInterval(() => {
 	// RESULTS ARE COLLECTED FIRST, unconditionally. This used to run only when
 	// the current question was already answered, which is a window of a few
@@ -1363,7 +1412,53 @@ setInterval(() => {
 	}
 
 	const obs = readJSON(STATE);
-	if (!obs || alreadyAnswered(obs)) return;
+	if (!obs) return;
+	// STOP MEANS STOP, AND IT STOPS HERE. The one place where stopping is
+	// clean is before an answer is written: the emulator is sitting on the
+	// move menu waiting, which is where it would sit anyway between turns.
+	// Killing the process or unloading the script mid-sequence leaves it
+	// halfway through a party screen. Resuming is just deleting the file, and
+	// the question is still open, so nothing is lost by pausing for an hour.
+	if (fs.existsSync(PAUSE)) {
+		if (!pauseShown) { pauseShown = true; console.log('\n[STOPPED by the panel; the question is held open. Resume from the panel.]'); }
+		if (pendingAsk) clearAsk();
+		return;
+	}
+	if (pauseShown) { pauseShown = false; console.log('\n[resumed]'); }
+	if (alreadyAnswered(obs)) return;
+	// A SACRIFICE ALREADY PUT TO THE HUMAN. Nothing is planned again while the
+	// question stands, or the options under the answer would be re-priced out
+	// from under it -- the shortlist scores move between adjacent turns, which
+	// is exactly why the choice is stored as the concrete action it opens with.
+	let chosenByHand = null;
+	if (pendingAsk) {
+		if (pendingAsk.key !== positionKey(obs)) clearAsk();
+		else {
+			const ch = readJSON(CHOICE);
+			if (ch && pendingAsk.options[ch.index]) {
+				chosenByHand = pendingAsk.options[ch.index];
+				standingAnswer = {foe: pendingAsk.foe, accept: deathKey(chosenByHand.dead)};
+				clearAsk();
+			} else if (!panelLive()) {
+				// The tab was closed. Waiting for a person who is not there is
+				// how an overnight run turns into an overnight freeze. Taking
+				// the plan's own answer is the pre-panel behaviour exactly, and
+				// it stands so the run does not stall again on the next turn.
+				console.log('  [panel closed with the question open; playing the plan]');
+				standingAnswer = {foe: pendingAsk.foe,
+					accept: deathKey(pendingAsk.options[0].dead)};
+				clearAsk();
+			} else {
+				// Restamp so the panel shows the live turn while it waits.
+				try {
+					const a = readJSON(ASK) || {};
+					a.turn = obs.turn;
+					fs.writeFileSync(ASK, JSON.stringify(a));
+				} catch (e) { /* the panel re-reads next poll */ }
+				return;
+			}
+		}
+	}
 	lastTurn = obs.turn;
 
 	const st = buildState(obs);
@@ -1387,7 +1482,8 @@ setInterval(() => {
 		// this turn's challengers instead of being re-derived from nothing.
 		const foeNow = st.foe.team[st.foe.active].set.species;
 		const pick = R.chooseAction(planCtx(obs), st,
-			{incumbent: lastPlan.foe === foeNow ? lastPlan.jobs : null});
+			{incumbent: lastPlan.foe === foeNow ? lastPlan.jobs : null,
+				alternatives: panelLive()});
 		if (pick && pick.path && pick.path.cand) {
 			lastPlan = {foe: foeNow, jobs: pick.path.cand.jobs};
 		}
@@ -1461,6 +1557,76 @@ setInterval(() => {
 		const sw = d.all.find(r => r.action.type === 'switch');
 		if (sw) d.best = sw;
 		else { console.log('turn ' + obs.turn + ': forced switch with nobody to send'); return; }
+	}
+
+	// WHO DIES IS THE HUMAN'S CALL, when a human is there to make it.
+	//
+	// The planner is willing to spend a Pokemon, and it prices what that costs,
+	// but it prices every non-forbidden death at the same flat rate -- which is
+	// how Lilligant, the only real answer to Pawmot, gets spent on something
+	// else and the fight is lost three turns before it looks lost. Rather than
+	// guess a better price (that is a decision James has reserved), the agent
+	// stops and asks, on the one class of turn where the mistake is
+	// unrecoverable, and only while somebody is watching the panel.
+	//
+	// The options are lines the market itself produced, one per distinct
+	// outcome, so the answer is a choice between plans and not a hand-drawn
+	// move: whatever comes back is played as the planner would have played it.
+	if (chosenByHand) {
+		d.best.action = chosenByHand.action;
+		console.log('  [YOU CHOSE: ' + chosenByHand.why
+			+ (chosenByHand.dead.length
+				? ' -- losing ' + chosenByHand.dead.join(', ') : ' -- losing nobody') + ']');
+	} else if (panelLive() && plannerSaid && plannerSaid.path && plannerSaid.path.r
+		&& (plannerSaid.path.r.dead || []).length
+		&& (plannerSaid.alternatives || []).length) {
+		const foeName = speciesName(obs.foe.species);
+		// ONE ROW PER OUTCOME. Six lines that all bury Lilligant are one choice
+		// wearing six hats; what makes this a check is seeing that the
+		// alternative buries somebody else, or nobody.
+		const seen = {}, options = [];
+		plannerSaid.alternatives.forEach(alt => {
+			const k = deathKey(alt.dead);
+			if (seen[k] || options.length >= 5) return;
+			seen[k] = true;
+			options.push({action: alt.action, why: alt.why,
+				dead: alt.dead, total: Math.round(alt.total * 100) / 100});
+		});
+		// The outcome already signed off on, if it is still on the table.
+		const standing = standingAnswer && standingAnswer.foe === foeName
+			? options.find(o => deathKey(o.dead) === standingAnswer.accept) : null;
+		if (standing) {
+			d.best.action = standing.action;
+			console.log('  [standing choice: ' + (standing.dead.length
+				? 'accepting the loss of ' + standing.dead.join(', ')
+				: 'losing nobody') + ']');
+		} else {
+			if (standingAnswer && standingAnswer.foe === foeName) {
+				console.log('  [the outcome you chose ('
+					+ (standingAnswer.accept || 'losing nobody')
+					+ ') is no longer on offer]');
+			}
+			// An answer left over from an earlier question would satisfy this
+			// one the instant it is asked, and the human would never see it.
+			try { fs.unlinkSync(CHOICE); } catch (e) { /* nothing stale */ }
+			pendingAsk = {key: positionKey(obs), foe: foeName, options: options};
+			fs.writeFileSync(ASK, JSON.stringify({
+				turn: obs.turn,
+				position: speciesName(obs.me.species) + ' (' + obs.me.hp + ') vs '
+					+ foeName + ' (' + obs.foe.hp + ')',
+				options: options.map(o => ({
+					why: o.why, dead: o.dead, total: o.total,
+					action: o.action.type === 'switch'
+						? 'switch to ' + (st.me.team[o.action.index]
+							? st.me.team[o.action.index].set.species : 'slot ' + o.action.index)
+						: o.action.move
+				}))
+			}));
+			console.log('\nturn ' + obs.turn + ': the plan expects to lose '
+				+ plannerSaid.path.r.dead.join(', ')
+				+ ' -- waiting for the panel (' + options.length + ' options)');
+			return;
+		}
 	}
 
 	const us = speciesName(obs.me.species), them = speciesName(obs.foe.species);

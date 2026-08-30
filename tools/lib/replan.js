@@ -745,13 +745,34 @@ function chooseAction(ctx, state, opts) {
 	// Pawmot standing (total 45.72, death risk 1.00). The market is the
 	// authority; a line it cannot express an action for is the only reason to
 	// move on.
+	// THE RUNNERS-UP, NAMED, for the human at the panel. When a line concedes
+	// one of ours, James wants to pick WHICH one, and a choice is only
+	// meaningful if the things being chosen between are lines the market
+	// already priced and is willing to play -- not a free-form override of the
+	// planner by hand. So each entry carries the action it opens with, what it
+	// costs now and later, and who it expects to bury. Built only on request:
+	// it costs a planAction per line, and turns nobody is watching should not
+	// pay for it.
+	const alternatives = [];
+	if (options.alternatives) {
+		for (const item of ranked) {
+			if (alternatives.length >= 6) break;
+			const a = firstAction(item);
+			if (!a) continue;
+			alternatives.push({action: a, why: item.cand.why, here: item.here,
+				ahead: item.ahead === undefined ? null : item.ahead,
+				total: totalOf(item),
+				dead: (item.r && item.r.dead) || [],
+				deathRisk: item.r ? item.r.deathRisk : null});
+		}
+	}
 	for (const item of ranked) {
 		const action = firstAction(item);
 		if (!action) continue;
 		const path = item === best ? best
 			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
 				r: item.r, illegal: item.illegal};
-		return {action, path, stay,
+		return {action, path, stay, alternatives,
 			margin: (stay && action.type === 'switch') ? (stay.score - item.here) : null};
 	}
 	// WHY THE PLANNER GAVE UP, said out loud. "no plan found" was reaching the
