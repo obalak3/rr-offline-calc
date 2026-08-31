@@ -609,7 +609,14 @@ function greedyAction(st) {
 
 // The plan currently being followed, kept across turns -- see the note on
 // sticking to a plan in replan.js.
-let lastPlan = {foe: null, jobs: null};
+//
+// `progress` is HOW FAR THROUGH that plan we are: which leg, and which move
+// inside the leg. It lives here because this is the only place that knows a
+// turn actually happened; replan.js creates it, advances it once per decision
+// and hands it back. Without it every decision started the plan again from its
+// first move, so a two-move leg played move 0 forever and a `until: {uses: n}`
+// handover could never fire. See the long note at `progressFor` in replan.js.
+let lastPlan = {foe: null, jobs: null, progress: null};
 
 // Decisions since each active last changed -- see buildState.
 const outCount = {me: 0, meKey: null, foe: 0, foeKey: null};
@@ -932,6 +939,14 @@ if (process.argv[2] === '--score-live') {
 		// 1.3x and can flip which move we call strongest. Scoring against them
 		// measures our own stale reconstruction, not the port.
 		if (process.env.RR_LIVE_FIELD_ONLY && obs.terrainTurns === undefined) continue;
+		// A ROW WHOSE ACTIVE HAS ALREADY FAINTED CANNOT BE GRADED. On a forced
+		// switch the AI's score sheet was written about the Pokemon coming IN,
+		// and this archived observation only names the corpse going out, so
+		// every score is compared against a position that was never scored.
+		// 244 of 2888 rows were being counted as misses on that basis; removing
+		// them moves the port from 57% exact / 73% argmax to 61% / 77% without
+		// a single rule changing. Measurement, not progress.
+		if (obs.me.hp <= 0 || obs.kind === 'forced') continue;
 		const st = buildState(obs);
 		if (!st) continue;
 		const foeMon = st.foe.team[st.foe.active];
@@ -1604,6 +1619,9 @@ setInterval(() => {
 		}
 		const pick = R.chooseAction(planCtx(obs), st,
 			{incumbent: lastPlan.foe === foeNow ? lastPlan.jobs : null,
+				// A plan is about an OPPONENT, so how far through it we are
+				// expires with that opponent, exactly as the incumbent does.
+				progress: lastPlan.foe === foeNow ? lastPlan.progress : null,
 				alternatives: panelLive(),
 				userLine: userLine ? userLine.jobs : null});
 		if (userLine && pick) {
@@ -1633,7 +1651,8 @@ setInterval(() => {
 			} catch (e) { /* recording must never break play */ }
 		}
 		if (pick && pick.path && pick.path.cand) {
-			lastPlan = {foe: foeNow, jobs: pick.path.cand.jobs};
+			lastPlan = {foe: foeNow, jobs: pick.path.cand.jobs,
+				progress: pick.progress || null};
 		}
 			if (pick && pick.action) {
 				plannerSaid = pick;
@@ -1671,6 +1690,13 @@ setInterval(() => {
 							+ (alt.action.move || ('switch ' + alt.action.index))
 							+ ' instead]');
 						chosen = alt.action;
+						// THE PLAN DID NOT ADVANCE, because its move was not
+						// played. chooseAction already counted this turn against
+						// the plan's progress, so keeping it would skip a leg or
+						// a move that never happened. Drop it and let next turn
+						// re-derive; a veto is a departure from the plan and the
+						// plan's own bookkeeping has to say so.
+						lastPlan.progress = null;
 						// THE PLAN STILL EXISTED. Nulling this made the log
 						// print "no plan found", so an override by this veto
 						// was indistinguishable from the planner having

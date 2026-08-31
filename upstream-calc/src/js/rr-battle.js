@@ -1191,6 +1191,29 @@ var RRBattle = (function () {
 	}
 
 	function pickRolls(rolls, ctx, key) {
+		// SAMPLE: play the dice, do not reason about them.
+		//
+		// Every other mode here answers a question ABOUT a distribution -- the
+		// worst case, a provable floor, a typical reading -- because they exist
+		// to price a plan. "sample" exists to PLAY one episode, and for that the
+		// only honest reading is a draw: one of the sixteen rolls, uniformly,
+		// crit at the real crit rate. Nothing is read pessimistically for either
+		// side, because a simulated fight is not a proof and must not be
+		// handicapped like one.
+		//
+		// This was written after measuring what running episodes in "odds" mode
+		// costs. Odds is the solver's floor mode: on any hit that does not KO it
+		// collapses the survivor to the extreme against the player. Over the
+		// real Lt. Surge sets that is x1.524 on THEIR damage and x0.911 on ours,
+		// every turn -- an opponent hitting half again as hard, forever. Every
+		// player ever tried against that fight lost it (greedy 0/20, static plan
+		// 0/30, per-turn re-planning 0/20, a 3-ply search with perfect opponent
+		// prediction), which was read for months as the players being weak. It
+		// was the environment.
+		if (ctx.mode === "sample") {
+			var band = ctx.rand() < (rolls.critChance || 0) ? rolls.crit : rolls.noCrit;
+			return band[Math.floor(ctx.rand() * band.length) % band.length];
+		}
 		if (ctx.mode === "worst") {
 			return key === "me" ? rolls.noCrit[0] : rolls.crit[rolls.crit.length - 1];
 		}
@@ -1461,6 +1484,10 @@ var RRBattle = (function () {
 					state.luckSpent.paralysis++;
 					return;
 				}
+			} else if (ctx.mode === "sample") {
+				// 25% a turn, both sides, drawn. No budget: a budget is a way of
+				// keeping a PROOF finite, and an episode does not need one.
+				if (ctx.rand() < 0.25) return;
 			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: 0.75, value: true}, {p: 0.25, value: false}],
 					key === "me" ? 1 : 0)) return;
@@ -1516,6 +1543,10 @@ var RRBattle = (function () {
 					state.luckSpent.miss++;
 					return;
 				}
+			} else if (ctx.mode === "sample") {
+				// Both sides can miss. maxroll lets only OUR side miss, and only
+				// on a budget, which is right for planning and wrong for playing.
+				if (ctx.rand() >= accuracy) return;
 			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: accuracy, value: true},
 					{p: 1 - accuracy, value: false}], key === "me" ? 1 : 0)) return;
@@ -1771,6 +1802,12 @@ var RRBattle = (function () {
 					{p: 1 - chance / 100, value: false}], key === "me" ? 1 : 0);
 			} else if (ctx.mode === "odds") {
 				fires = chance >= 100;
+			} else if (ctx.mode === "sample") {
+				// Drawn, for BOTH sides. maxroll fires a foe secondary only when
+				// asked and never fires ours, so a Scald burn -- the thing that
+				// halves Pawmot's Attack -- could not happen in a simulated
+				// episode at all.
+				fires = ctx.rand() < chance / 100;
 			} else if (ctx.mode === "maxroll") {
 				fires = chance >= 100 || (ctx.risks.secondary && key === "foe");
 			} else {
@@ -1983,7 +2020,9 @@ var RRBattle = (function () {
 		if (!order) {
 			// A genuine speed tie. Worst mode hands it to them, since the proof
 			// has to survive losing the flip; odds mode calls it properly.
-			if (ctx.mode === "odds") {
+			if (ctx.mode === "sample") {
+				order = ctx.rand() < 0.5 ? ["me", "foe"] : ["foe", "me"];
+			} else if (ctx.mode === "odds") {
 				order = flip(ctx, [{p: 0.5, value: ["me", "foe"]},
 					{p: 0.5, value: ["foe", "me"]}], 1);
 			} else {
@@ -2021,7 +2060,10 @@ var RRBattle = (function () {
 		if (mode !== "odds") {
 			var ctx = {
 				mode: mode, cursor: 0, path: [], forks: 0, forkBudget: 0,
-				risks: opts.risks || {}
+				risks: opts.risks || {},
+				// Injectable so an episode run can be made reproducible; every
+				// existing caller keeps Math.random by omission.
+				rand: opts.rand || Math.random
 			};
 			return [{state: runTurn(state, myAction, foeAction, ctx), probability: 1}];
 		}

@@ -771,10 +771,69 @@ function chooseAction(ctx, state, opts) {
 	// dropping the turn into greedy one-turn scoring, which fed Lilligant
 	// and then Breloom in one at a time. The veto is gone entirely now, so
 	// the replacement case needs no special pleading.
+	// PROGRESS BELONGS TO A PLAN, NOT TO A TURN.
+	//
+	// `P.newProgress()` used to be created fresh here on every decision, and
+	// `planAction` writes its counters into that object -- which was then
+	// thrown away. So both counters were permanently zero live, while
+	// `pricePath` (paths.js:174) makes ONE progress object and carries it
+	// through the whole simulated line. The plan was priced as a sequence that
+	// advances and played as a sequence that cannot. Same shape as every bug on
+	// this project: two parts keeping their own idea of the position.
+	//
+	// Two consequences, both of them things James has watched happen:
+	//
+	//   - `policy.js:147` reads `job.moves[Math.min(step, len - 1)]`, and step
+	//     was always 0, so a two-move leg played move 0 forever. Live turns
+	//     4598/4599 (a WON episode): the leg was Victreebel [Sleep Powder,
+	//     Sludge], it played Sleep Powder, the target fell asleep, and it played
+	//     Sleep Powder again into a sleeping Vikavolt. Victreebel died the turn
+	//     after having thrown one away.
+	//   - `jobDone` reads `until.uses` out of the same dead counter, so a
+	//     use-count handover could never fire. `userline.js:107` puts
+	//     `until: {uses: 1}` on every non-final leg of a line typed at the
+	//     panel, so a typed line of two or more legs only ever ran its first.
+	//
+	// Measured over the real generated market for Surge (313 candidates with
+	// playable jobs): 24.9% contain a multi-move leg, 31.9% carry an until.uses.
+	//
+	// The caller owns the object, exactly as it owns `incumbent`, because the
+	// caller is the only thing that knows a turn happened. It is handed back on
+	// the winning plan and passed in next turn; a plan whose jobs differ gets a
+	// fresh one, since progress through a DIFFERENT sequence means nothing.
+	//
+	// Behind RR_CARRY_PROGRESS while it is A/B'd, because it changes what gets
+	// played on a quarter of all plans.
+	const CARRY = !!process.env.RR_CARRY_PROGRESS;
+	const held = (CARRY && options.progress) ? options.progress : null;
+	const jobsKey = jobs => JSON.stringify(jobs);
+	const cloneProgress = p => ({job: Object.assign({}, p.job),
+		step: Object.assign({}, p.step)});
+	// `firstAction` is called several times per decision -- for `stay`, for the
+	// panel's alternatives, and to walk the ranking -- and planAction ADVANCES
+	// the counters it is given. So every exploratory call gets a copy and only
+	// the action actually returned is committed, or a turn would count as three.
+	const progressFor = (cand, commit) => {
+		if (!CARRY) return P.newProgress();
+		if (!held || held.key !== jobsKey(cand.jobs)) return P.newProgress();
+		return commit ? held.progress : cloneProgress(held.progress);
+	};
 	const firstAction = item => {
 		const plan = {};
 		plan[state.foe.team[fi].set.species] = item.cand.jobs;
-		return P.planAction(engine, state, plan, P.newProgress());
+		return P.planAction(engine, state, plan, progressFor(item.cand, false));
+	};
+	// Replay the decision onto the progress we hand back, so the counters
+	// advance exactly once and only for the line that is really being played.
+	const commitProgress = item => {
+		if (!CARRY) return null;
+		const key = jobsKey(item.cand.jobs);
+		const carried = (held && held.key === key)
+			? held : {key: key, progress: P.newProgress()};
+		const plan = {};
+		plan[state.foe.team[fi].set.species] = item.cand.jobs;
+		P.planAction(engine, state, plan, carried.progress);
+		return carried;
 	};
 	// THE FALLBACK ORDER IS THE SAME YARDSTICK THAT PICKED THE WINNER. This
 	// list used to be sorted by `here` alone -- the immediate cost -- while
@@ -843,6 +902,9 @@ function chooseAction(ctx, state, opts) {
 			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
 				r: item.r, illegal: item.illegal};
 		return {action, path, stay, alternatives, userLine,
+			// Hand back to the caller, which owns it across turns. Null when
+			// RR_CARRY_PROGRESS is off, and then nothing has changed at all.
+			progress: commitProgress(item),
 			margin: (stay && action.type === 'switch') ? (stay.score - item.here) : null};
 	}
 	// WHY THE PLANNER GAVE UP, said out loud. "no plan found" was reaching the
