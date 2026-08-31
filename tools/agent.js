@@ -70,7 +70,15 @@ function planCtx(obs) {
 	return {
 		engine, party,
 		foeSets: foeTeamFor(obs),
-		expendable: (process.env.EXPENDABLE || 'Lilligant').split(',').filter(Boolean)
+		// EXPENDABLE="" MEANS NOBODY, not "use the default". Written with `||`,
+		// an empty string is falsy and silently became the Surge cap, so there
+		// was no way to say "every death is forbidden" -- which is exactly what
+		// a run outside Surge needs. The death-check below already reads it
+		// with `=== undefined`; the two disagreed, so the planner could price
+		// Lilligant as spendable while the recorder counted her death as a
+		// loss.
+		expendable: (process.env.EXPENDABLE === undefined
+			? 'Lilligant' : process.env.EXPENDABLE).split(',').filter(Boolean)
 	};
 }
 

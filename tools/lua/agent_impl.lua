@@ -452,6 +452,29 @@ local function tick_body()
 			hb:close()
 		end
 	end
+	-- STOP MEANS BOTH HALVES STAND DOWN, not just the brain.
+	--
+	-- The node side already refuses to answer while the panel's pause file
+	-- exists, and while a question is merely unanswered this side presses
+	-- nothing, so pausing looked complete. It was not: after 60 seconds an
+	-- unanswered question expires into the "wait" phase, and that phase pushes
+	-- the UI back where it belongs by tapping B out of the move list. So
+	-- stopping mid-battle to take the turn by hand would work for a minute and
+	-- then start fighting the person holding the controller.
+	--
+	-- Checked every frame rather than latched, because the whole point of the
+	-- button is that it takes effect without a reload. The heartbeat above is
+	-- deliberately still written: a paused emulator must not look like a dead
+	-- one on the panel.
+	if _RR.beat % 10 == 0 then
+		local pf = io.open(DIR .. "pause", "r")
+		if pf then pf:close(); _RR.paused = true else _RR.paused = false end
+	end
+	if _RR.paused then
+		emu:setKeys(0)
+		return
+	end
+
 	local before = phase
 	tick_inner()
 	if phase ~= before then
