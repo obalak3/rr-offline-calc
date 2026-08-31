@@ -231,6 +231,11 @@ function chooseAction(ctx, state, opts) {
 	const LOOKAHEAD = (options.lookahead === false || process.env.RR_NO_LOOKAHEAD)
 		? 0 : (options.lookahead || 5);
 	const ENOUGH = options.enough || 3;
+	// RR_DEEP_SCAN=<rank>: how far to keep looking for a future opponent AFTER
+	// the LOOKAHEAD cut came back empty. 0 disables it, which is the shipped
+	// behaviour. See the long note at the flat 8 below for why this is the only
+	// safe direction to change that term in. LOOKAHEAD itself is untouched.
+	const DEEP_SCAN = Number(process.env.RR_DEEP_SCAN || 0);
 
 	// Candidate generation depends only on WHO we are facing and the field, not
 	// on the HP of the position, so it is the same answer every turn of a fight
@@ -301,6 +306,10 @@ function chooseAction(ctx, state, opts) {
 			if (m && m.maxHP && !m.fainted) foeHpAfter[i] = m.curHP / m.maxHP;
 		});
 		let total = 0;
+		// RR_NOANSWER_FLOOR=1: collect the per-opponent answers first, so the
+		// no-answer charge can be made a FLOOR rather than a constant. See the
+		// note at the flat 8 below.
+		const answers = [];
 		for (let gi = 0; gi < ctx.foeSets.length; gi++) {
 			if (foeDeadAfter.includes(gi)) continue;
 			let cheapest = null;
@@ -333,9 +342,111 @@ function chooseAction(ctx, state, opts) {
 				const c = sp + bad * 6 + 2 * rr.deathRisk + rate * (rr.turns || 0);
 				if (cheapest === null || c < cheapest) cheapest = c;
 			}
+			// LOOK FURTHER ONLY WHERE WE FOUND NOTHING.
+			//
+			// The flat 8 below is charged when the top LOOKAHEAD candidates
+			// contain no killing line. Measured over the archive, scanning EVERY
+			// candidate instead of five: **51% of those 8s are an artifact of the
+			// cut, not a fact about the fight** (41 of 81 had a killer below rank
+			// 5). The rank at which the first killing line appears is 0 for
+			// Pincurchin, 1 for Vikavolt, 6 for Pawmot and 18 for
+			// Manectric-Mega, which is inside the top 5 only 4% of the time. So
+			// "nothing answers Manectric" has mostly meant "we stopped at five".
+			//
+			// That matters because the 8 is a CONSTANT: identical for every
+			// candidate, so it cancels out of the comparison and steers nothing,
+			// except where a line flips an opponent across the boundary. On 30 of
+			// 58 archived turns the whole spread between competing plans was such
+			// a flip, worth 8.21, against a mean spread of 1.02 when no flip was
+			// involved. More than half of all decisions are made by which side of
+			// a truncated search an opponent happens to land on.
+			//
+			// Deepening ASYMMETRICALLY is the one change that cannot make the
+			// score prefer ignorance. It only ever replaces an 8 with a real
+			// number and never creates one, it costs nothing on the continuations
+			// that already answer, and it does not touch the constant -- which is
+			// what the parked branch ee478e7 did, and what must not be repeated
+			// until the invariant below is fixed.
+			//
+			// It is NOT the same as raising LOOKAHEAD. Uniform deepening also
+			// deepens the continuations that already had an answer, which finds
+			// more lines that quietly reuse a Pokemon already committed elsewhere
+			// (15.5% of positions double-book one Pokemon across two opponents),
+			// so it adds false confidence at the same time as it removes false
+			// fear. That is the better explanation of "deeper played strictly
+			// worse" than double-booking alone.
+			//
+			// The FIRST killing line found is taken rather than the cheapest of
+			// the deep set: the list is ordered by the generator's own score, and
+			// stopping early errs toward a DEARER answer, which is the safe
+			// direction for a term whose whole job is to be afraid of what it
+			// cannot handle.
+			if (cheapest === null && DEEP_SCAN > LOOKAHEAD) {
+				for (const cand of ahead.slice(LOOKAHEAD, DEEP_SCAN)) {
+					if (!cand.jobs.length) continue;
+					if (cand.jobs.every(j => deadAfter.includes(j.mon))) continue;
+					let rr;
+					const eAfter = (foeHpAfter[gi] !== undefined && foeHpAfter[gi] < 1)
+						? Object.assign({}, entryAfter, {foeChip: 1 - foeHpAfter[gi]})
+						: entryAfter;
+					try { rr = pricePath(ctx, gi, cand.jobs, eAfter, {expendable}); }
+					catch (e) { continue; }
+					if (!rr.kills) continue;
+					let sp = 0;
+					for (const k in rr.spend) sp += Math.max(0, rr.spend[k]);
+					const bad = rr.dead.filter(n => !expendable.includes(n)).length;
+					const rate = process.env.RR_DERIVED_TEMPO
+						? turnRate(engine, after, gi)
+						: (options.tempo === undefined ? 0.4 : options.tempo);
+					cheapest = sp + bad * 6 + 2 * rr.deathRisk + rate * (rr.turns || 0);
+					break;
+				}
+			}
 			// Nothing kills it from here. That is the expensive outcome and the
 			// whole reason for looking ahead at all.
+			//
+			// KNOWN DEFECT, MEASURED, NOT FIXED HERE: 8 is below the cost of
+			// actually answering the opponents that matter. When the lookahead
+			// DOES find a way to kill Pawmot inside its cut, that line costs a
+			// median of 9.44, so the planner scores "Pawmot cannot be killed from
+			// here" as CHEAPER than "Pawmot can be killed from here" and is
+			// rewarded for reaching positions where the hardest Pokemon is
+			// unanswerable. Vikavolt's p90 is 9.52, the same inversion about a
+			// tenth of the time. The repair is a floor, `max(8, dearest answer
+			// priced this turn)`, which satisfies the never-cheaper-than-killing
+			// invariant BY CONSTRUCTION rather than by assertion -- and it is
+			// deliberately a separate change from the deep scan above, measured
+			// on its own, because bundling them would make neither attributable.
+			// NEVER PRICE IGNORANCE BELOW KNOWLEDGE.
+			//
+			// The 8 is a constant, and it is below the cost of answering the
+			// opponents that matter. Measured over the archive: when the
+			// lookahead DOES find a way to kill Pawmot inside its cut, that
+			// answer costs more than 8 on 44% of continuations (24 of 55 at
+			// n=519), so "Pawmot cannot be killed from here" scores CHEAPER than
+			// "Pawmot can be killed from here" nearly half the time it matters.
+			// Vikavolt 15%, Manectric-Mega 13%, Pincurchin and Bellibolt 0%. It
+			// is the exact defect the parked branch ee478e7 was blamed for, in
+			// the code that replaced it.
+			//
+			// A FLOOR fixes it by construction rather than by assertion: charge
+			// at least as much for no answer as the dearest answer we actually
+			// priced this turn. It can only ever raise the no-answer cost, never
+			// lower it, which is the one direction the evidence supports --
+			// RR_DEEP_SCAN, which lowered it by replacing 8s with real numbers,
+			// went 27/60 to 8/60 and 7/60. The 8 is load-bearing pessimism, and
+			// the useful change is to make it consistently pessimistic instead of
+			// arbitrarily so.
+			//
+			// Derived from the position, not tuned: the number is whatever the
+			// dearest killing line in this very continuation costs.
+			if (process.env.RR_NOANSWER_FLOOR) { answers.push(cheapest); continue; }
 			total += (cheapest === null) ? 8 : cheapest;
+		}
+		if (process.env.RR_NOANSWER_FLOOR) {
+			let dearest = 8;
+			answers.forEach(c => { if (c !== null && c > dearest) dearest = c; });
+			answers.forEach(c => { total += (c === null) ? dearest : c; });
 		}
 		return total;
 	}

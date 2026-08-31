@@ -192,6 +192,8 @@ for (let ep = 0; ep < N; ep++) {
 const totalActions = Object.keys(actionTally).reduce((a, k) => a + actionTally[k], 0) || 1;
 console.log('dice=' + DICE + (INCUMBENT ? ' +incumbent' : ' NO-incumbent')
 	+ (process.env.RR_CARRY_PROGRESS ? ' +progress' : '')
+	+ (process.env.RR_DEEP_SCAN ? ' +deepscan' + process.env.RR_DEEP_SCAN : '')
+	+ (process.env.RR_NOANSWER_FLOOR ? ' +floor' : '')
 	+ '  expendable=[' + EXPENDABLE.join(',') + ']  ' + N + ' episodes of ' + H.label(battle));
 console.log('  won:          ' + won + '/' + N);
 console.log('  met the cap:  ' + cap + '/' + N + '   (win, losing nobody but ' + (EXPENDABLE.join('/') || 'nobody') + ')');
