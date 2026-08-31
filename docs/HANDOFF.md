@@ -1,192 +1,183 @@
-# Handoff -- 2026-08-27 (evening)
+# Handoff -- 2026-08-31
 
-Read this, then `docs/VALIDATION-LOG.md`, then `docs/METHOD.md`.
-Domain facts (both teams, why Pawmot is the wall, the Baby-Doll Eyes plan) are
-in memory as `reference-rr-surge-domain` -- read that FIRST, it is the thing
-that keeps having to be re-explained.
+Read this, then `docs/ULTRACODE-BRIEF.md` (what to investigate next), then
+`docs/VALIDATION-LOG.md` and `docs/METHOD.md`. Domain facts -- both teams, why
+Pawmot is the wall, the Baby-Doll Eyes plan -- are in memory as
+`reference-rr-surge-domain`; read that FIRST, it is the thing that keeps having
+to be re-explained. How to work with James is `feedback-rr-working-agreement`.
 
-## The goal, unchanged
+## THE MODE CHANGED ON 2026-08-31
 
-Beat LT. Surge (`RadicalRed.ss5`) **losing nobody but Lilligant**. James has
-done this himself. Once it is reliable the target becomes **zero deaths**,
-which he also believes is possible. Anything less is not the win.
+Until now this was a Surge grinder: one save state, reloaded in a loop,
+episodes measured as a rate. **James is now restarting the whole playthrough
+and going fight by fight.** He drives the overworld; the agent plays the
+battles he hands it.
 
-## STATE -- 2026-08-29, early hours
+That makes most historical rates unquotable, because they were all measured on
+one fight with one team at one point in the game. Do not carry them forward.
 
-Episodes carry an independent RNG seed (recorded in results.tsv), so results
-are a rate, not one replayed trajectory. On the rebuilt decision layer there
-have been several cap-meeting wins and FOUR zero-death wins, alongside
-collapses; roughly half of episodes meet the cap. n is small and the build
-changed underneath most of it, so re-derive per build and never quote a rate
-across builds.
+### What is configured for that, and why
 
-### Read this before believing any number
+| File / var | Setting | Why |
+|---|---|---|
+| `~/rr-agent/load.txt` | **empty** | Non-empty means the Lua loads that save state when the script starts. This is what yanked the emulator into Surge on 08-31. |
+| `~/rr-agent/restart` | **absent** | Present enables the episode loop: at the end of a battle it rotates `saves.txt` and reloads. That is the grinder, not a playthrough. |
+| `~/rr-agent/pause` | present = stopped | The panel's STOP button. Both halves honour it. |
+| `EXPENDABLE` | `""` (nobody) | Every death priced as forbidden. `Lilligant` was the Surge-specific cap. |
 
-Three times today the "biggest bug" was the MEASUREMENT, and twice a correct
-piece of code was nearly patched to match a broken yardstick.
+In the overworld the Lua presses NOTHING -- it has no map and no business
+acting there. So the loop is: James walks into a fight, presses RESUME, the
+agent plays it, he presses STOP.
+
+## Starting it from cold
+
+```
+/Applications/mGBA.app/Contents/MacOS/mGBA ~/RadicalRed-mGBA/RadicalRed.gba &
+# direct exec, NOT `open -a` -- that hits the Gatekeeper dialog
+osascript -e 'tell application "System Events" to tell process "mGBA" to \
+  click menu item "Scripting..." of menu 1 of menu bar item "Tools" of menu bar 1'
+osascript -e 'tell application "System Events" to tell process "mGBA" to \
+  click menu item "/Users/omerbalak/rr-offline-calc/tools/lua/bootstrap.lua" \
+  of menu 1 of menu item "Load recent script" of menu 1 \
+  of menu bar item "File" of menu bar 1'
+cd ~/rr-offline-calc
+EXPENDABLE="" node tools/agent.js >> ~/rr-agent/node.log 2>&1 &
+node tools/control.js > ~/rr-agent/control.log 2>&1 &   # panel on :8420
+```
+
+Once the scripting window is open it OWNS the macOS menu bar -- its `File`
+menu is `Load script... / Load recent script / Reset`, which is how you can
+tell it focused. System Events cannot enumerate mGBA's windows; only menus
+work. Do not screenshot the whole desktop to check (James's own work is on it).
+
+## The control panel -- http://localhost:8420
+
+Three controls, all file-backed under `~/rr-agent/` so nothing depends on the
+panel being up. No panel means no pause file and no answer file, which is
+exactly the pre-panel behaviour.
+
+- **STOP / RESUME** (`pause`). Held before the answer is written, which is the
+  only clean moment: the emulator is already sitting on the action menu. Both
+  halves stand down -- the Lua checks every tenth frame and presses nothing, so
+  you can take the controller mid-battle.
+- **Who dies** (`ask.json` -> `choice.json`). When the priced line concedes one
+  of ours, the agent posts one row per distinct casualty set and WAITS. The
+  answer is stored as the accepted CASUALTY SET per opponent, not as a move and
+  not as the shape of the question -- see the three design notes below. Times
+  out at `RR_ASK_TIMEOUT` (default 300s) so a forgotten tab cannot freeze a run.
+- **Your line** (`line.json` -> `line_result.json`, recorded to `lines.jsonl`).
+  Type a line in speech form; `tools/lib/userline.js` parses it to jobs and
+  `chooseAction({userLine})` INJECTS it into the market, so it can win outright.
+
+Three things about the panel that were each learned the hard way:
+
+1. **The sacrifice answer must be an outcome.** A stored ACTION replays a
+   decision about a board that no longer exists; a key on the shape of the
+   question re-asks halfway through the plan it just approved, because the
+   option list shrinks as a sacrifice is carried out.
+2. **Liveness must be a server-counted open event stream, never a browser
+   poll.** Chrome throttles `setInterval` in background tabs to ~1/min, so the
+   agent saw a stale heartbeat, decided nobody was watching, and went back to
+   spending Pokemon unasked -- observed live at turn 3510.
+3. **Closing the tab must release the question.** An open tab is evidence of
+   intent to supervise, not a promise to be present.
+
+### The line box is the fastest way to get evidence
+
+It distinguishes three failures that look identical from outside and need
+opposite fixes:
+
+- **never proposed by the generator** -> a hole in candidate generation
+- **proposed and priced above the winner** -> a disagreement about value
+- **cheaper on the full criterion and still lost** -> the `FINALISTS = 4` cut
+  threw the better line away (only the top four on immediate cost ever get
+  their lookahead priced)
+
+Live example against Vikavolt, `lanturn scald then mienshao drain punch`:
+total 13.71, kills in 5 turns, loses Lanturn at 100% death risk, ranked 5 of 22
+priced lines, generator had NOT proposed it, planner's own line cost 10.70.
+
+## Read this before believing any number
+
+Repeatedly the "biggest bug" turned out to be the MEASUREMENT, and correct code
+was nearly patched to match a broken yardstick.
 
 - **The log lied about planlessness.** The death veto in agent.js nulled
-  plannerSaid when it overrode a plan, so the turn printed "no plan found".
-  Every "N% planless" figure was wrong. Genuine planlessness is now ZERO
-  across 81 consecutive decisions; overrides print
-  "PLAN (OVERRIDDEN by the death veto)".
-- **The dump-based score corpus is mispaired.** EWRAM dumps are taken 45
-  frames after we commit, so gBattleMons need not hold the position the AI
-  scored against. Grade with `--score-live`, which joins ai_truth.tsv and is
-  paired by construction. `--score-diff` (dumps) is kept only as history.
-- **Pre-terrain archives rebuild with a phantom field.** No terrainTurns
-  means Electric Terrain is inherited from Pincurchin and never expires,
-  inflating Electric moves 1.3x. `RR_LIVE_FIELD_ONLY=1` restricts grading to
-  faithfully rebuildable turns; doing so made the table's largest gap
-  (Thunder Punch +2, 45 rows) vanish, because it was never a rule.
+  `plannerSaid` when it overrode a plan, so the turn printed "no plan found".
+  Overrides now print `PLAN (OVERRIDDEN by the death veto)`.
+- **The dump-based score corpus is mispaired.** EWRAM dumps are taken 45 frames
+  after we commit. Grade with `--score-live` (joins `ai_truth.tsv`, paired by
+  construction). `--score-diff` is history only.
+- **Pre-terrain archives rebuild with a phantom field**, inflating Electric
+  moves 1.3x. `RR_LIVE_FIELD_ONLY=1` restricts grading to faithful turns.
+- **`node.log` concatenates every run.** Slice to the last `agent: watching`
+  before analysing, or you will compare two different battles.
+- **An auditor that does not model `jobDone` leg-skipping** produces a false
+  "19% of turns don't play their plan". The real figure was 91% following.
+- **`tools/test_replan.js` never calls `buildState`** and cannot see live bugs;
+  it reported 0/12 wipes while live play was fine. Offline is a crash check.
 
-### The enemy AI is now READ, not guessed
+## The enemy AI is READ, not guessed
 
-Thinking struct at 0x020003A4 (battle.h:480): scores +4, moveConsidered +2,
-aiFlags +12 (reads 7: Surge runs all three bits), simulatedRNG +24. Verified
-737/737 against the chosen slot. Port accuracy 56% -> 59% exact-score / 77%
-argmax on faithful positions, every opponent improved.
+Thinking struct at `0x020003A4` (battle.h:480): scores +4, moveConsidered +2,
+aiFlags +12 (reads 7), simulatedRNG +24. Verified 737/737 against the chosen
+slot. Port accuracy 59% exact-score / 77% argmax on faithful positions.
 
-Two facts that will save the next reader a day:
 - **Their arithmetic is theirs.** CanKnockOut/Can2HKO compute WITHOUT crits;
-  feeding our crit-inclusive damage into transcribed gates broke Roost.
-- **The two scoring passes are independent.** A penalty and a bonus both
-  apply to the same move; short-circuiting after either loses the other.
-  Found three separate times (healing, immunity, status). Suspect it first
-  for any remaining gap.
+  feeding crit-inclusive damage into transcribed gates broke Roost badly.
+- **The two scoring passes are independent.** A penalty and a bonus both apply
+  to the same move; short-circuiting after either loses the other. Found three
+  separate times. Suspect it first for any remaining gap.
 
-## What is running
+Other facts that cost repeated wrong guesses: terrain timer at `0x020179BC`;
+the turn archive is per-session (`turns/<ISO>/`) because a flat folder
+OVERWROTE evidence as the Lua's counter wrapped; our six Pokemon's stats match
+RAM exactly, do not re-derive them.
 
-- mGBA + `tools/lua/bootstrap.lua`. It now watches `agent_impl.lua` itself, so
-  editing the Lua no longer needs `~/rr-agent/reload` touched by hand.
-- `node tools/agent.js`, logging to `~/rr-agent/node.log`.
-- Rotation pinned to ss5 only (`~/rr-agent/saves.txt`). ss1-ss3 are early
-  fights and James does not want them run.
-- Outcomes `~/rr-agent/results.tsv` (now carries a git-version column), turn
-  archive `~/rr-agent/turns/`.
-- mGBA can be restarted entirely from the shell: kill it, relaunch by direct
-  exec, then AppleScript `File > Load recent script > bootstrap.lua`. It no
-  longer needs James to click through the scripting menu.
-- **The agent is a long-running process.** It fingerprints its own sources and
-  announces `STALE` once if they change; restart it after any edit.
+## Where it stood on the Surge fight
 
-## Fixed today, each verified
+Last ten episodes before the mode change, all on `af8bb60+`: **10 wins**,
+survivors 6/4/5/3/4/4/4/5/4/5 -- so one zero-death win and a median of two
+deaths. Earlier builds produced several cap-meeting wins and four zero-death
+wins. n is small and the build changed underneath most of it. **Re-derive per
+build; never quote a rate across builds.** Column 4 of `results.tsv` is
+SURVIVORS, not deaths -- misread once already.
 
-All of these are the same underlying shape: **the live agent rebuilds state
-from RAM every turn and `createState` zeroes everything**, so anything tracked
-across turns is lost unless carried explicitly.
+## What is still wrong
 
-- **Every observation of the opponent was written to `st.foe.team[0]`** instead
-  of the active. HP, status, PP and STAT STAGES all landed on Pincurchin. This
-  is why Baby-Doll Eyes never handed over: the -1 went onto the wrong Pokemon,
-  Pawmot always read at neutral Attack, and Lilligant stood there clicking until
-  it died. (`abbc732`)
-- **`justEntered` was read in `policy.js` and set nowhere** -- one read, zero
-  writes -- so the entry-only move rule had never once fired and Mienshao never
-  used Fake Out on a switch-in. (`755c4ed`)
-- **`protectChain` was zeroed every rebuild**, so Detect looked like a free turn
-  forever and got spammed in front of a Pawmot on 22 HP. (`d5a2eae`)
-- **Candidates were generated against a FULL-HEALTH target** (cache keyed on
-  foe+terrain only). With Pawmot on 41/99 and a Drain Punch band of 52-63 in
-  hand, no candidate said "finish it" -- so it switched Diggersby in, Diggersby
-  died in one hit, Pawmot drained back to 97. That repeated in five runs.
-  (`afd9db7`)
-- **Plans were PRICED against a full-health target too** -- `chooseAction` built
-  the entry state with our HP and their dead list, and dropped the target's own
-  HP. Same bug, second place. (`1a0eaf3`)
-- **Losses were never recorded**: a whiteout heals the party before the
-  post-battle read, so every loss logged as UNCLEAR and vanished. The 11-0
-  record was never true. Now latched from in-battle reads. (`e4d0961`)
-- **`TEMPO`/`SPEND` were out of scope in the no-kill fallback**, so every
-  fallback turn threw and fell through to greedy one-turn scoring. (`e4d0961`)
-- **Bellibolt has ZERO EVs**, not the sheet's 100: max HP 125, not 133. All five
-  opponents now compute RAM-exact. (`f512e31`)
-- `buildState` no longer hands `createState` a null team, which used to kill the
-  whole agent process and look exactly like the emulator being stuck.
+See `docs/ULTRACODE-BRIEF.md` for the investigation agenda. In short, the four
+root causes found and deliberately NOT fixed, because they are James's calls:
 
-## THE DECISION WAITING FOR JAMES -- where the last wrong deaths live
+1. **Expendable is priced flat.** Every non-forbidden death costs the same, so
+   Lilligant -- the answer to Pawmot -- gets spent on whatever is convenient.
+   The panel is a manual guard over this, not a repair.
+2. **The lookahead dominates and is crude.** ~3.2x the immediate term, prices
+   each remaining opponent INDEPENDENTLY (so one healthy Pokemon is assumed to
+   answer all of them), and returns a flat 8 when it finds nothing. Depth is
+   MEASURED at 5; deeper played strictly worse. A graded-penalty arm was tried
+   live and nearly wiped -- **the no-answer penalty must never price cheaper
+   than killing**, and shrinking the lookahead removes load-bearing fear.
+3. **Multi-move jobs replay move 0 forever**, because `P.newProgress()` is
+   fresh each decision while `pricePath` carries progress.
+4. **Plan churn.** 38% wholesale plan change; on 43% of changed turns the old
+   plan was not even REGENERATED. The incumbent re-offer (eb2369c) addresses
+   only part of it.
 
-34 deaths in the 13:12 session, classified from the archive:
-
-- 13 died ON ENTRY, switched into the killer. Several were priced sacrifices
-  in already-lost endgames; several were healthy bodies (Mienshao 51 died to
-  PINCURCHIN on arrival under a "kills it outright, 0% death" plan -- crit
-  variance the pricer excludes by design).
-- 9 died STAYING under a plan labeled 0-4% death. The risk number is
-  conditioned on the committed foe move; the live foe (56% model) clicked the
-  other plausible one. Victreebel at 57 read 4% death and full Vikavolt's
-  Bug Buzz killed it.
-- Pawmot and Vikavolt own 24 of the 34.
-
-Root: deathRisk still trusts the SINGLE committed foe move, while entry
-damage now hedges the whole plausible set. The candidate fix -- worst
-plausible move on EVERY simulated turn -- is the recorded 0/40 trap's next
-door neighbour (all-pessimism made everything read death and wiped every
-episode), so it is NOT being done unilaterally. Options to discuss:
-(a) worst-plausible everywhere (risk: pessimism paralysis),
-(b) deathRisk-only vs worst plausible, damage trajectory stays committed,
-(c) accept the tax; sharpen only entries further.
-
-## DIAGNOSED, NOT FIXED -- the entry job hands over too early
-
-At live turns 2030/2031 the agent switches a 3 HP Lanturn OUT to Breloom,
-then next turn switches Breloom back IN to Lanturn to be sacrificed. It looks
-like the old oscillation and it is NOT: at 2031 the chosen line is genuinely
-best (sacrifice a 3 HP Lanturn, take the free replacement, Fake Out + Drain
-Punch kills Pawmot) because bringing Mienshao in directly costs it a Thunder
-Punch on ENTRY and a second one before it can act -- Pawmot outspeeds, so
-Mienshao never lands Drain Punch and dies instead. Verified by probe: the
-"Mienshao kills it outright" line exists, is priced, and ends with Mienshao
-dead. The market is right.
-
-What is wrong is turn 2030, where Lanturn was ALREADY standing in the exact
-position the next turn pays a turn and a hit to reach. It cannot express
-"stay and absorb": the absorb job is written with `until: {entered: true}`,
-which is satisfied the instant that Pokemon is active, so with Lanturn in
-front the job immediately hands over and the plan degenerates to "switch to
-the finisher".
-
-NOT FIXED DELIBERATELY. Changing entry-job semantics is the same surgery
-that would touch the Volt Absorb pivot James built over a week and named a
-deliberate feature. The fix probably belongs in policy.js, making an entry
-job that is ALREADY satisfied and whose holder is about to absorb the
-incoming move hold its ground for one turn -- but that needs James, and it
-needs a live A/B, not an argument.
-
-## Open, in rough priority order
-
-- **Reliability of the win.** One zero-death episode is n=1; the 11-0 record
-  was once false too. Count episodes per version in results.tsv before
-  claiming anything.
-- **Vikavolt Roost stall.** The committed sim foe attacks, the real Vikavolt
-  Roosts; live it took ~15 Rock Tombs and won only because Roost has 16 PP.
-  Safe, slow, unpriced.
-- **Chip/absorb legs are generated against a full-HP party**, so plan labels
-  promise chippers that execution skips ("Lanturn chips it" at 6 HP goes
-  straight to the finisher). Prices are honest; labels lie; candidate list
-  floods with aliases of the same degenerate plan.
-- **The lookahead can invert a better plan.** Prices each remaining opponent
-  independently, flat 8 when it finds nothing (that flatness was half the
-  loop tie). Depth is MEASURED AT 5; do not retune without James.
-- **Telemetry is untrustworthy in three places**: wrong foe species in some
-  turn headers, "expecting to deal 0 and take 0" always zero, impossible
-  resolved-damage numbers on switch turns. Audit before quoting any of them.
-- Chip chains (`RR_NO_CHIP_CHAINS` disables) remain unproven either way.
-- Crits still not predictable from the decision-time seed (see the negative
-  result in VALIDATION-LOG); refit needs post-band-fix rows.
-- Mega evolution unmodelled (Intimidate fires twice).
-- Opponent predictor is 56% live; the committed-choice fix reduced how much a
-  wrong pivot prediction can hurt, but the port gap stands.
+Plus the standing items: the death veto in `agent.js` is still an external
+reflex over a priced market (fires ~10% of decisions); `deathRisk` trusts the
+single committed foe move while entry damage hedges the whole plausible set;
+chip/absorb legs are generated against a full-HP party so labels lie; the
+Vikavolt Roost stall is safe, slow and unpriced; crits are not predictable from
+the decision-time seed; mega evolution is unmodelled.
 
 ## How to work on this
 
-Measure live. `tools/test_replan.js` never calls `buildState` and therefore
-cannot see any of today's bugs; it reported 0/12 wipes while live play was fine
-and sent a whole investigation the wrong way. Offline is a crash check, not
-evidence.
+Measure live. Reproduce an archived turn with
+`node tools/agent.js --probe ~/rr-agent/turns/<session>/turnNNNNN.json`; note
+the probe does NOT restore `turnsOut`, so entry-only moves can look legal when
+live they were not -- that produced one confident and completely wrong
+comparison. `RR_EXPLAIN=1` prints the whole market; `RR_EXPLAIN_GREP` filters
+to a substring, which is how you ask "was this line even in the market".
 
-Reproduce an archived turn directly with
-`node tools/agent.js --probe ~/rr-agent/turns/turnNNNNN.json`, which also prints
-why the planner returned nothing. Note the probe does NOT restore `turnsOut`
-from the archive, so entry-only moves can look legal when live they were not --
-that mistake produced one confident and completely wrong comparison today.
+The agent fingerprints its own sources and announces `STALE` once if they
+change. Restart it after any edit.
