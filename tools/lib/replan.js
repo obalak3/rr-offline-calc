@@ -1074,9 +1074,28 @@ function chooseAction(ctx, state, opts) {
 	for (const item of ranked) {
 		const action = firstAction(item);
 		if (!action) continue;
-		const path = item === best ? best
-			: {score: item.here, here: item.here, ahead: 0, cand: item.cand,
-				r: item.r, illegal: item.illegal};
+		// THE RETURNED PATH MUST CARRY THE REAL LOOKAHEAD.
+		//
+		// This compared `item` (a shortlist entry) against `best` (a wrapper
+		// object BUILT from one), which are never the same object, so the test
+		// was always false and every returned path reported ahead = 0. Nothing
+		// downstream could tell the immediate cost from the full criterion:
+		// agent.js:1657 computes the panel's line verdict as here + (ahead||0),
+		// so "cheaper on the full criterion and still lost" -- the whole reason
+		// the line box exists -- has always compared on `here` alone, and
+		// agent.js's turn log has printed "rest of the fight 0.00" on every
+		// planned turn. It also silently zeroed the bias measurement built to
+		// audit the lookahead, which came back a perfect 0.00 on 1608 rows.
+		//
+		// Matched on the candidate now, which is the thing that identifies a
+		// line. `item.ahead` is present for finalists and undefined otherwise,
+		// and undefined is reported as null rather than as zero so a caller can
+		// tell "not judged" from "judged at zero" -- the distinction the
+		// FINALISTS cut makes and the old code destroyed.
+		const path = (best && item.cand === best.cand) ? best
+			: {score: item.here + (item.ahead || 0), here: item.here,
+				ahead: item.ahead === undefined ? null : item.ahead,
+				cand: item.cand, r: item.r, illegal: item.illegal};
 		return {action, path, stay, alternatives, userLine,
 			// Hand back to the caller, which owns it across turns. Null when
 			// RR_CARRY_PROGRESS is off, and then nothing has changed at all.

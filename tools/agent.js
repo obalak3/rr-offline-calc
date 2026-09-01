@@ -1454,7 +1454,8 @@ function verdictText(v, winner) {
 	}
 	const lines = [];
 	lines.push('your line: total ' + money(v.total) + ' (this kill ' + money(v.here)
-		+ ' + rest of the fight ' + money(v.ahead) + ')'
+		+ ' + rest of the fight '
+		+ (v.ahead === null || v.ahead === undefined ? 'NOT JUDGED' : money(v.ahead)) + ')'
 		+ ', ' + (v.kills ? 'kills it' : 'does not kill it (' + v.outcome + ')')
 		+ ' in ' + v.turns + ' turns, loses ' + who(v.dead)
 		+ ', death risk ' + Math.round(100 * (v.deathRisk || 0)) + '%');
@@ -1724,7 +1725,11 @@ setInterval(() => {
 		if (userLine && pick) {
 			const w = pick.path ? {
 				total: pick.path.here + (pick.path.ahead || 0),
-				here: pick.path.here, ahead: pick.path.ahead || 0,
+				// null ahead means the FINALISTS cut never judged this line, which
+				// is a different statement from "its lookahead is zero" and is
+				// exactly the distinction the line box exists to make.
+				here: pick.path.here, ahead: pick.path.ahead,
+				judged: pick.path.ahead !== null,
 				why: pick.path.cand.why,
 				dead: (pick.path.r && pick.path.r.dead) || []
 			} : null;
@@ -1932,7 +1937,7 @@ setInterval(() => {
 		? (plannerSaid.overridden ? 'PLAN (OVERRIDDEN by the death veto): ' : 'PLAN: ')
 			+ plannerSaid.path.cand.why
 			+ '   [this kill ' + plannerSaid.path.here.toFixed(2)
-			+ ', rest of the fight ' + plannerSaid.path.ahead.toFixed(2)
+			+ ', rest of the fight ' + (plannerSaid.path.ahead === null ? 'not judged' : plannerSaid.path.ahead.toFixed(2))
 			// THE PRICED REALITY, next to the label. The label is written by
 			// GENERATION, which measures a duel with both Pokemon already on
 			// the field; the price is PAID in the real position, where we may
