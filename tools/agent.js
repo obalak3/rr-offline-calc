@@ -1035,9 +1035,22 @@ if (process.argv[2] === '--score-live') {
 						if (dmg > pd) { pd = dmg; pick2 = e2; }
 					}
 					const key2 = sp + ' vs ' + st.me.team[st.me.active].set.species;
-					const row2 = (matchTally[key2] = matchTally[key2] || {hit: 0, n: 0});
+					const row2 = (matchTally[key2] = matchTally[key2] || {hit: 0, n: 0,
+						ev: 0, inset: 0});
 					row2.n++;
 					if (pick2.action.index === actualSlot) row2.hit++;
+					// TIE-AWARE EXPECTED ACCURACY, alongside the raw number. Some
+					// matchups are irreducible coins: Pawmot's two punches into
+					// Mienshao are damage twins (both STAB, both neutral, equal
+					// bands), so which one the game clicks is not predictable and
+					// a 51% raw score there is the CEILING, not a bug. Grading a
+					// hit inside a k-way argmax tie at 1/k -- the --score-port
+					// convention -- makes ceilings look like ceilings, so the
+					// table separates "we are wrong" from "nobody could know".
+					if (tied.some(e2 => e2.action.index === actualSlot)) {
+						row2.inset++;
+						row2.ev += 1 / tied.length;
+					}
 				}
 			}
 		}
@@ -1068,8 +1081,13 @@ if (process.argv[2] === '--score-live') {
 		Object.keys(matchTally).forEach(k => { H2 += matchTally[k].hit; N2 += matchTally[k].n; });
 		console.log('\ncommitted-choice accuracy per matchup (worst first, n>=8; overall '
 			+ Math.round(100 * H2 / N2) + '% on ' + N2 + ' move turns):');
-		mt.forEach(x => console.log('  ' + String(Math.round(100 * x.acc)).padStart(3)
-			+ '%  n=' + String(x.n).padStart(4) + '  ' + x.k));
+		mt.forEach(x => {
+			const t2 = matchTally[x.k];
+			console.log('  ' + String(Math.round(100 * x.acc)).padStart(3)
+				+ '%  n=' + String(x.n).padStart(4)
+				+ '  in-argmax-set ' + String(Math.round(100 * t2.inset / t2.n)).padStart(3)
+				+ '%  ' + x.k);
+		});
 	}
 	console.log('truth rows ' + rows + ', dropped as a stale struct (repeated simulatedRNG) '
 		+ stale + ', paired to an archived position ' + paired);
