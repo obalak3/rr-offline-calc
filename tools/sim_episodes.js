@@ -90,7 +90,7 @@ const ctx = {engine, party, foeSets, expendable: EXPENDABLE};
  * MOVES ONLY, matching `modelAction` in agent.js. Ties break uniformly, which
  * is what ai_master.c:360 does.
  */
-function foeChoice(st) {
+function foeChoice(st, rand) {
 	const sc = RRAI.scoreAll(st, 'foe', FLAGS, {});
 	if (!sc.length) return null;
 	const moves = sc.filter(e => e.action.type === 'move');
@@ -98,7 +98,7 @@ function foeChoice(st) {
 	let best = -Infinity;
 	pool.forEach(e => { if (e.score > best) best = e.score; });
 	const ties = pool.filter(e => e.score === best);
-	return ties[Math.floor(Math.random() * ties.length)].action;
+	return ties[Math.floor(rand() * ties.length)].action;
 }
 
 function bestDamage(st) {
@@ -112,22 +112,62 @@ function bestDamage(st) {
 	return best || B.legalActions(st, 'me')[0];
 }
 
-function stepOpts() {
+function stepOpts(rand) {
 	if (DICE === 'odds') return {mode: 'odds', forkBudget: 3};
 	if (DICE === 'maxroll') return {mode: 'maxroll', risks: {roll: 'median', foeRoll: 'max'}};
-	return {mode: 'sample'};
+	return {mode: 'sample', rand: rand};
 }
-function sample(br) {
+function sample(br, rand) {
 	if (br.length === 1) return br[0].state;
-	let r = Math.random(), a = 0;
+	let r = rand(), a = 0;
 	for (const b of br) { a += b.probability === undefined ? 1 / br.length : b.probability; if (r <= a) return b.state; }
 	return br[br.length - 1].state;
+}
+
+/**
+ * COMMON RANDOM NUMBERS, which is what makes two arms comparable at this n.
+ *
+ * Three identical control runs of this harness came out 27/60, 25/60 and 22/60.
+ * That is ordinary binomial spread (sigma is about 3.8 wins), and it means an
+ * unpaired comparison at n=60 can only see very large effects -- it was enough
+ * for RR_DEEP_SCAN's 27->8 collapse and nowhere near enough for the no-answer
+ * floor's 22 vs 24, which was reported as "a wash" when the truth is that the
+ * instrument could not tell.
+ *
+ * So every source of chance in an episode is driven by ONE seeded generator,
+ * seeded per episode from SEED + episode index. Episode 17 of arm A then faces
+ * the same opening rolls as episode 17 of arm B, and the comparison is made
+ * pairwise rather than between two independent totals. The arms still diverge
+ * once they choose differently -- that is the effect being measured, not noise --
+ * but everything up to the first divergence is shared, and that is where most of
+ * the variance lives.
+ *
+ * The generator is the game's own: multiplier 0x41C64E6D, addend 12345, the
+ * battle LCG solved earlier in this project (see `advance` in tools/agent.js).
+ * Using it rather than a library PRNG keeps one fewer arbitrary choice in the
+ * measurement path.
+ *
+ * There are exactly three consumers, verified by grep: the foe's tie-break, the
+ * branch sample above, and rr-battle's `sample` mode via opts.rand. pricePath is
+ * deterministic in the mode chooseAction uses (paths.js:183 `median` is true
+ * whenever no mode is passed, and nothing passes one), and RRAI.scoreAll carries
+ * no randomness of its own, so nothing else needs seeding.
+ */
+function makeRng(seed) {
+	let s = seed >>> 0;
+	return function () {
+		s = (Math.imul(s, 0x41C64E6D) + 12345) >>> 0;
+		return s / 4294967296;
+	};
 }
 
 let won = 0, cap = 0, priced = 0, fell = 0, totTurns = 0, totKills = 0;
 let persisted = 0, changedByProgress = 0;
 const deaths = {}, survivorHist = {}, actionTally = {};
+const SEED = Number(process.env.SEED || 1);
+const perEpisode = [];      // one line per episode, for the pairwise comparison
 for (let ep = 0; ep < N; ep++) {
+	const rand = makeRng(SEED + ep * 7919);
 	let st = B.createState(party, foeSets, {});
 	// The live agent's `lastPlan`, with the same shape and the same lifetime:
 	// a plan is about an OPPONENT, so it expires when that opponent leaves.
@@ -153,7 +193,7 @@ for (let ep = 0; ep < N; ep++) {
 					progress: pick.progress || null};
 			}
 		} else { mine = bestDamage(st); fell++; }
-		const theirs = foeChoice(st);
+		const theirs = foeChoice(st, rand);
 		if (!mine || !theirs) break;
 		const key = mine.type === 'switch' ? 'switch' : mine.move;
 		actionTally[key] = (actionTally[key] || 0) + 1;
@@ -174,9 +214,9 @@ for (let ep = 0; ep < N; ep++) {
 			if (!same(fresh, mine)) changedByProgress++;
 		}
 		let out;
-		try { out = B.step(st, mine, theirs, stepOpts()); } catch (e) { break; }
+		try { out = B.step(st, mine, theirs, stepOpts(rand)); } catch (e) { break; }
 		if (!out || !out.length) break;
-		st = sample(out);
+		st = sample(out, rand);
 	}
 	totTurns += t;
 	const w = st.foe.team.every(m => m.fainted);
@@ -187,6 +227,10 @@ for (let ep = 0; ep < N; ep++) {
 	if (w) won++;
 	if (w && d.every(x => EXPENDABLE.includes(x))) cap++;
 	d.forEach(x => { deaths[x] = (deaths[x] || 0) + 1; });
+	// PER-EPISODE, so arms can be differenced episode by episode instead of
+	// total by total. This line is the unit of the paired comparison.
+	perEpisode.push([SEED + ep * 7919, w ? 1 : 0, surv, t,
+		st.foe.team.filter(m => m.fainted).length].join(','));
 }
 
 const totalActions = Object.keys(actionTally).reduce((a, k) => a + actionTally[k], 0) || 1;
@@ -211,3 +255,12 @@ console.log('  plan survived the turn: ' + persisted + '/' + priced + '  ('
 console.log('  turns where carrying progress CHANGED the action: ' + changedByProgress
 	+ '  (' + (priced ? (100 * changedByProgress / priced).toFixed(1) : 0) + '%)');
 console.log('  priced turns: ' + priced + ', fell back to greedy: ' + fell);
+console.log('  seed base:    ' + SEED);
+// EPISODES= writes the per-episode rows for pairing. Deliberately last and
+// machine-readable: the summary above is for a human, this is for the compare.
+if (process.env.EPISODES) {
+	const fs = require('fs');
+	fs.writeFileSync(process.env.EPISODES,
+		'seed,won,survivors,turns,theirKills\n' + perEpisode.join('\n') + '\n');
+	console.log('  per-episode:  ' + process.env.EPISODES);
+}
