@@ -678,6 +678,19 @@ var RRBattle = (function () {
 		if (mon.volatiles.substitute) return false;
 		// Volt Absorb stops Thunder Wave, not just Thunderbolt.
 		if (moveType && absorbs(mon, moveType)) return false;
+		// AND SO DOES BEING A GROUND TYPE. A status move still carries its
+		// type, and type immunity blocks it outright: Thunder Wave does not
+		// touch a Ground type. This is the check the comment at the scoring
+		// site believed it was getting by passing moveType down -- absorb
+		// abilities were covered, plain type immunity was not, so our port
+		// scored Thunder Wave +6 "paralysis is useful" against DIGGERSBY and
+		// predicted it over Muddy Water on 81 of 83 archived turns, while the
+		// real AI scores it 96 and clicked it never. Electric-into-Ground is
+		// the only such pairing this team can meet; powder-versus-Grass would
+		// be its sibling if a powder user ever faces one.
+		if (moveType === "Electric" && typesOf(mon).indexOf("Ground") >= 0) {
+			return false;
+		}
 
 		// Terrain blocks status on anything standing on it. This decides whole
 		// fights: Pincurchin's Electric Surge means Sleep Powder does nothing to
