@@ -61,6 +61,7 @@
 const H = require('./lib/harness.js');
 const R = require('./lib/replan.js');
 const P = require('./lib/policy.js');
+const G = require('./lib/gameplan.js');
 const engine = H.loadEngine();
 const B = engine.B, RRAI = engine.sandbox.RRAI;
 const FLAGS = {checkBadMove: true, checkGoodMove: true};
@@ -72,12 +73,28 @@ const N = parseInt(process.argv[2], 10) || 20;
 //   RR_CARRY_PROGRESS=1      hold the plan's own progress across turns
 // RR_CARRY_PROGRESS is read by replan.js itself, so it needs no wiring here;
 // it is named in this comment because this file is where it gets measured.
+// ARM selects the planning architecture. See docs/BATTERY-PREREG.md.
+//   A  control, current live behaviour: chooseAction every turn
+//   C  commitment: the same single-foe planner, but its plan is FOLLOWED until
+//      a divergence test fires instead of being re-derived every turn
+//   D  whole-fight gameplan, plan-and-repair (tools/lib/gameplan.js)
+//   E  D, hedging their replacement (reserved; not implemented yet)
+// B is not an ARM: it is A with RR_NOANSWER_FLOOR and RR_CARRY_PROGRESS set.
+const ARM = (process.env.ARM || 'A').toUpperCase();
 const DICE = process.env.DICE || 'fair';
 const INCUMBENT = !process.env.NO_INCUMBENT;
 const EXPENDABLE = (process.env.EXPENDABLE === undefined
 	? 'Lilligant' : process.env.EXPENDABLE).split(',').filter(Boolean);
 
-const party = H.realTeam();
+// LEVEL=<n> scales our side to a fight's level. Only ONE trainer in the game
+// sits in this team's native band (Lt. Surge, L32-34), so without scaling the
+// battery cannot ask whether an architecture generalises beyond the five Pokemon
+// every constant was fitted against -- it would just be Surge three times.
+// Scaled runs are labelled as such and must never be pooled with native ones.
+const LEVEL = Number(process.env.LEVEL || 0);
+const party = LEVEL
+	? H.realTeam().map(s => Object.assign({}, s, {level: LEVEL}))
+	: H.realTeam();
 const battle = H.earlyBattles(engine, {maxLevel: 60})
 	.filter(b => H.label(b).toUpperCase().includes(process.env.FIGHT || 'SURGE'))[0];
 if (!battle) { console.log('no battle matching FIGHT=' + (process.env.FIGHT || 'SURGE')); process.exit(1); }
@@ -163,6 +180,7 @@ function makeRng(seed) {
 
 let won = 0, cap = 0, priced = 0, fell = 0, totTurns = 0, totKills = 0;
 let persisted = 0, changedByProgress = 0;
+let followed = 0, replans = 0, gameplans = 0, gameplanLegs = 0, gameplanFail = 0;
 const deaths = {}, survivorHist = {}, actionTally = {};
 const SEED = Number(process.env.SEED || 1);
 const perEpisode = [];      // one line per episode, for the pairwise comparison
@@ -172,6 +190,7 @@ for (let ep = 0; ep < N; ep++) {
 	// The live agent's `lastPlan`, with the same shape and the same lifetime:
 	// a plan is about an OPPONENT, so it expires when that opponent leaves.
 	let lastPlan = {foe: null, jobs: null, progress: null};
+	let held = null;
 	let t = 0;
 	for (t = 0; t < 80; t++) {
 		if (B.isOver(st)) break;
@@ -179,11 +198,75 @@ for (let ep = 0; ep < N; ep++) {
 		const foeNow = st.foe.team[st.foe.active].set.species;
 		const prevJobs = (lastPlan.foe === foeNow && lastPlan.jobs)
 			? JSON.stringify(lastPlan.jobs) : null;
+
+		// ---- ARMS C AND D: follow a held plan until reality leaves it ----
+		//
+		// The divergence test is deliberately STRICT, because its failure mode
+		// matters: replanning too often degrades to arm A, which is the control
+		// and is known to work, while replanning too rarely is the static plan
+		// that lost 0/30. It fails safe by construction.
+		//
+		// A plan is abandoned when a Pokemon it did not concede has died, when
+		// the executor can no longer answer, or (arm C only, whose plan covers
+		// one opponent) when the opponent changes. Arm D expects the opponent to
+		// change; that is what a whole-fight plan is for.
+		if (ARM === 'C' || ARM === 'D') {
+			if (held) {
+				const deadNow = st.me.team.filter(m => m.fainted)
+					.map(m => m.set.species).sort().join(',');
+				const lostSomeoneUnplanned = st.me.team.some(m => m.fainted
+					&& !held.conceded.includes(m.set.species));
+				const foeChanged = held.foe !== foeNow;
+				if (lostSomeoneUnplanned || (ARM === 'C' && foeChanged)) {
+					held = null; replans++;
+				} else if (deadNow !== held.deadAt) {
+					held = null; replans++;
+				}
+			}
+			if (held) {
+				let act = null;
+				try { act = P.planAction(engine, st, held.plan, held.progress); }
+				catch (e) { act = null; }
+				if (act) {
+					followed++;
+					const key2 = act.type === 'switch' ? 'switch' : act.move;
+					actionTally[key2] = (actionTally[key2] || 0) + 1;
+					const theirs2 = foeChoice(st, rand);
+					if (!theirs2) break;
+					let out2;
+					try { out2 = B.step(st, act, theirs2, stepOpts(rand)); } catch (e) { break; }
+					if (!out2 || !out2.length) break;
+					st = sample(out2, rand);
+					continue;
+				}
+				held = null; replans++;   // the plan ran out of things to say
+			}
+		}
 		const pick = R.chooseAction(ctx, st, {
 			incumbent: (INCUMBENT && lastPlan.foe === foeNow) ? lastPlan.jobs : null,
 			progress: (lastPlan.foe === foeNow) ? lastPlan.progress : null
 		});
 		let mine;
+		// ARM D builds the whole-fight plan here; if it cannot, it falls through
+		// to the incumbent planner for this turn rather than inventing one.
+		if (ARM === 'D' && !held) {
+			let gp = null;
+			try { gp = G.buildGameplan(ctx, st, {}); } catch (e) { gp = null; }
+			if (gp) {
+				const conceded = [];
+				gp.legs.forEach(l => (l.dead || []).forEach(n => {
+					if (!conceded.includes(n)) conceded.push(n);
+				}));
+				held = {plan: gp.plan, progress: P.newProgress(), foe: foeNow,
+					conceded: conceded, cost: gp.cost,
+					deadAt: st.me.team.filter(m => m.fainted)
+						.map(m => m.set.species).sort().join(',')};
+				gameplans++;
+				gameplanLegs += gp.legs.length;
+				continue;   // execute it on the next pass through the loop
+			}
+			gameplanFail++;
+		}
 		const samePlanAsLast = !!(pick && pick.path && pick.path.cand && prevJobs
 			&& JSON.stringify(pick.path.cand.jobs) === prevJobs);
 		if (pick) {
@@ -191,6 +274,14 @@ for (let ep = 0; ep < N; ep++) {
 			if (pick.path && pick.path.cand) {
 				lastPlan = {foe: foeNow, jobs: pick.path.cand.jobs,
 					progress: pick.progress || null};
+				if (ARM === 'C') {
+					const pl = {};
+					pl[foeNow] = pick.path.cand.jobs;
+					held = {plan: pl, progress: P.newProgress(), foe: foeNow,
+						conceded: (pick.path.r && pick.path.r.dead) || [],
+						deadAt: st.me.team.filter(m => m.fainted)
+							.map(m => m.set.species).sort().join(',')};
+				}
 			}
 		} else { mine = bestDamage(st); fell++; }
 		const theirs = foeChoice(st, rand);
@@ -234,7 +325,7 @@ for (let ep = 0; ep < N; ep++) {
 }
 
 const totalActions = Object.keys(actionTally).reduce((a, k) => a + actionTally[k], 0) || 1;
-console.log('dice=' + DICE + (INCUMBENT ? ' +incumbent' : ' NO-incumbent')
+console.log('ARM=' + ARM + (LEVEL ? '  ourLevel=' + LEVEL + ' (SCALED)' : '') + '  dice=' + DICE + (INCUMBENT ? ' +incumbent' : ' NO-incumbent')
 	+ (process.env.RR_CARRY_PROGRESS ? ' +progress' : '')
 	+ (process.env.RR_DEEP_SCAN ? ' +deepscan' + process.env.RR_DEEP_SCAN : '')
 	+ (process.env.RR_NOANSWER_FLOOR ? ' +floor' : '')
@@ -255,6 +346,16 @@ console.log('  plan survived the turn: ' + persisted + '/' + priced + '  ('
 console.log('  turns where carrying progress CHANGED the action: ' + changedByProgress
 	+ '  (' + (priced ? (100 * changedByProgress / priced).toFixed(1) : 0) + '%)');
 console.log('  priced turns: ' + priced + ', fell back to greedy: ' + fell);
+if (ARM === 'C' || ARM === 'D') {
+	console.log('  turns played FROM a held plan: ' + followed
+		+ '  (' + (followed + priced ? (100 * followed / (followed + priced)).toFixed(0) : 0) + '%)');
+	console.log('  plans abandoned on divergence:  ' + replans);
+}
+if (ARM === 'D') {
+	console.log('  gameplans built: ' + gameplans
+		+ ', mean legs ' + (gameplans ? (gameplanLegs / gameplans).toFixed(1) : '-')
+		+ ', build failed (fell back to the incumbent planner): ' + gameplanFail);
+}
 console.log('  seed base:    ' + SEED);
 // EPISODES= writes the per-episode rows for pairing. Deliberately last and
 // machine-readable: the summary above is for a human, this is for the compare.
