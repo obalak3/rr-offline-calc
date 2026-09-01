@@ -337,7 +337,17 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 			// (rr-solver.js), not a new number.
 			out = B.step(st, mine, theirs, median
 				? {mode: 'maxroll', risks: {roll: 'median', paralysis: 1,
-					foeRoll: (options.pessimism === false) ? 'median' : 'max'}}
+					// RR_FOE_ROLL=median reads THEIR damage at the middle of the
+					// band instead of the top, for A/B only; default unchanged.
+					// The max reading is the last untested member of the same
+					// pessimism family as the worst-plausible entry hedge: added
+					// when the pricer had the full-HP fictions, kept after every
+					// one of those bugs was fixed, and never re-measured. It is
+					// why a stall line reads as losing a race it wins live --
+					// every incoming hit priced at its ceiling, forever, with
+					// zero variance.
+					foeRoll: (options.pessimism === false
+						|| process.env.RR_FOE_ROLL === 'median') ? 'median' : 'max'}}
 				: {mode: 'odds', forkBudget: 3});
 		} catch (e) { outcome = 'error'; break; }
 		if (!out || !out.length) { outcome = 'error'; break; }
