@@ -915,7 +915,7 @@ if (process.argv[2] === '--score-live') {
 		}
 	};
 	walk(turnsRoot);
-	const gaps = {}, perMon = {};
+	const gaps = {}, perMon = {}, matchTally = {};
 	let rows = 0, paired = 0, exact = 0, argmaxOK = 0, stale = 0;
 	// A SCORE SHEET THE AI NEVER WROTE THIS TURN.
 	//
@@ -1013,12 +1013,63 @@ if (process.argv[2] === '--score-live') {
 			}
 		}
 		if (allEq) { exact++; row.exact++; }
+		// The committed-choice comparison for the matchup table: what the
+		// pricing's own predictor would have played here, against what the AI
+		// actually clicked (recorded in the truth row itself). Move turns only.
+		{
+			const parts = (f[9] || '').split('/');
+			if (parts.length === 2 && parts[0] === '0') {
+				const actualSlot = Number(parts[1]);
+				const movesOnly = scored.filter(e2 => e2.action.type === 'move');
+				if (movesOnly.length) {
+					let bestS = -Infinity;
+					movesOnly.forEach(e2 => { if (e2.score > bestS) bestS = e2.score; });
+					const tied = movesOnly.filter(e2 => e2.score === bestS);
+					let pick2 = tied[0], pd = -1;
+					for (const e2 of tied) {
+						let dmg = 0;
+						try {
+							const r2 = B.damageRolls(st, 'foe', e2.action.move);
+							if (r2 && !r2.immune) dmg = r2.noCrit[Math.floor(r2.noCrit.length / 2)] * (r2.hits || 1);
+						} catch (e3) { dmg = 0; }
+						if (dmg > pd) { pd = dmg; pick2 = e2; }
+					}
+					const key2 = sp + ' vs ' + st.me.team[st.me.active].set.species;
+					const row2 = (matchTally[key2] = matchTally[key2] || {hit: 0, n: 0});
+					row2.n++;
+					if (pick2.action.index === actualSlot) row2.hit++;
+				}
+			}
+		}
 		let bt = -Infinity, bo = -Infinity;
 		tScores.forEach(v => { if (v > bt) bt = v; });
 		Object.keys(bySlot).forEach(i => { if (bySlot[i].score > bo) bo = bySlot[i].score; });
 		const tSet = tScores.map((v, i) => v === bt ? i : -1).filter(i => i >= 0);
 		const oSet = Object.keys(bySlot).filter(i => bySlot[i].score === bo).map(Number);
 		if (tSet.length === oSet.length && tSet.every(i => oSet.indexOf(i) >= 0)) argmaxOK++;
+	}
+	// THE PREDICTOR TABLE, PER MATCHUP. Aggregate argmax agreement hid a
+	// committed-choice model that was flat WRONG on one specific pair: Bellibolt
+	// facing a standing Mienshao clicks Parabolic Charge 36 of 37 times live,
+	// and the port said Thunder Wave -- a coin called 100% the wrong way that
+	// read as "one point off, in-set" in every aggregate, for days, while
+	// "Bellibolt Parabolic Charge -6 x25" sat mid-table below bigger phantoms.
+	// Nothing downstream consumed the prediction either (the worst-plausible
+	// entry hedge made it non-load-bearing), so the error was invisible in
+	// outcomes too. Under RR_ENTRY_MODEL=confident predictions ARE load-bearing,
+	// so which exact matchups predict badly has to be a standing instrument
+	// rather than a one-night dig.
+	const mt = Object.keys(matchTally).map(k => {
+		const t = matchTally[k];
+		return {k, n: t.n, acc: t.hit / t.n};
+	}).filter(x => x.n >= 8).sort((a, b) => a.acc - b.acc);
+	if (mt.length) {
+		let H2 = 0, N2 = 0;
+		Object.keys(matchTally).forEach(k => { H2 += matchTally[k].hit; N2 += matchTally[k].n; });
+		console.log('\ncommitted-choice accuracy per matchup (worst first, n>=8; overall '
+			+ Math.round(100 * H2 / N2) + '% on ' + N2 + ' move turns):');
+		mt.forEach(x => console.log('  ' + String(Math.round(100 * x.acc)).padStart(3)
+			+ '%  n=' + String(x.n).padStart(4) + '  ' + x.k));
 	}
 	console.log('truth rows ' + rows + ', dropped as a stale struct (repeated simulatedRNG) '
 		+ stale + ', paired to an archived position ' + paired);
