@@ -397,7 +397,15 @@ function chooseAction(ctx, state, opts) {
 				const rate = process.env.RR_DERIVED_TEMPO
 					? turnRate(engine, after, gi)
 					: (options.tempo === undefined ? 0.4 : options.tempo);
-				const c = sp + bad * 6 + 2 * rr.deathRisk + rate * (rr.turns || 0);
+				// RR_RISK_WEIGHT=4 prices a future death risk the same as a present
+				// one. `here` charges 4 x deathRisk and this charges 2, so a risk
+				// deferred to later has always been half price -- which quietly
+				// subsidises deferral, the same bias family as every other item
+				// in the register. Whether the discount is right is a question
+				// about how much we trust a prediction two opponents away, and
+				// that is measurable rather than arguable. Default unchanged.
+				const RW = Number(process.env.RR_RISK_WEIGHT || 2);
+				const c = sp + bad * 6 + RW * rr.deathRisk + rate * (rr.turns || 0);
 				if (cheapest === null || c < cheapest) {
 					cheapest = c;
 					// Who actually lands the kill, read off the priced
