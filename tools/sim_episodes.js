@@ -180,11 +180,12 @@ function makeRng(seed) {
 
 let won = 0, cap = 0, priced = 0, fell = 0, totTurns = 0, totKills = 0;
 let persisted = 0, changedByProgress = 0;
-let followed = 0, replans = 0, gameplans = 0, gameplanLegs = 0, gameplanFail = 0;
+let followed = 0, replans = 0, gameplans = 0, gameplanLegs = 0, gameplanFail = 0, vetoed = 0;
 // DIAG=1 answers "why is D doing badly", which the summary counters cannot:
 // where builds fail, how long a plan survives, how many deaths it signs up for.
 const DIAG = !!process.env.DIAG;
 const DRIFT = Number(process.env.RR_GP_DRIFT || 0);
+const VETO = !!process.env.VETO;
 const diag = {buildFail: {}, abandon: {}, lifetimes: [], legs: {},
 	concededPerPlan: [], complete: {}, drift: [], failSeen: {}, failDistinct: 0,
 	stop: {}, rejected: {}, legTurns: {}};
@@ -380,6 +381,34 @@ for (let ep = 0; ep < N; ep++) {
 		} else { mine = bestDamage(st); fell++; }
 		const theirs = foeChoice(st, rand);
 		if (!mine || !theirs) break;
+		// THE DEATH VETO, EMULATED (VETO=1), so register item #4 is measurable.
+		//
+		// It lives in agent.js and the harness has never had it, which means
+		// every offline arm so far has compared planners in a world without the
+		// reflex that overrides them live. That is not a small omission: it
+		// fires on about 10% of live decisions.
+		//
+		// Emulated in spirit rather than transcribed: if the planned action
+		// would lose our active this turn against the predicted foe move, and
+		// would not take the foe with it, substitute the first legal action that
+		// survives. The live one uses agent.js's one-turn scorer for the same
+		// judgement; both condition on the SINGLE predicted move, which is the
+		// property being measured.
+		if (VETO && mine) {
+			const idx = st.me.active;
+			const dies = act => {
+				try {
+					const o = B.step(st, act, theirs, {mode: 'maxroll', risks: {roll: 'median', foeRoll: 'max'}});
+					const s2 = o && o[0] && o[0].state;
+					if (!s2) return false;
+					return s2.me.team[idx].fainted && !s2.foe.team[st.foe.active].fainted;
+				} catch (e) { return false; }
+			};
+			if (dies(mine)) {
+				const alt = B.legalActions(st, 'me').find(a => !dies(a));
+				if (alt) { mine = alt; vetoed++; }
+			}
+		}
 		const key = mine.type === 'switch' ? 'switch' : mine.move;
 		actionTally[key] = (actionTally[key] || 0) + 1;
 		// DID CARRYING PROGRESS ACTUALLY CHANGE THIS TURN? Answered by replaying
@@ -447,6 +476,7 @@ console.log('ARM=' + ARM + (LEVEL ? '  ourLevel=' + LEVEL + ' (SCALED)' : '') + 
 	+ (process.env.RR_DEEP_SCAN ? ' +deepscan' + process.env.RR_DEEP_SCAN : '')
 	+ (process.env.RR_NOANSWER_FLOOR ? ' +floor' : '')
 	+ (DRIFT ? ' +drift' + DRIFT : '')
+	+ (VETO ? ' +deathveto' : '')
 	+ '  expendable=[' + EXPENDABLE.join(',') + ']  ' + N + ' episodes of ' + H.label(battle));
 console.log('  won:          ' + won + '/' + N);
 console.log('  met the cap:  ' + cap + '/' + N + '   (win, losing nobody but ' + (EXPENDABLE.join('/') || 'nobody') + ')');
@@ -463,6 +493,8 @@ console.log('  plan survived the turn: ' + persisted + '/' + priced + '  ('
 	+ '   -- progress can only accumulate on these');
 console.log('  turns where carrying progress CHANGED the action: ' + changedByProgress
 	+ '  (' + (priced ? (100 * changedByProgress / priced).toFixed(1) : 0) + '%)');
+if (VETO) console.log('  death veto fired: ' + vetoed + ' times ('
+	+ (priced ? (100 * vetoed / priced).toFixed(1) : 0) + '% of decisions; live measures ~10%)');
 console.log('  priced turns: ' + priced + ', fell back to greedy: ' + fell);
 if (ARM === 'C' || ARM === 'D') {
 	console.log('  turns played FROM a held plan: ' + followed
