@@ -618,6 +618,29 @@ var RRAI = (function () {
 						var clsS = fightClass(self);
 						good(score === BASE && kills ? strongestMoveBonus(clsS) : 2,
 							"strongest move");
+						// A DRAINING STRONGEST MOVE PAYS EXTRA ONCE THE TARGET HAS
+						// STOOD A TURN. MEASURED, not transcribed (the CFRU clone
+						// is gone): Bellibolt's Parabolic Charge vs a standing
+						// Mienshao scores 108, vs one that just switched in 102 --
+						// separation 67 of 71 non-stale truth rows on
+						// target.turnsOut alone, after HP thresholds, RNG parity
+						// and paralysis were each tested and ruled out. Pawmot's
+						// Drain Punch shows the same +6 enriched the same way
+						// (39 rows at turnsOut>=1 against 7 at 0). The +6 only
+						// ever appears ON TOP of this strongest-move +2 (102->108,
+						// never 100->106), which is why it lives inside this
+						// branch.
+						//
+						// This is the rule that makes James's Lanturn/Mienshao
+						// lure work: the AI commits the drain at the Pokemon that
+						// STAYED, and the absorber walks into it. Without the +6
+						// our sim had Bellibolt clicking Thunder Wave at standing
+						// Mienshao, truth clicks Parabolic 36 of 37 there, and the
+						// lure's entire healing income disappeared from pricing.
+						var drainM = data && data.mechanics && data.mechanics.drain;
+						if (drainM && foe.turnsOut >= 1 && self.curHP < self.maxHP) {
+							good(6, "drain pays once the target has stood a turn");
+						}
 					}
 					// EFFECT_SPEED_DOWN_HIT, ai_positives.c:838: a reliable
 					// speed-dropping hit gets +3 RAW, "increase past strongest

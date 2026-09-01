@@ -224,7 +224,9 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		// promptly threw away good lines over survivable hits. The committed
 		// -move veto below remains only for callers that supply no threat set.
 		if (mine && mine.type === 'switch'
-			&& options.entryThreats && options.entryThreats.length) {
+			&& options.entryThreats && options.entryThreats.length
+			&& process.env.RR_ENTRY_MODEL !== 'committed'
+			&& process.env.RR_ENTRY_MODEL !== 'confident') {
 			let worst = null, worstDmg = -1;
 			const probe = B.clone(st);
 			probe.me.active = mine.index;
@@ -236,6 +238,58 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 				if (dmg > worstDmg) { worstDmg = dmg; worst = threat; }
 			}
 			if (worst) theirs = worst;
+		} else if (mine && mine.type === 'switch'
+			&& process.env.RR_ENTRY_MODEL === 'confident') {
+			// JAMES'S ENTRY MODEL, replacing the blanket worst-plausible hedge.
+			//
+			// His ruling, verbatim: "We can get NOWHERE by assuming the enemy
+			// will do the worst move... We need to assume that we can guess what
+			// the opponent does, unless the move is up to a dice roll... then it
+			// should decide depending on the position if that chance can be
+			// taken (if we are wrong does our pokemon die? or is it some extra
+			// damage)."
+			//
+			// The evidence behind the ruling, both directions: Q3 measured that
+			// worst-plausible hedging does not even buy death prediction (70.0%
+			// priced risk under the committed move vs 71.7% under the worst
+			// one), and the hedge priced James's zero-death Bellibolt stall --
+			// which the sim itself plays cleanly, 9T kill, deathRisk 0.00 --
+			// as a 100%-risk double death, because a lure works precisely by
+			// having the incoming absorb a move the AI committed while looking
+			// at the OUTGOING Pokemon. A blanket worst-case entry assumes the
+			// opponent is never baitable, which deletes lure play from the plan
+			// space entirely.
+			//
+			// So: trust the committed prediction (`theirs` above, computed from
+			// this very simulated position, which is fresher than the
+			// decision-time entryThreats set), UNLESS the AI's own score sheet
+			// says the choice is genuinely uncertain -- several moves within
+			// RRAI.plausible's existing margin -- AND being wrong about it is
+			// FATAL to the incoming Pokemon. Only then price the killer, because
+			// that is the one chance that cannot be taken. A survivable surprise
+			// is extra damage, and extra damage is what the rest of the pricing
+			// already accounts for.
+			//
+			// No new constants: the uncertainty band is RRAI.plausible's
+			// existing margin, and "fatal" is the incoming's current HP.
+			try {
+				const inc = st.me.team[mine.index];
+				const set = RRAI.plausible(st, 'foe').actions
+					.filter(a => a.type === 'move');
+				if (set.length > 1 && inc) {
+					const probe = B.clone(st);
+					probe.me.active = mine.index;
+					let killer = null, killerDmg = -1;
+					for (const a of set) {
+						let r;
+						try { r = B.damageRolls(probe, 'foe', a.move); } catch (e) { continue; }
+						const dmg = (r && !r.immune && r.noCrit && r.noCrit.length)
+							? r.noCrit[r.noCrit.length - 1] * (r.hits || 1) : 0;
+						if (dmg >= inc.curHP && dmg > killerDmg) { killerDmg = dmg; killer = a; }
+					}
+					if (killer) theirs = killer;
+				}
+			} catch (e) { /* keep the committed choice */ }
 		} else if (mine && mine.type === 'switch' && !survivesEntry(B, st, mine.index, theirs)) {
 			// The path wants a Pokemon in that would die on the way in. That is
 			// the transition cost, and it is the question James asks out loud:
