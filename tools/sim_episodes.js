@@ -181,6 +181,12 @@ function makeRng(seed) {
 let won = 0, cap = 0, priced = 0, fell = 0, totTurns = 0, totKills = 0;
 let persisted = 0, changedByProgress = 0;
 let followed = 0, replans = 0, gameplans = 0, gameplanLegs = 0, gameplanFail = 0;
+// DIAG=1 answers "why is D doing badly", which the summary counters cannot:
+// where builds fail, how long a plan survives, how many deaths it signs up for.
+const DIAG = !!process.env.DIAG;
+const DRIFT = Number(process.env.RR_GP_DRIFT || 0);
+const diag = {buildFail: {}, abandon: {}, lifetimes: [], legs: {},
+	concededPerPlan: [], complete: {}, drift: []};
 const deaths = {}, survivorHist = {}, actionTally = {};
 const SEED = Number(process.env.SEED || 1);
 const AHEADLOG = process.env.AHEADLOG || '';
@@ -245,7 +251,35 @@ for (let ep = 0; ep < N; ep++) {
 				const deadList = st.me.team.filter(m => m.fainted).map(m => m.set.species);
 				const fresh = deadList.filter(n => !held.deadAtList.includes(n));
 				const unplanned = fresh.some(n => !held.conceded.includes(n));
-				if (unplanned || (ARM === 'C' && held.foe !== foeNow)) {
+				// RR_GP_DRIFT=<slack>: abandon when reality has fallen more than
+				// `slack` Pokemon-equivalents of total team health below what the
+				// plan expected by this turn. Death is a LATE signal -- by the
+				// time one lands the position is usually already lost -- and it
+				// was the only trigger there was.
+				//
+				// This is a detector, not a scoring term, and its failure
+				// direction is safe: too sensitive and the arm degrades toward
+				// the control, which is known to work.
+				let drifted = false;
+				if (held.trace && held.trace.length) {
+					const k = Math.min(t - held.bornAt, held.trace.length - 1);
+					const nowHp = st.me.team.reduce((a, m) =>
+						a + (m.fainted ? 0 : m.curHP / m.maxHP), 0);
+					if (k >= 0) {
+						const gap = held.trace[k] - nowHp;
+						// Recorded on every held turn whether or not it triggers,
+						// so a threshold can be READ off the distribution instead
+						// of guessed at. Positive means reality is worse than the
+						// plan expected.
+						if (DIAG) diag.drift.push(gap);
+						if (DRIFT && gap > DRIFT) drifted = true;
+					}
+				}
+				if (drifted && DIAG) diag.abandon['hp drift'] = (diag.abandon['hp drift'] || 0) + 1;
+				if (unplanned || drifted || (ARM === 'C' && held.foe !== foeNow)) {
+					if (DIAG && !drifted) diag.abandon[unplanned ? 'unplanned death' : 'foe changed'] =
+						(diag.abandon[unplanned ? 'unplanned death' : 'foe changed'] || 0) + 1;
+					if (DIAG) diag.lifetimes.push(t - held.bornAt);
 					held = null; replans++;
 				}
 			}
@@ -285,12 +319,29 @@ for (let ep = 0; ep < N; ep++) {
 				}));
 				held = {plan: gp.plan, progress: P.newProgress(), foe: foeNow,
 					conceded: conceded, cost: gp.cost,
-					deadAtList: st.me.team.filter(m => m.fainted).map(m => m.set.species)};
+					deadAtList: st.me.team.filter(m => m.fainted).map(m => m.set.species),
+					trace: gp.trace || null,
+					bornAt: t};
 				gameplans++;
+				if (DIAG) {
+					diag.legs[gp.legs.length] = (diag.legs[gp.legs.length] || 0) + 1;
+					diag.concededPerPlan.push(conceded.length);
+					diag.complete[gp.complete ? 'complete' : 'partial'] =
+						(diag.complete[gp.complete ? 'complete' : 'partial'] || 0) + 1;
+				}
 				gameplanLegs += gp.legs.length;
 				continue;   // execute it on the next pass through the loop
 			}
 			gameplanFail++;
+			if (DIAG) {
+				const alive = st.me.team.filter(m => !m.fainted).length;
+				const foesAlive = st.foe.team.filter(m => !m.fainted).length;
+				const hp = Math.round(100 * st.me.team.reduce((a, m) =>
+					a + (m.fainted ? 0 : m.curHP / m.maxHP), 0) / 6);
+				const k = 'ours=' + alive + ' theirs=' + foesAlive
+					+ ' teamHP=' + (hp < 25 ? '<25%' : hp < 50 ? '25-50%' : hp < 75 ? '50-75%' : '>75%');
+				diag.buildFail[k] = (diag.buildFail[k] || 0) + 1;
+			}
 		}
 		const samePlanAsLast = !!(pick && pick.path && pick.path.cand && prevJobs
 			&& JSON.stringify(pick.path.cand.jobs) === prevJobs);
@@ -376,6 +427,7 @@ console.log('ARM=' + ARM + (LEVEL ? '  ourLevel=' + LEVEL + ' (SCALED)' : '') + 
 	+ (process.env.RR_CARRY_PROGRESS ? ' +progress' : '')
 	+ (process.env.RR_DEEP_SCAN ? ' +deepscan' + process.env.RR_DEEP_SCAN : '')
 	+ (process.env.RR_NOANSWER_FLOOR ? ' +floor' : '')
+	+ (DRIFT ? ' +drift' + DRIFT : '')
 	+ '  expendable=[' + EXPENDABLE.join(',') + ']  ' + N + ' episodes of ' + H.label(battle));
 console.log('  won:          ' + won + '/' + N);
 console.log('  met the cap:  ' + cap + '/' + N + '   (win, losing nobody but ' + (EXPENDABLE.join('/') || 'nobody') + ')');
@@ -402,6 +454,35 @@ if (ARM === 'D') {
 	console.log('  gameplans built: ' + gameplans
 		+ ', mean legs ' + (gameplans ? (gameplanLegs / gameplans).toFixed(1) : '-')
 		+ ', build failed (fell back to the incumbent planner): ' + gameplanFail);
+}
+if (DIAG) {
+	const med = a => { if (!a.length) return '-'; const b = a.slice().sort((x, y) => x - y);
+		return b[Math.floor(b.length / 2)]; };
+	console.log('  --- DIAG ---');
+	console.log('  plan lifetime (turns before abandoned): median ' + med(diag.lifetimes)
+		+ '  max ' + (diag.lifetimes.length ? Math.max.apply(null, diag.lifetimes) : '-'));
+	console.log('  deaths a plan SIGNS UP FOR at build time: median '
+		+ med(diag.concededPerPlan) + '  (mean '
+		+ (diag.concededPerPlan.length
+			? (diag.concededPerPlan.reduce((a, b) => a + b, 0) / diag.concededPerPlan.length).toFixed(2)
+			: '-') + ')');
+	console.log('  plans by leg count: ' + JSON.stringify(diag.legs));
+	console.log('  complete vs partial: ' + JSON.stringify(diag.complete));
+	console.log('  why abandoned: ' + JSON.stringify(diag.abandon));
+	if (diag.drift.length) {
+		const d = diag.drift.slice().sort((a, b) => a - b);
+		const q = f => d[Math.floor(d.length * f)].toFixed(2);
+		console.log('  DRIFT (plan expectation minus reality, in Pokemon of team HP), '
+			+ d.length + ' held turns:');
+		console.log('    p10 ' + q(0.1) + '  p25 ' + q(0.25) + '  median ' + q(0.5)
+			+ '  p75 ' + q(0.75) + '  p90 ' + q(0.9) + '  max ' + d[d.length - 1].toFixed(2));
+		console.log('    share of held turns already MORE than 0.5 behind plan: '
+			+ (100 * d.filter(x => x > 0.5).length / d.length).toFixed(0) + '%'
+			+ ', more than 1.0: ' + (100 * d.filter(x => x > 1).length / d.length).toFixed(0) + '%');
+	}
+	console.log('  WHERE THE BUILD FAILS:');
+	Object.keys(diag.buildFail).sort((a, b) => diag.buildFail[b] - diag.buildFail[a])
+		.slice(0, 10).forEach(k => console.log('    ' + String(diag.buildFail[k]).padStart(5) + '  ' + k));
 }
 console.log('  seed base:    ' + SEED);
 // EPISODES= writes the per-episode rows for pairing. Deliberately last and

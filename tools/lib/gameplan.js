@@ -193,14 +193,36 @@ function buildGameplan(ctx, state, opts) {
 	// the game from that point." A plan that removes four opponents will be
 	// rebuilt long before the fifth arrives.
 	//
-	// Ranked LEXICOGRAPHICALLY -- more opponents removed first, then cheaper --
-	// rather than by cost plus a charge for what is left unplanned. That charge
-	// would be the flat 8 again, wearing a different hat, and the whole point of
-	// this module is to stop paying an invented constant for the part of the
-	// fight it has not looked at.
+	// HOW A PARTIAL PLAN IS RANKED, and the first version of this was wrong.
+	//
+	// It ranked lexicographically, more opponents removed first and cost only as
+	// a tie-break, on the reasoning that charging for the unplanned remainder
+	// would be the flat 8 again in a different hat. That reasoning does not
+	// survive: with cost demoted to a tie-break, a three-leg plan costing 40 and
+	// burying four of ours beats a two-leg plan costing 5 that buries nobody.
+	// Depth was free. Measured consequence, 80 episodes: the arm won 23 times and
+	// NEVER ONCE won without losing somebody, against 7 clean wins for the
+	// control.
+	//
+	// It was also the wrong lesson to draw from RR_DEEP_SCAN. That experiment
+	// showed the flat 8 is load-bearing PESSIMISM, not an error to be routed
+	// around. And the incumbent charges exactly 8 per unanswered opponent, so
+	// refusing to charge it here does not avoid an invented constant, it makes a
+	// gameplan's total incommensurable with the score it is competing against.
+	//
+	// So: cost plus 8 for every opponent the plan does not account for, ranked on
+	// that total. Depth now has to pay for itself, and a plan is comparable to
+	// the incumbent's here+ahead by construction. RR_GP_LEXI=1 restores the old
+	// ranking for the A/B.
+	const LEXI = !!process.env.RR_GP_LEXI;
+	const REMAINDER = 8;
+	const foesLeftAfter = nd => nd.state.foe.team.filter(m => !m.fainted).length;
+	const rank = nd => nd.cost + REMAINDER * foesLeftAfter(nd);
 	let partial = null;
-	const better = (a, b) => !b || a.legs.length > b.legs.length
-		|| (a.legs.length === b.legs.length && a.cost < b.cost);
+	const better = LEXI
+		? (a, b) => !b || a.legs.length > b.legs.length
+			|| (a.legs.length === b.legs.length && a.cost < b.cost)
+		: (a, b) => !b || rank(a) < rank(b);
 
 	for (let depth = 0; depth < MAXLEGS && beam.length; depth++) {
 		const next = [];
@@ -241,7 +263,7 @@ function buildGameplan(ctx, state, opts) {
 				tried++;
 				const child = {
 					legs: node.legs.concat([{fi, jobs: cand.jobs, why: cand.why,
-						kills: !!r.kills, turns: r.turns, dead: r.dead}]),
+						kills: !!r.kills, turns: r.turns, dead: r.dead, log: r.log}]),
 					state: r.state,
 					cost: node.cost + legCost(r, expendable, TEMPO, SPEND)
 				};
@@ -273,11 +295,16 @@ function buildGameplan(ctx, state, opts) {
 			}
 		}
 		if (!next.length) break;
-		next.sort((a, b) => a.cost - b.cost);
+		// SORTED ON THE SAME CRITERION THE WINNER IS CHOSEN BY. Sorting the beam
+		// on raw cost while accepting on cost-plus-remainder is the FINALISTS
+		// mistake in miniature: prune by one yardstick, decide by another, and a
+		// line can be cut before the criterion that would have picked it is ever
+		// applied to it.
+		next.sort((a, b) => (LEXI ? a.cost - b.cost : rank(a) - rank(b)));
 		beam = next.slice(0, BEAM);
 		// A complete plan already cheaper than every partial one left cannot be
 		// beaten by extending them, since a leg never costs less than nothing.
-		if (done && beam.length && done.cost <= beam[0].cost) break;
+		if (done && beam.length && rank(done) <= rank(beam[0])) break;
 	}
 	// A complete plan wins outright; otherwise take the deepest partial. Only a
 	// position from which not even one opponent can be removed returns null, and
@@ -292,10 +319,29 @@ function buildGameplan(ctx, state, opts) {
 		const sp = ctx.foeSets[l.fi] && ctx.foeSets[l.fi].species;
 		if (sp && !plan[sp]) plan[sp] = l.jobs;
 	});
+	// THE HP TRAJECTORY THE PLAN EXPECTS, turn by turn, concatenated across legs.
+	//
+	// A plan is followed until it is abandoned, and the only thing that could
+	// abandon one was an unplanned DEATH -- measured, 118 of 118 abandonments.
+	// So a plan ran a median of 10 turns and up to 30 while its premises drifted,
+	// which is the static-plan failure mode with a weaker trigger. Death is a
+	// late signal; the position is usually already lost by then.
+	//
+	// pricePath's log carries `us` as per-Pokemon percentages each turn, so the
+	// expected total team health is recoverable without simulating anything
+	// twice. The caller compares it against reality and rebuilds when they part.
+	const trace = [];
+	chosen.legs.forEach(l => (l.log || []).forEach(entry => {
+		const parts = String(entry.us).split('/');
+		let tot = 0;
+		parts.forEach(x => { tot += (x === 'X' ? 0 : (Number(x) || 0) / 100); });
+		trace.push(tot);
+	}));
 	return {
 		plan: plan,
 		legs: chosen.legs,
 		cost: chosen.cost,
+		trace: trace,
 		// Whether every opponent is accounted for. A partial plan is expected to
 		// be rebuilt before it runs out, which is what plan-and-repair means.
 		complete: chosen === done,
