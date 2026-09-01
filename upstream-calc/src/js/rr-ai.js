@@ -271,6 +271,37 @@ var RRAI = (function () {
 	// 87/104 read "healing cannot save you" and the port never Roosted --
 	// while the real one Roosted right there. Crit pessimism belongs to OUR
 	// safety checks, never to a transcription of THEIR arithmetic.
+	// THE AI'S OWN DAMAGE FIGURE, about 93% of the top no-crit roll.
+	//
+	// We tested a KO with `noCrit[0]`, the 85% roll, which calls a move a kill
+	// only when it is GUARANTEED. The score sheet says the AI calls it a kill
+	// well before that. Measured on Pawmot's Mach Punch over 380 rows where the
+	// AI actually moved, the separation is exact and there is no overlap: the
+	// highest hp/max it still scored 109 is 0.929 and the lowest it scored 100 is
+	// 0.950, and 0.93 falls in the gap. Applied to all of them: 0 false
+	// positives, 1 false negative (t2572).
+	//
+	// NOT a priority rule, and the data can tell the difference. The same
+	// threshold fires on priority-zero moves belonging to four other Pokemon --
+	// Vikavolt's Volt Switch and Mud Shot, Manectric's Flame Burst, Pincurchin --
+	// where 134 of 148 slots in the 85-93% band score 107+, against a 76% base
+	// rate for slots we already call kills. "Mach Punch gets +9" predicts none of
+	// those. It only ever looked like a priority bonus because Mach Punch is
+	// Pawmot's weakest move, so the band lands on HP values that occur, and once
+	// it enters the killing set its priority evicts the other three at once.
+	//
+	// The DIRECTION is transcribed; the CONSTANT is measured and its attribution
+	// is unverified -- no CFRU source in the repo names a roll. `maxIncomingNoCrit`
+	// above landed on the same figure from the opposite direction, which is the
+	// best evidence available that it is one real number rather than two
+	// coincidences.
+	//
+	// No `* hits`: the band is already the total across every hit
+	// (rr-critko.js:306-334).
+	function aiDamage(rolls) {
+		return Math.floor(rolls.noCrit[rolls.noCrit.length - 1] * 93 / 100);
+	}
+
 	function maxIncomingNoCrit(state, key) {
 		var foeKey = RRBattle.other(key);
 		var worst = 0;
@@ -532,7 +563,7 @@ var RRAI = (function () {
 					// IncreaseViabilityForSlowKOMove, which is modulated by the
 					// AI's fighting "class" (GetBankFightingStyle, not ported),
 					// so it is given the smaller fixed bonus here.
-					var kills = rolls.noCrit[0] >= foe.curHP;
+					var kills = aiDamage(rolls) >= foe.curHP;
 					var first = movesFirst(state, key, action);
 					var accurate = data.accuracy === null || data.accuracy >= 70;
 					// EFFECT_BATON_PASS pivots, ai_positives.c:1496: the
@@ -566,7 +597,21 @@ var RRAI = (function () {
 						&& bestKOSet(state, key, notes, false).indexOf(action.move) >= 0) {
 						good(slowKOBonus(fightClass(self)), "KOs but is slower");
 					}
-					else if (pivotVerdict !== PIVOT.DONT
+					// AND NOT WHEN IT KILLS. Widening the KO gate above lets Mach
+					// Punch into the killing set, which evicts Drain Punch -- and
+					// Drain Punch then fell through to here and collected
+					// "strongest move", turning a 9-point error into a 2-point
+					// one instead of removing it. Truth gives such moves nothing:
+					// over the same rows, 176 of 176 moves that kill even on our
+					// minimum roll but sit outside the set scored exactly 100,
+					// never 102. FITTED, on that evidence, and worth 3.4 points
+					// of exact agreement.
+					//
+					// It also makes the `score === BASE && kills` ternary just
+					// below unreachable in that state. Left in place rather than
+					// deleted, because whatever evidence built it is not recorded
+					// and removing it is a separate decision from this one.
+					else if (!kills && pivotVerdict !== PIVOT.DONT
 						&& isStrongest(state, key, action.move, dontPivotMove(state, key, flags, action.move))) {
 						// Class-scaled only on the untouched-viability KO
 						// branch; a plain strongest move is worth 2.
@@ -592,7 +637,7 @@ var RRAI = (function () {
 					// defines. Whether Radical Red switches it on is unknown, so
 					// it is a flag the caller can set both ways rather than an
 					// assumption baked in.
-					if (rolls.noCrit[0] >= foe.curHP && movesFirst(state, key, action)) {
+					if (aiDamage(rolls) >= foe.curHP && movesFirst(state, key, action)) {
 						good(7, "KOs (basic AI kill block, if enabled)");
 					} else if (isStrongest(state, key, action.move)) {
 						good(2, "strongest move (basic AI kill block, if enabled)");
@@ -849,7 +894,7 @@ var RRAI = (function () {
 			var r;
 			try { r = RRBattle.damageRolls(state, key, mv); } catch (e) { return; }
 			if (!r || r.immune || !r.noCrit || !r.noCrit.length) return;
-			if (r.noCrit[0] * (r.hits || 1) < foe.curHP) return;   // does not KO
+			if (aiDamage(r) < foe.curHP) return;   // does not KO by the AI's reckoning
 			var act = {type: "move", index: i, move: mv};
 			if (requireFirst && !movesFirst(state, key, act)) return;
 			var acc = d.accuracy === null ? 100 : d.accuracy;
