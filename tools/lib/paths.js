@@ -194,7 +194,7 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 		// see committedChoice in duels.js for the live turn-592 evidence.
 		const scored = RRAI.scoreAll(st, 'foe', FLAGS, {});
 		if (!scored.length) { outcome = 'error'; break; }
-		let theirs = committedChoice(B, scored);
+		let theirs = committedChoice(B, scored, st);
 
 		// The same entry signal the live agent supplies, so a priced line and a
 		// played line agree about when an entry-only move is available. The

@@ -107,7 +107,7 @@ function runDuel(engine, state, strategy, opts) {
 		// Their best COMMITTED choice -- see committedChoice.
 		const scored = RRAI.scoreAll(st, 'foe', flags, {});
 		if (!scored.length) { outcome = 'nomove'; break; }
-		const theirs = committedChoice(B, scored);
+		const theirs = committedChoice(B, scored, st);
 
 		// The turn's real odds, enumerated once: crit, roll, accuracy,
 		// secondaries and move order all included, because they are all already
@@ -305,7 +305,7 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
  * duel, so the duel is measured as fought: pivot moves and hard switches are
  * excluded from the sim foe's choice unless they are all it has.
  */
-function committedChoice(B, scored) {
+function committedChoice(B, scored, state) {
 	// A PIVOT STILL HITS YOU. The first version of this DROPPED pivot moves
 	// from the foe's choice so a duel could not end on turn one -- and in
 	// doing so it deleted their damage as well. Volt Switch is 70 BP and
@@ -325,7 +325,43 @@ function committedChoice(B, scored) {
 	const pool = moves.length ? moves : scored;
 	let best = -Infinity;
 	pool.forEach(e => { if (e.score > best) best = e.score; });
-	const pick = pool.filter(e => e.score === best)[0].action;
+	const tied = pool.filter(e => e.score === best);
+	// A GENUINE TIE IS A COIN THE GAME FLIPS, AND SLOT ORDER IS NOT A MODEL OF IT.
+	//
+	// This took tied[0] -- the first move in the Pokemon's slot order -- which is
+	// arbitrary, and on this team arbitrary in the OPTIMISTIC direction. Pawmot's
+	// Drain Punch and Thunder Punch tie constantly against Mienshao (the truth
+	// sheet shows exact ties at the top on 82 of 341 rows), Drain is slot 0, and
+	// it hits for 61..73 where Thunder hits for 79..94. Every priced line
+	// therefore assumed the softer half of a coin flip, understating the incoming
+	// hit by about twenty on the matchup that has killed Mienshao 77 times.
+	//
+	// James's rule for uncertainty, applied here as at entries: do not assume the
+	// worst, but do not be blind either. Price the MEDIAN of the tied set, unless
+	// one of them would be FATAL to the Pokemon standing, in which case price
+	// that one -- a coin you cannot afford to lose is not a coin you average.
+	// RR_TIE_MODEL=slot restores the old first-in-order behaviour for the A/B.
+	let pickE = tied[0];
+	if (tied.length > 1 && process.env.RR_TIE_MODEL !== 'slot' && B && state) {
+		const me = state.me.team[state.me.active];
+		const dmg = [];
+		for (const e of tied) {
+			let d = 0;
+			try {
+				const r = B.damageRolls(state, 'foe', e.action.move);
+				if (r && !r.immune) d = r.noCrit[Math.floor(r.noCrit.length / 2)] * (r.hits || 1);
+			} catch (err) { d = 0; }
+			dmg.push({e, d, lethal: me && d >= me.curHP});
+		}
+		const killers = dmg.filter(x => x.lethal);
+		if (killers.length) {
+			pickE = killers.reduce((a, b) => a.d >= b.d ? a : b).e;
+		} else {
+			dmg.sort((a, b) => a.d - b.d);
+			pickE = dmg[Math.floor(dmg.length / 2)].e;
+		}
+	}
+	const pick = pickE.action;
 	if (pick.type === 'move' && pick.switchTo !== undefined) {
 		const d = B.moveData(pick.move);
 		if (d && d.effect && d.effect.kind === 'selfSwitch') {
