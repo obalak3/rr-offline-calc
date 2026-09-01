@@ -183,6 +183,8 @@ let persisted = 0, changedByProgress = 0;
 let followed = 0, replans = 0, gameplans = 0, gameplanLegs = 0, gameplanFail = 0;
 const deaths = {}, survivorHist = {}, actionTally = {};
 const SEED = Number(process.env.SEED || 1);
+const AHEADLOG = process.env.AHEADLOG || '';
+const aheadRows = [];
 const perEpisode = [];      // one line per episode, for the pairwise comparison
 for (let ep = 0; ep < N; ep++) {
 	const rand = makeRng(SEED + ep * 7919);
@@ -191,6 +193,25 @@ for (let ep = 0; ep < N; ep++) {
 	// a plan is about an OPPONENT, so it expires when that opponent leaves.
 	let lastPlan = {foe: null, jobs: null, progress: null};
 	let held = null;
+	// THE FREE RIDER (docs/BATTERY-PREREG.md): the lookahead's own bias.
+	//
+	// `ahead` claims what removing the REST of their team will cost from the
+	// position a line leaves behind, and nothing has ever checked that claim
+	// against what the remainder then actually cost. Bias is the quantity behind
+	// every failed experiment so far: RR_DEEP_SCAN lost precisely because
+	// believing more of an optimistic estimate spends Pokemon on futures that are
+	// not real, so the size and SIGN of that optimism per opponent is worth more
+	// than another win-rate arm.
+	//
+	// CAVEAT, kept next to the code rather than left for a reader to trip over:
+	// `ahead` excludes the opponent currently being killed, while the realised
+	// suffix includes everything that happened after the turn. The realised
+	// figure therefore runs slightly high even for a perfectly calibrated
+	// lookahead. Read this as a bias MAP across opponents, not a calibration
+	// certificate.
+	const aheadTrace = [];
+	let prevHpFrac = st.me.team.reduce((a, m) => a + (m.fainted ? 0 : m.curHP / m.maxHP), 0);
+	let prevDead = st.me.team.filter(m => m.fainted).length;
 	let t = 0;
 	for (t = 0; t < 80; t++) {
 		if (B.isOver(st)) break;
@@ -305,9 +326,32 @@ for (let ep = 0; ep < N; ep++) {
 			if (!same(fresh, mine)) changedByProgress++;
 		}
 		let out;
+		const aheadNow = (pick && pick.path && pick.path.ahead !== undefined
+			&& pick.path.ahead !== null) ? pick.path.ahead : null;
+		const foesLeftNow = st.foe.team.filter(m => !m.fainted).length;
 		try { out = B.step(st, mine, theirs, stepOpts(rand)); } catch (e) { break; }
 		if (!out || !out.length) break;
 		st = sample(out, rand);
+		if (AHEADLOG) {
+			const hpNow = st.me.team.reduce((a, m) => a + (m.fainted ? 0 : m.curHP / m.maxHP), 0);
+			const deadNow2 = st.me.team.filter(m => m.fainted).length;
+			// The planner's own units: HP lost as a fraction of max, 6 per
+			// forbidden death, TEMPO for the turn itself.
+			aheadTrace.push({turn: t, foe: foeNow, ahead: aheadNow, foesLeft: foesLeftNow,
+				realised: Math.max(0, prevHpFrac - hpNow)
+					+ 6 * Math.max(0, deadNow2 - prevDead) + 0.4});
+			prevHpFrac = hpNow; prevDead = deadNow2;
+		}
+	}
+	if (AHEADLOG && aheadTrace.length) {
+		let suffix = 0;
+		for (let i = aheadTrace.length - 1; i >= 0; i--) {
+			suffix += aheadTrace[i].realised;
+			aheadTrace[i].remaining = suffix;
+		}
+		aheadTrace.forEach(rec => aheadRows.push([ep, rec.turn, rec.foe,
+			rec.ahead === null ? '' : rec.ahead.toFixed(3),
+			rec.remaining.toFixed(3), rec.foesLeft].join(',')));
 	}
 	totTurns += t;
 	const w = st.foe.team.every(m => m.fainted);
@@ -359,6 +403,11 @@ if (ARM === 'D') {
 console.log('  seed base:    ' + SEED);
 // EPISODES= writes the per-episode rows for pairing. Deliberately last and
 // machine-readable: the summary above is for a human, this is for the compare.
+if (AHEADLOG && aheadRows.length) {
+	require('fs').writeFileSync(AHEADLOG,
+		'episode,turn,foe,ahead,realisedRemaining,foesLeft\n' + aheadRows.join('\n') + '\n');
+	console.log('  ahead-vs-realised: ' + AHEADLOG + '  (' + aheadRows.length + ' turns)');
+}
 if (process.env.EPISODES) {
 	const fs = require('fs');
 	fs.writeFileSync(process.env.EPISODES,
