@@ -916,12 +916,39 @@ if (process.argv[2] === '--score-live') {
 	};
 	walk(turnsRoot);
 	const gaps = {}, perMon = {};
-	let rows = 0, paired = 0, exact = 0, argmaxOK = 0;
-	for (const line of fs.readFileSync(truthFile, 'utf8').split('\n')) {
+	let rows = 0, paired = 0, exact = 0, argmaxOK = 0, stale = 0;
+	// A SCORE SHEET THE AI NEVER WROTE THIS TURN.
+	//
+	// The thinking struct at 0x020003A4 is only rewritten when the AI actually
+	// thinks about moves. On a turn it switches, or one where it does not act at
+	// all, the struct still holds the LAST turn it thought, and the join pins
+	// those stale numbers to a fresh position. Grading them measures our port
+	// against a sheet describing a different board.
+	//
+	// The give-away is self-contained and needs no join: simulatedRNG is four
+	// bytes drawn fresh every time the AI thinks, so a repeated value is a
+	// struct that was not rewritten. In this corpus one value, "64,5,66,22",
+	// appears 110 times across turn numbers 1 to 2116 and across sessions. Four
+	// random bytes do not do that.
+	//
+	// 282 of 3329 rows carry a repeated draw. They grade at about 27% exact
+	// against about 64% for the rest, and they are concentrated on switch turns,
+	// which is exactly where the biggest apparent "rule gaps" lived: the whole
+	// -17 mean residual once attributed to Volt Absorb sat on them, and on rows
+	// where the AI really used a move our absorb penalty is exact on 668 of 668.
+	// A rule fitted to that table would have been fitted to leftovers.
+	const seenRng = {};
+	const truthLines = fs.readFileSync(truthFile, 'utf8').split('\n');
+	for (const line of truthLines) {
+		const f = line.split('\t');
+		if (f.length >= 9) seenRng[f[8]] = (seenRng[f[8]] || 0) + 1;
+	}
+	for (const line of truthLines) {
 		if (!line.trim()) continue;
 		const f = line.split('\t');
 		if (f.length < 9) continue;
 		rows++;
+		if (seenRng[f[8]] > 1 && !process.env.RR_KEEP_STALE) { stale++; continue; }
 		const turn = Number(f[0]), themHP = Number(f[2]), usHP = Number(f[4]);
 		const tScores = f[5].split(',').map(Number);
 		let obs = null;
@@ -993,7 +1020,8 @@ if (process.argv[2] === '--score-live') {
 		const oSet = Object.keys(bySlot).filter(i => bySlot[i].score === bo).map(Number);
 		if (tSet.length === oSet.length && tSet.every(i => oSet.indexOf(i) >= 0)) argmaxOK++;
 	}
-	console.log('truth rows ' + rows + ', paired to an archived position ' + paired);
+	console.log('truth rows ' + rows + ', dropped as a stale struct (repeated simulatedRNG) '
+		+ stale + ', paired to an archived position ' + paired);
 	if (!paired) { console.log('nothing paired -- is the turn archive present?'); process.exit(0); }
 	console.log('all-four-exact ' + exact + ' (' + Math.round(100 * exact / paired)
 		+ '%)   identical-argmax-set ' + argmaxOK + ' (' + Math.round(100 * argmaxOK / paired) + '%)');
