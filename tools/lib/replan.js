@@ -231,6 +231,10 @@ function chooseAction(ctx, state, opts) {
 	const LOOKAHEAD = (options.lookahead === false || process.env.RR_NO_LOOKAHEAD)
 		? 0 : (options.lookahead || 5);
 	const ENOUGH = options.enough || 3;
+	const SEES_US = !!process.env.RR_LOOKAHEAD_SEES_US;
+	// RR_NO_DOUBLE_BOOK=1: a Pokemon committed to one remaining opponent is not
+	// silently available to answer the next one too.
+	const NO_DOUBLE = !!process.env.RR_NO_DOUBLE_BOOK;
 	// RR_DEEP_SCAN=<rank>: how far to keep looking for a future opponent AFTER
 	// the LOOKAHEAD cut came back empty. 0 disables it, which is the shipped
 	// behaviour. See the long note at the flat 8 below for why this is the only
@@ -256,12 +260,45 @@ function chooseAction(ctx, state, opts) {
 	// Bucketed to a tenth: the cache was most of a 41-second decision and still
 	// does its job, while a target that has dropped meaningfully gets a fresh
 	// table.
-	function cachedCandidates(idx, fld, foeHp) {
+	// RR_LOOKAHEAD_SEES_US=1 hands the lookahead's generation OUR side's
+	// condition, which the primary market has had since the full-health fiction
+	// was fixed and this cache never did.
+	//
+	// The key carried only (opponent, terrain, their HP bucket), so the same
+	// candidate table was reused whatever shape our team was in: a 3 HP Lanturn
+	// still offered to chip, dead Pokemon still headlined lines, and the
+	// ordering the LOOKAHEAD=5 cut acts on was computed against a healthier team
+	// than the one we have. That ordering flicker is the measured churn source
+	// (a line present at bucket 5 vanishes at bucket 4), and the lookahead is
+	// roughly three times the immediate term, so the flicker lives in the big
+	// half of the score.
+	//
+	// Our side is bucketed to quarters in the key. Tenths would be exact and
+	// would also destroy the cache that was most of a 41-second decision;
+	// quarters keep it useful while letting "we are badly hurt" regenerate.
+	function cachedCandidates(idx, fld, foeHp, ourHp, ourStatus) {
 		const bucket = foeHp === undefined ? 10 : Math.max(1, Math.ceil(foeHp * 10));
-		const key = idx + '|' + (fld && fld.terrainTurns > 0 ? fld.terrain : '-') + '|' + bucket;
+		let key = idx + '|' + (fld && fld.terrainTurns > 0 ? fld.terrain : '-') + '|' + bucket;
+		if (SEES_US && ourHp) {
+			// COARSE ON PURPOSE. A per-Pokemon quarter-bucket key is exact and
+			// destroys the cache: measured, it turned a 90-second pair of
+			// episodes into a timeout, because this table being reused is what
+			// keeps a decision off the historical 41-second cliff. What
+			// generation actually needs to know is who is UNUSABLE and roughly
+			// how much team is left, so the key is the dead/near-dead set plus
+			// one bucket of total remaining health.
+			const gone = Object.keys(ourHp).sort()
+				.map(k => (ourHp[k] || 0) <= 0.15 ? 'x' : (ourStatus && ourStatus[k] ? 's' : '.'))
+				.join('');
+			let tot = 0;
+			Object.keys(ourHp).forEach(k => { tot += ourHp[k] || 0; });
+			key += '|' + gone + Math.ceil(tot);
+		}
 		if (!ctx._candCache) ctx._candCache = {};
 		if (!ctx._candCache[key]) {
-			ctx._candCache[key] = C.candidatesFor(ctx, idx, {field: fld, foeHp: bucket / 10});
+			ctx._candCache[key] = C.candidatesFor(ctx, idx, SEES_US && ourHp
+				? {field: fld, foeHp: bucket / 10, ourHp, ourStatus}
+				: {field: fld, foeHp: bucket / 10});
 		}
 		return ctx._candCache[key];
 	}
@@ -310,14 +347,34 @@ function chooseAction(ctx, state, opts) {
 		// no-answer charge can be made a FLOOR rather than a constant. See the
 		// note at the flat 8 below.
 		const answers = [];
+		// WHO IS ALREADY SPOKEN FOR. continuationCost prices each remaining
+		// opponent as its own duel, so nothing stopped one healthy Pokemon being
+		// the load-bearing killer for several of them at once -- measured on
+		// 15.5% of archived positions, and the stated reason deeper search played
+		// strictly worse (it finds more lines that quietly reuse a body already
+		// committed elsewhere). Under RR_NO_DOUBLE_BOOK the killer of each
+		// opponent is struck off before the next is priced, so the sum is a
+		// plan the team could actually carry out rather than a set of
+		// independently-optimistic promises.
+		//
+		// Deliberately only the KILLER, not every Pokemon a line touches: a
+		// chipper that survives is genuinely still available, and striking off
+		// whole lines would swing from optimism to a pessimism nobody measured.
+		const spoken = [];
+		const ourHpAfter = {}, ourStatusAfter = {};
+		after.me.team.forEach(m => {
+			ourHpAfter[m.set.species] = m.fainted ? 0 : m.curHP / m.maxHP;
+			if (m.status && !m.fainted) ourStatusAfter[m.set.species] = m.status;
+		});
 		for (let gi = 0; gi < ctx.foeSets.length; gi++) {
 			if (foeDeadAfter.includes(gi)) continue;
-			let cheapest = null;
+			let cheapest = null, cheapKiller = null;
 			let ahead;
 			try {
 				const fm = after.foe.team[gi];
 				ahead = cachedCandidates(gi, entryAfter.field,
-					fm && fm.maxHP ? fm.curHP / fm.maxHP : undefined);
+					fm && fm.maxHP ? fm.curHP / fm.maxHP : undefined,
+					ourHpAfter, ourStatusAfter);
 			}
 			catch (e) { continue; }
 			let found = 0;
@@ -325,6 +382,7 @@ function chooseAction(ctx, state, opts) {
 				if (found >= ENOUGH) break;
 				if (!cand.jobs.length) continue;
 				if (cand.jobs.every(j => deadAfter.includes(j.mon))) continue;
+				if (NO_DOUBLE && cand.jobs.some(j => spoken.includes(j.mon))) continue;
 					let rr;
 				const eAfter = (foeHpAfter[gi] !== undefined && foeHpAfter[gi] < 1)
 					? Object.assign({}, entryAfter, {foeChip: 1 - foeHpAfter[gi]})
@@ -340,7 +398,13 @@ function chooseAction(ctx, state, opts) {
 					? turnRate(engine, after, gi)
 					: (options.tempo === undefined ? 0.4 : options.tempo);
 				const c = sp + bad * 6 + 2 * rr.deathRisk + rate * (rr.turns || 0);
-				if (cheapest === null || c < cheapest) cheapest = c;
+				if (cheapest === null || c < cheapest) {
+					cheapest = c;
+					// Who actually lands the kill, read off the priced
+					// simulation's last turn rather than off the label.
+					const lg = rr.log || [];
+					cheapKiller = lg.length ? String(lg[lg.length - 1].we).split(' ')[0] : null;
+				}
 			}
 			// LOOK FURTHER ONLY WHERE WE FOUND NOTHING.
 			//
@@ -440,6 +504,7 @@ function chooseAction(ctx, state, opts) {
 			//
 			// Derived from the position, not tuned: the number is whatever the
 			// dearest killing line in this very continuation costs.
+			if (NO_DOUBLE && cheapKiller && !spoken.includes(cheapKiller)) spoken.push(cheapKiller);
 			if (process.env.RR_NOANSWER_FLOOR) { answers.push(cheapest); continue; }
 			total += (cheapest === null) ? 8 : cheapest;
 		}
