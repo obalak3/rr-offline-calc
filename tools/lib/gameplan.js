@@ -149,6 +149,8 @@ function buildGameplan(ctx, state, opts) {
 	const MAXLEGS = options.maxLegs || 8;
 	// RR_GP_NOWRECK=1 restores the old behaviour (discard stuck lines) for the A/B.
 	const WRECKAGE = !process.env.RR_GP_NOWRECK;
+	// RR_GP_NOEXTEND=1 restores wreckage-is-terminal, for the A/B.
+	const EXTEND_WRECK = !process.env.RR_GP_NOEXTEND;
 
 	// Candidate generation is the expensive half and depends only on the target,
 	// the field and roughly how hurt it is, so it is cached per build.
@@ -314,8 +316,28 @@ function buildGameplan(ctx, state, opts) {
 					probe.rejected['we get wiped'] = (probe.rejected['we get wiped'] || 0) + 1;
 					// Wiped finishing this leg. Not a plan at any depth.
 				} else if (!finished) {
-					// Wreckage: a real answer for this position, but nothing to
-					// build on, since the target is still there.
+					// A LINE THAT CHIPPED BUT DID NOT FINISH IS STILL A LEG.
+					//
+					// These were terminal, on the reasoning that the target is
+					// still standing so extending would re-target it and the beam
+					// could spin. That was too cautious, and measurably: once
+					// wreckage was priced it took over the search, mean legs fell
+					// from 2.4 to 1.4 and 283 of 344 plans came out one leg long,
+					// which turns the arm back into the incumbent with commitment
+					// bolted on.
+					//
+					// Continuing against the SAME opponent is not a degenerate
+					// case, it is the shape James described: "you sometimes need
+					// to use the same pokemon to chip one enemy, lower the attack
+					// of one and kill another". "Lanturn chips it, Lanturn dies,
+					// Mienshao finishes" is two legs on one Pokemon.
+					//
+					// The spin guard is progress, not prohibition: extend only if
+					// the target actually lost HP. HP is finite and strictly
+					// decreasing, so the chain has to terminate.
+					const hpBefore = st.foe.team[fi] ? st.foe.team[fi].curHP : 0;
+					const hpAfter = r.state.foe.team[fi] ? r.state.foe.team[fi].curHP : 0;
+					if (EXTEND_WRECK && hpAfter < hpBefore) next.push(child);
 					if (better(child, partial)) partial = child;
 				} else {
 					next.push(child);
