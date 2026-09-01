@@ -278,7 +278,30 @@ var RRAI = (function () {
 			if (action.type !== "move") return;
 			var rolls = RRBattle.damageRolls(state, foeKey, action.move);
 			if (rolls && !rolls.immune) {
-				var top = rolls.noCrit[rolls.noCrit.length - 1] * (rolls.hits || 1);
+				// TWO CORRECTIONS, both measured against the AI's own sheet over
+				// 652 gradeable Vikavolt Roost rows.
+				//
+				// 1. NO `* hits`. RRCritKO.hitArrays builds `noCrit` from
+				//    totalFor(n) -- the calculator is handed `hits: n`, so the
+				//    band is ALREADY the total across every hit. Multiplying
+				//    again read Breloom's Bullet Seed (band 24..27 over three
+				//    hits) as 81, which made the AI's own arithmetic say "healing
+				//    cannot save you" and suppressed Roost outright. Breloom's
+				//    real best against Vikavolt is Headbutt at 28..34.
+				// 2. THE MIDDLE ROLL, not the top of the band. Three independent
+				//    exact boundaries pin it: truth is silent at 52 and fires at
+				//    53 (pinning D=52, and noCrit[8] is 52 for Rock Tomb 46..56);
+				//    fires at 73 and is silent at 76 (pinning 2D=74); fires at 60
+				//    and is silent at 63 (pinning 2D=62).
+				//
+				// The first is MECHANISM, readable in rr-critko.js:306-334. The
+				// second is a MEASURED value whose attribution is unverified --
+				// no CFRU source in the repo says which roll the AI uses. Worth
+				// noting that the KO gate at :512 landed on the same ~93% figure
+				// from the opposite direction (our damage on them rather than
+				// theirs on us), which is better corroboration than either
+				// measurement alone.
+				var top = rolls.noCrit[Math.floor(rolls.noCrit.length / 2)];
 				if (top > worst) worst = top;
 			}
 		});
