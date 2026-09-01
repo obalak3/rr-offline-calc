@@ -140,13 +140,20 @@ function buildGameplan(ctx, state, opts) {
 	const expendable = ctx.expendable || [];
 	const TEMPO = options.tempo === undefined ? 0.4 : options.tempo;
 	const SPEND = options.spend === undefined ? 2 : options.spend;
-	const BEAM = options.beam || 4;
-	const BREADTH = options.breadth || 6;
+	// Beam x breadth is the whole cost: each pair is one pricePath, and pricePath
+	// simulates up to 16 turns. At 4x6 a build measured 9.4s and an episode ran
+	// past three minutes, which is unmeasurable at battery scale. 3x4 is 12
+	// pricePaths per depth instead of 24.
+	const BEAM = options.beam || Number(process.env.RR_GP_BEAM || 3);
+	const BREADTH = options.breadth || Number(process.env.RR_GP_BREADTH || 4);
 	const MAXLEGS = options.maxLegs || 8;
 
 	// Candidate generation is the expensive half and depends only on the target,
 	// the field and roughly how hurt it is, so it is cached per build.
-	const cache = {};
+	// ON THE CTX, not per build. Generation is re-run on every rebuild otherwise,
+	// and a plan-and-repair arm rebuilds many times per episode. The key already
+	// carries everything generation depends on.
+	const cache = ctx._gpCandCache || (ctx._gpCandCache = {});
 	function candidates(fi, st) {
 		const fm = st.foe.team[fi];
 		const frac = fm && fm.maxHP ? fm.curHP / fm.maxHP : 1;

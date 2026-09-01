@@ -233,14 +233,19 @@ for (let ep = 0; ep < N; ep++) {
 		// change; that is what a whole-fight plan is for.
 		if (ARM === 'C' || ARM === 'D') {
 			if (held) {
-				const deadNow = st.me.team.filter(m => m.fainted)
-					.map(m => m.set.species).sort().join(',');
-				const lostSomeoneUnplanned = st.me.team.some(m => m.fainted
-					&& !held.conceded.includes(m.set.species));
-				const foeChanged = held.foe !== foeNow;
-				if (lostSomeoneUnplanned || (ARM === 'C' && foeChanged)) {
-					held = null; replans++;
-				} else if (deadNow !== held.deadAt) {
+				// DEATHS SINCE THE PLAN WAS MADE, not deaths in total.
+				//
+				// This compared every fainted Pokemon against the plan's conceded
+				// list, so the moment anyone was dead -- including someone who
+				// died long before this plan existed -- every freshly built plan
+				// was abandoned on the very next iteration. Measured: 129
+				// gameplans built to play 30 turns, a rebuild loop that made the
+				// arm three minutes an episode and would have been recorded as
+				// "the gameplan is too slow to measure".
+				const deadList = st.me.team.filter(m => m.fainted).map(m => m.set.species);
+				const fresh = deadList.filter(n => !held.deadAtList.includes(n));
+				const unplanned = fresh.some(n => !held.conceded.includes(n));
+				if (unplanned || (ARM === 'C' && held.foe !== foeNow)) {
 					held = null; replans++;
 				}
 			}
@@ -280,8 +285,7 @@ for (let ep = 0; ep < N; ep++) {
 				}));
 				held = {plan: gp.plan, progress: P.newProgress(), foe: foeNow,
 					conceded: conceded, cost: gp.cost,
-					deadAt: st.me.team.filter(m => m.fainted)
-						.map(m => m.set.species).sort().join(',')};
+					deadAtList: st.me.team.filter(m => m.fainted).map(m => m.set.species)};
 				gameplans++;
 				gameplanLegs += gp.legs.length;
 				continue;   // execute it on the next pass through the loop
@@ -300,8 +304,7 @@ for (let ep = 0; ep < N; ep++) {
 					pl[foeNow] = pick.path.cand.jobs;
 					held = {plan: pl, progress: P.newProgress(), foe: foeNow,
 						conceded: (pick.path.r && pick.path.r.dead) || [],
-						deadAt: st.me.team.filter(m => m.fainted)
-							.map(m => m.set.species).sort().join(',')};
+						deadAtList: st.me.team.filter(m => m.fainted).map(m => m.set.species)};
 				}
 			}
 		} else { mine = bestDamage(st); fell++; }

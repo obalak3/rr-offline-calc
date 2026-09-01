@@ -51,8 +51,29 @@ From archived live positions, D must:
    so lowering Attack beats it and speed control does not);
 2. play **Fake Out on the turn a holder arrives**, and not gate it on the flinch
    landing;
-3. **not spend Victreebel on Pincurchin** in the position that motivated
-   `docs/PLAN-LINE-PLANNER.md`, since Victreebel is the answer to Pawmot.
+3. **contain a costed answer to Pawmot** -- a leg that actually kills it,
+   simulated from the position the earlier legs leave behind.
+
+**AMENDED 2026-09-01, after the gate had already fired, on James's ruling.** The
+criterion originally read "not spend Victreebel on Pincurchin", taken from
+`docs/PLAN-LINE-PLANNER.md` where the motivating disaster is Victreebel being
+spent sweeping Pincurchin and Pawmot then beating the whole team. The first
+gameplan built tripped it: it opens Victreebel on Pincurchin, and answers Pawmot
+with Lilligant's Baby-Doll Eyes instead.
+
+Changing a pre-registered criterion after seeing which one it tripped is exactly
+what pre-registration exists to prevent, so this is recorded rather than quietly
+edited, and the gate's original verdict stands in commit 15e79d1. It is amended
+because the criterion was WRONG, not because the result was inconvenient. James:
+"If we need Victreebel to kill Pawmot we don't start with Victreebel. If
+Lilligant can kill Pawmot then we can start with Victreebel. If starting with
+some other Pokemon and killing Pawmot with Victreebel is better then do that.
+This is about maximizing the advantage we have in encounters."
+
+The original criterion named a piece. The requirement is about the plan: Pawmot
+must be answered, and which Pokemon answers it is the planner's business. A
+criterion that reserves a named Pokemon regardless of the rest of the plan would
+forbid the very trade the architecture exists to find.
 
 **If D fails the gate it does not run tonight.** The night then runs A, B, C and
 a `FINALISTS` 4/8/all sweep, and D waits for a supervised session. A missing
