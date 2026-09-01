@@ -147,6 +147,8 @@ function buildGameplan(ctx, state, opts) {
 	const BEAM = options.beam || Number(process.env.RR_GP_BEAM || 3);
 	const BREADTH = options.breadth || Number(process.env.RR_GP_BREADTH || 4);
 	const MAXLEGS = options.maxLegs || 8;
+	// RR_GP_NOWRECK=1 restores the old behaviour (discard stuck lines) for the A/B.
+	const WRECKAGE = !process.env.RR_GP_NOWRECK;
 
 	// Candidate generation is the expensive half and depends only on the target,
 	// the field and roughly how hurt it is, so it is cached per build.
@@ -218,6 +220,11 @@ function buildGameplan(ctx, state, opts) {
 	const REMAINDER = 8;
 	const foesLeftAfter = nd => nd.state.foe.team.filter(m => !m.fainted).length;
 	const rank = nd => nd.cost + REMAINDER * foesLeftAfter(nd);
+	// WHY THE SEARCH STOPPED, per build. The leg distribution came out bimodal --
+	// 431 one-leg plans and 241 five-leg with three in between -- which is not a
+	// shape a healthy beam produces, so the search reports what it did rather
+	// than being guessed at.
+	const probe = {depth: 0, stop: 'maxlegs', rejected: {}};
 	let partial = null;
 	const better = LEXI
 		? (a, b) => !b || a.legs.length > b.legs.length
@@ -251,15 +258,48 @@ function buildGameplan(ctx, state, opts) {
 			for (const cand of candidates(fi, st)) {
 				if (tried >= BREADTH) break;
 				seen++;
-				if (!cand.jobs || !cand.jobs.length) continue;
-				if (cand.jobs.some(j => dead.includes(j.mon))) continue;
+				if (!cand.jobs || !cand.jobs.length) { probe.rejected['empty jobs'] = (probe.rejected['empty jobs'] || 0) + 1; continue; }
+				if (cand.jobs.some(j => dead.includes(j.mon))) { probe.rejected['dead leg'] = (probe.rejected['dead leg'] || 0) + 1; continue; }
 				let r;
 				try { r = pricePath(ctx, fi, cand.jobs, en, {expendable, entryThreats: threats}); }
 				catch (e) { threw++; continue; }
 				if (!r.state) { threw++; continue; }
 				// A line that neither kills nor pivots the target away has not
 				// advanced the fight; taking it would let the beam spin.
-				if (!r.kills && r.outcome !== 'left') { noKill++; continue; }
+				// A LINE THAT RAN OUT OF THINGS TO SAY IS WRECKAGE, NOT NOTHING.
+				//
+				// This used to `continue`, which threw the line away. Measured, it
+				// was throwing away nearly everything: 5900 of ~6000 rejections
+				// were outcome='stuck', every one of them AFTER the line had
+				// already executed one to five turns. The damage really happened
+				// and the bodies really died; discarding it loses all of that.
+				//
+				// replan.js has known this since live turn 2035, where dropping
+				// stuck lines deleted 48 of 49 candidates and left a market of one.
+				// It prices them with spend, deaths, risk, tempo and 6 x the
+				// target's remaining fraction, which is exactly what legCost above
+				// already computes. So the gameplan was being strictly stricter
+				// than the planner it is competing against -- a self-inflicted
+				// handicap, in code I wrote.
+				//
+				// Wreckage is TERMINAL: the target is still standing, so extending
+				// from it would re-target the same opponent and the beam could
+				// spin. It competes as a complete answer for this position and the
+				// caller replans from whatever it leaves, which is what
+				// plan-and-repair means.
+				const finished = r.kills || r.outcome === 'left';
+				if (!finished) {
+					const closer = cand.jobs[cand.jobs.length - 1];
+					const closerDead = closer && r.state.me.team.some(m =>
+						m.set.species === closer.mon && m.fainted);
+					const tag = r.outcome !== 'stuck' ? 'outcome=' + r.outcome
+						: (r.blockedEntries ? 'stuck: entry blocked'
+							: closerDead ? 'stuck: the closer died'
+								: 'stuck: move unusable (PP/taunt) after ' + Math.min(r.turns, 5) + 'T');
+					probe.rejected[tag] = (probe.rejected[tag] || 0) + 1;
+					noKill++;
+					if (!WRECKAGE) continue;
+				}
 				tried++;
 				const child = {
 					legs: node.legs.concat([{fi, jobs: cand.jobs, why: cand.why,
@@ -271,7 +311,12 @@ function buildGameplan(ctx, state, opts) {
 					if (!done || child.cost < done.cost) done = child;
 					if (better(child, partial)) partial = child;
 				} else if (r.state.me.team.every(m => m.fainted)) {
+					probe.rejected['we get wiped'] = (probe.rejected['we get wiped'] || 0) + 1;
 					// Wiped finishing this leg. Not a plan at any depth.
+				} else if (!finished) {
+					// Wreckage: a real answer for this position, but nothing to
+					// build on, since the target is still there.
+					if (better(child, partial)) partial = child;
 				} else {
 					next.push(child);
 					if (better(child, partial)) partial = child;
@@ -294,7 +339,8 @@ function buildGameplan(ctx, state, opts) {
 					+ ' legs=' + nd.legs.map(l => l.fi + (l.kills ? 'K' : 'L')).join('>')));
 			}
 		}
-		if (!next.length) break;
+		probe.depth = depth;
+		if (!next.length) { probe.stop = done ? 'no extension (had complete)' : 'no extension'; break; }
 		// SORTED ON THE SAME CRITERION THE WINNER IS CHOSEN BY. Sorting the beam
 		// on raw cost while accepting on cost-plus-remainder is the FINALISTS
 		// mistake in miniature: prune by one yardstick, decide by another, and a
@@ -304,7 +350,7 @@ function buildGameplan(ctx, state, opts) {
 		beam = next.slice(0, BEAM);
 		// A complete plan already cheaper than every partial one left cannot be
 		// beaten by extending them, since a leg never costs less than nothing.
-		if (done && beam.length && rank(done) <= rank(beam[0])) break;
+		if (done && beam.length && rank(done) <= rank(beam[0])) { probe.stop = 'complete plan wins'; break; }
 	}
 	// A complete plan wins outright; otherwise take the deepest partial. Only a
 	// position from which not even one opponent can be removed returns null, and
@@ -342,6 +388,7 @@ function buildGameplan(ctx, state, opts) {
 		legs: chosen.legs,
 		cost: chosen.cost,
 		trace: trace,
+		probe: probe,
 		// Whether every opponent is accounted for. A partial plan is expected to
 		// be rebuilt before it runs out, which is what plan-and-repair means.
 		complete: chosen === done,

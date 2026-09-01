@@ -186,7 +186,8 @@ let followed = 0, replans = 0, gameplans = 0, gameplanLegs = 0, gameplanFail = 0
 const DIAG = !!process.env.DIAG;
 const DRIFT = Number(process.env.RR_GP_DRIFT || 0);
 const diag = {buildFail: {}, abandon: {}, lifetimes: [], legs: {},
-	concededPerPlan: [], complete: {}, drift: []};
+	concededPerPlan: [], complete: {}, drift: [], failSeen: {}, failDistinct: 0,
+	stop: {}, rejected: {}, legTurns: {}};
 const deaths = {}, survivorHist = {}, actionTally = {};
 const SEED = Number(process.env.SEED || 1);
 const AHEADLOG = process.env.AHEADLOG || '';
@@ -289,6 +290,7 @@ for (let ep = 0; ep < N; ep++) {
 				catch (e) { act = null; }
 				if (act) {
 					followed++;
+					if (DIAG) diag.legTurns[held.nLegs] = (diag.legTurns[held.nLegs] || 0) + 1;
 					const key2 = act.type === 'switch' ? 'switch' : act.move;
 					actionTally[key2] = (actionTally[key2] || 0) + 1;
 					const theirs2 = foeChoice(st, rand);
@@ -321,9 +323,16 @@ for (let ep = 0; ep < N; ep++) {
 					conceded: conceded, cost: gp.cost,
 					deadAtList: st.me.team.filter(m => m.fainted).map(m => m.set.species),
 					trace: gp.trace || null,
+					nLegs: gp.legs.length,
 					bornAt: t};
 				gameplans++;
 				if (DIAG) {
+					if (gp.probe) {
+						diag.stop[gp.probe.stop + ' @depth' + gp.probe.depth] =
+							(diag.stop[gp.probe.stop + ' @depth' + gp.probe.depth] || 0) + 1;
+						for (const k in gp.probe.rejected) diag.rejected[k] =
+							(diag.rejected[k] || 0) + gp.probe.rejected[k];
+					}
 					diag.legs[gp.legs.length] = (diag.legs[gp.legs.length] || 0) + 1;
 					diag.concededPerPlan.push(conceded.length);
 					diag.complete[gp.complete ? 'complete' : 'partial'] =
@@ -333,6 +342,16 @@ for (let ep = 0; ep < N; ep++) {
 				continue;   // execute it on the next pass through the loop
 			}
 			gameplanFail++;
+			// DISTINCT positions, not attempts. A failed build falls back for the
+			// turn and is retried next turn, so one genuinely dead position logs a
+			// failure on every turn it persists. Counting attempts made 1676 look
+			// like 1676 separate problems when it is far fewer, seen repeatedly.
+			if (DIAG) {
+				const sig = ep + '|' + st.me.team.map(m => m.fainted ? 'X'
+					: Math.round(m.curHP / m.maxHP * 4)).join('')
+					+ '|' + st.foe.team.map(m => m.fainted ? 'X' : 'o').join('');
+				if (!diag.failSeen[sig]) { diag.failSeen[sig] = 1; diag.failDistinct++; }
+			}
 			if (DIAG) {
 				const alive = st.me.team.filter(m => !m.fainted).length;
 				const foesAlive = st.foe.team.filter(m => !m.fainted).length;
@@ -354,7 +373,7 @@ for (let ep = 0; ep < N; ep++) {
 					const pl = {};
 					pl[foeNow] = pick.path.cand.jobs;
 					held = {plan: pl, progress: P.newProgress(), foe: foeNow,
-						conceded: (pick.path.r && pick.path.r.dead) || [],
+						conceded: (pick.path.r && pick.path.r.dead) || [], nLegs: 1,
 						deadAtList: st.me.team.filter(m => m.fainted).map(m => m.set.species)};
 				}
 			}
@@ -480,6 +499,11 @@ if (DIAG) {
 			+ (100 * d.filter(x => x > 0.5).length / d.length).toFixed(0) + '%'
 			+ ', more than 1.0: ' + (100 * d.filter(x => x > 1).length / d.length).toFixed(0) + '%');
 	}
+	console.log('  build failures: ' + gameplanFail + ' attempts, but only '
+		+ diag.failDistinct + ' DISTINCT positions (a dead position is retried every turn)');
+	console.log('  WHY THE SEARCH STOPPED: ' + JSON.stringify(diag.stop));
+	console.log('  WHY CANDIDATES WERE REJECTED: ' + JSON.stringify(diag.rejected));
+	console.log('  HELD TURNS BY PLAN SIZE (legs -> turns): ' + JSON.stringify(diag.legTurns));
 	console.log('  WHERE THE BUILD FAILS:');
 	Object.keys(diag.buildFail).sort((a, b) => diag.buildFail[b] - diag.buildFail[a])
 		.slice(0, 10).forEach(k => console.log('    ' + String(diag.buildFail[k]).padStart(5) + '  ' + k));
