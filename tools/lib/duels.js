@@ -341,8 +341,14 @@ function committedChoice(B, scored, state) {
 	// one of them would be FATAL to the Pokemon standing, in which case price
 	// that one -- a coin you cannot afford to lose is not a coin you average.
 	// RR_TIE_MODEL=slot restores the old first-in-order behaviour for the A/B.
+	// MEASURED, DEMOTED TO OPT-IN. Shipped default-on without measurement (a
+	// process mistake, called out in ASSUMPTIONS.md), then measured at n=120
+	// paired: slot-order 28 wins vs median-rule 21, p=0.21, zero-faint level.
+	// Inconclusive and leaning against, so the default reverts to the old
+	// behaviour and the median-with-fatality rule stays behind
+	// RR_TIE_MODEL=median for a future, better-powered test.
 	let pickE = tied[0];
-	if (tied.length > 1 && process.env.RR_TIE_MODEL !== 'slot' && B && state) {
+	if (tied.length > 1 && process.env.RR_TIE_MODEL === 'median' && B && state) {
 		const me = state.me.team[state.me.active];
 		const dmg = [];
 		for (const e of tied) {
