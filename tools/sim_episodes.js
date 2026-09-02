@@ -92,9 +92,15 @@ const EXPENDABLE = (process.env.EXPENDABLE === undefined
 // every constant was fitted against -- it would just be Surge three times.
 // Scaled runs are labelled as such and must never be pooled with native ones.
 const LEVEL = Number(process.env.LEVEL || 0);
-const party = LEVEL
-	? H.realTeam().map(s => Object.assign({}, s, {level: LEVEL}))
-	: H.realTeam();
+// RR_TEAM_FILE=<json>: a hand-built party instead of the save's, so a fight the
+// save has never reached can be tested with the team a run WOULD bring there.
+// First use: James's Giovanni bet -- a strong-but-plausible nuzlocke team
+// against ROCKET HIDE. GIOVANNI, to test whether anything here generalises.
+const party = process.env.RR_TEAM_FILE
+	? JSON.parse(require('fs').readFileSync(process.env.RR_TEAM_FILE, 'utf8'))
+	: (LEVEL
+		? H.realTeam().map(s => Object.assign({}, s, {level: LEVEL}))
+		: H.realTeam());
 const battle = H.earlyBattles(engine, {maxLevel: 60})
 	.filter(b => H.label(b).toUpperCase().includes(process.env.FIGHT || 'SURGE'))[0];
 if (!battle) { console.log('no battle matching FIGHT=' + (process.env.FIGHT || 'SURGE')); process.exit(1); }
@@ -411,6 +417,15 @@ for (let ep = 0; ep < N; ep++) {
 		}
 		const key = mine.type === 'switch' ? 'switch' : mine.move;
 		actionTally[key] = (actionTally[key] || 0) + 1;
+		if (process.env.TRACE) {
+			const nm = k => st[k].team[st[k].active].set.species;
+			const act = (k, a) => a.type === 'switch' ? '-> ' + st[k].team[a.index].set.species : a.move;
+			console.log('  T' + String(t + 1).padStart(2)
+				+ '  ' + (nm('me') + ' ' + act('me', mine)).padEnd(30)
+				+ (nm('foe') + ' ' + act('foe', theirs)).padEnd(32)
+				+ 'us ' + st.me.team.map(m => m.fainted ? 'X' : Math.round(100 * m.curHP / m.maxHP)).join('/')
+				+ ' them ' + st.foe.team.map(m => m.fainted ? 'X' : Math.round(100 * m.curHP / m.maxHP)).join('/'));
+		}
 		// DID CARRYING PROGRESS ACTUALLY CHANGE THIS TURN? Answered by replaying
 		// the winning candidate against a FRESH progress, which is exactly what
 		// the old code did, and comparing. Without this a null result cannot be
