@@ -1,4 +1,50 @@
-# Handoff -- 2026-09-01
+# Handoff -- 2026-09-01 (final for this session)
+
+## READ THIS FIRST: corrections from the last hours of the session
+
+1. **RESTRICTED MODE.** James plays Radical Red's restricted mode and both
+   Giovanni test runs used ILLEGAL team builds: v1 gave Annihilape Drain Punch
+   (unobtainable), v2 replaced it with Bulk Up and kept Dragon Dance / Recover
+   -- and James: "we are in restricted mode... I get no status moves" for picks
+   like these. The dex snapshot carries NO restriction flags (verified: move
+   records have only ID/name/power/type/acc/pp/chance/target/priority/split),
+   so the mode's rules are not in our data. The real save's own sets are the
+   ground truth for what is legal (Mienshao's Detect, Lilligant's Sleep Powder
+   and Baby-Doll Eyes are in daily live use, so the rule is NOT a blanket
+   status ban on everything -- it constrains what could be ACQUIRED for new
+   team members). DO NOT guess the rule and do not re-litigate it: ask James to
+   approve the exact six movesets before any Giovanni re-run, then run
+   tools/sim_episodes.js with RR_TEAM_FILE + FIGHT="ROCKET".
+2. **Giovanni results so far are therefore provisional**: v1 60/60 zero-faint
+   (invalid team), v2 49/60 with 11 full wipes (also invalid). The one finding
+   that likely survives, and the anchor for the next build: in a wiped v2 seed
+   the planner clicked Bulk Up into Earth Eater Orthworm THIRTEEN turns in a
+   row -- a derived lever pulled with no removal behind it, against a wall it
+   had no answer to. Whatever the legal team is, "recognise an unanswerable
+   wall and do something on purpose about it" is the failure class to fix.
+3. **The tie rule reverted** (47858b8): measured n=120, slot-order 28 vs median
+   rule 21, inconclusive-leaning-against; default is old behaviour again,
+   RR_TIE_MODEL=median keeps it available.
+4. **Fable safeguard protocol**: this session's context repeatedly tripped it.
+   In the new chat, keep the game's own vocabulary (faint/KO/removed/survivors),
+   never paste raw memory or RNG dumps (summaries only), and the accumulated
+   trigger mass resets with the fresh context.
+
+## Fast orientation for the new chat
+
+Memory auto-loads; `project-rr-singles-state` points here. The one-paragraph
+state: harness fixed and paired-seeded; port at 79/90 with a per-matchup
+instrument; two levers proven (confident entries p=0.0225 zero-faint, the
+agent.js stop-loss p=0.0008 pooled -- the live trial needs only
+RR_ENTRY_MODEL=confident); arm D refuted; register audit in ASSUMPTIONS.md with
+eight suspicions dissolved by measurement; next build = opponent-side levers +
+denial-line generation, with the Orthworm wall and a legal Giovanni team as its
+acceptance tests; open gameplay decisions #2 (status pricing), #5 (progress
+default), #7 (foe switching in pricing).
+
+---
+
+# Handoff -- 2026-09-01 (body as of mid-session)
 
 Read this, then `docs/ASSUMPTIONS.md` (the audit of background decisions and
 what measurement did to each), then memory `project-rr-singles-state` and
