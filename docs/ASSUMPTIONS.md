@@ -47,12 +47,19 @@ and note it shipped **default-on** and unmeasured, which was a mistake — it is
 arm in the queue and comes out if it does not earn its place), `RR_RISK_WEIGHT`
 (#9), `RR_FOE_ROLL` (#1, refuted above), `VETO=1` (#4, the harness emulation).
 
-**#4 deserves its own note.** The death veto has overridden roughly a tenth of
-live decisions since the night the planner walked Lilligant into Mach Punch. Its
-own comment concedes "the pricing it distrusts is not the pricing it was written
-against." Its benefit has never been measured, and until the harness emulation
-existed it *could not be* — every offline arm this project has ever run compared
-planners in a world with no veto.
+**#4 CLOSED, opposite to filing — the veto is a KEEP and the strongest single
+lever measured.** First measurement ever (harness emulation, both arms on
+confident entries): initial block 15/60 vs 8/60; independent replication block
+**29/60 vs 13/60, p=0.0037, with 15 of 60 episodes meeting the cap** (win losing
+nobody). Pooled over 120 paired episodes: wins veto-only 34 vs control-only 11,
+**McNemar p=0.0008**, zero-faint 20 vs 5. The referee's verdict line: BEATS
+CONTROL — the only arm of the week to earn it. The "external reflex over a
+priced market" framing was wrong: the market prices a lethal turn as a weighted
+average and will still play it; the veto refuses the concrete lethal turn.
+Expected value at plan level plus a stop-loss at execution level beats either
+alone. Caveats: the emulation fires ~14% vs ~10% live and judges with maxroll
+dice rather than the live one-turn scorer. Seventh register entry to flip on
+contact with data.
 
 ## Open, and James's to decide (gameplay)
 
