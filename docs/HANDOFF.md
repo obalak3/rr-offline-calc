@@ -200,7 +200,9 @@ damage into Pawmot (and a little extra special damage into Bellibolt). For
 James: check Mienshao Drain Punch vs Surge's Pawmot on the RR calc site / in
 game; if the site also says 52-63, the ROM's Pawmot differs from the data
 (typing, ability or item). Until then every "Mienshao kills Pawmot in N"
-line is one hit optimistic.
+line is one hit optimistic. Verified: the foe records' calculator stats equal the
+live battle stats exactly (Pawmot 91/61/92/54/54 Jolly, Bellibolt 51/82/44/82/70 Bold),
+so both sides' inputs are right and the gap is in the ROM's damage mechanics.
 
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
