@@ -2519,6 +2519,34 @@ setInterval(() => {
 					const hpOf = r => r.action.type === 'switch' && st.me.team[r.action.index]
 						? st.me.team[r.action.index].curHP / st.me.team[r.action.index].maxHP : 1;
 					const alt = alts.find(r => hpOf(r) >= 0.35) || alts[0];
+					if (!alt) {
+						// EVERY OPTION DIES. Then the last move is for the
+						// successor, not for damage: a Sleep Powder that lands
+						// before the hit leaves the next Pokemon a sleeping
+						// target (run 2 on s5, turn 593: Victreebel died using
+						// Sludge with Sleep Powder in hand). Needs to move first.
+						try {
+							const M = engine.sandbox.RR_MOVE_EFFECTS.moves;
+							const faster = engine.B.finalSpeed(st, 'me') > engine.B.finalSpeed(st, 'foe');
+							const foeMon = st.foe.team[st.foe.active];
+							const parting = faster ? oneTurn.all.map(r => r.action)
+								.filter(a => a.type === 'move')
+								.find(a => {
+									const d = M[a.move];
+									if (!(d && d.effect && d.effect.kind === 'status' && d.effect.target === 'foe'
+										&& (d.effect.status === 'slp' || d.effect.status === 'par'))) return false;
+									try { return engine.B._internal.canTakeStatus(foeMon, d.effect.status, st, null); }
+									catch (e) { return true; }
+								}) : null;
+							if (parting && !same(parting, chosen)) {
+								console.log('  [every option loses ' + st.me.team[st.me.active].set.species
+									+ '; its last move is ' + parting.move + ' for whoever comes next]');
+								chosen = parting;
+								lastPlan.progress = null;
+								plannerSaid = Object.assign({}, pick, {overridden: true});
+							}
+						} catch (e) { /* keep the plan's move */ }
+					}
 					if (alt && !same(alt.action, chosen)) {
 						console.log('  [plan would lose '
 							+ st.me.team[st.me.active].set.species

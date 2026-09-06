@@ -126,6 +126,24 @@ NEXT PLAN:
   3. Items 3-5 of the previous plan (dying Pokemon's last move, damage-vs-live
      gap, churn count).
 
+Run 8 (same code as run 7, jittered RNG): WIN, NOBODY LOST -- the first
+zero-death Surge live. Sequence: Lanturn handles Pincurchin/Bellibolt; Lilligant
+Baby-Doll Eyes into Pawmot then out at 14 HP; Mienshao Fake Out (sash) + three
+Drain Punches; Manectric-Mega: Lanturn pivot, Diggersby Bulldoze x3 (61 -> 12);
+Vikavolt: Victreebel Sleep Powder, then Mienshao/Breloom alternating Fake Out,
+Headbutt and Rock Tomb while it Volt Switched and Roosted; Breloom Bullet Seed
+took Pincurchin; Rock Tomb finished Vikavolt from 33. Still visible: Mienshao
+entered three times for Fake Out (turns 768/772/776) via dodges and "(no plan)"
+quick answers, not via chip legs -- it worked here because Vikavolt kept
+pivoting, but it is the same cycle James dislikes.
+Between runs 7 and 8 one more rule went in (agent.js, untested live): when
+every option dies, the last move is a Sleep Powder/Thunder Wave that lands
+first, for the successor.
+
+Scoreboard s5 live: 1 old WIN-1 | 2 WIPE | 3 WIPE | 4 WIN-2 | 5 WIN-2 |
+6 WIN-4 | 7 WIN-1 | 8 WIN-0. Runs 7 and 8 are the current code; variance
+between them is one Rock Tomb roll.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
