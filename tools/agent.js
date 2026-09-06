@@ -1307,6 +1307,27 @@ if (process.argv[2] === '--probe') {
 				const meA = st.me.team[st.me.active], foeA = st.foe.team[st.foe.active];
 				console.log('  SPEED: ours ' + B.finalSpeed(st, 'me') + ' (rawStats ' + JSON.stringify(meA.set.rawStats || null)
 					+ ') vs theirs ' + B.finalSpeed(st, 'foe') + ' (rawStats ' + JSON.stringify(foeA.set.rawStats || null) + ')');
+				if (process.env.RR_PROBE_DMG) {
+					console.log('  FIELD ' + JSON.stringify(st.field) + ' foe status ' + (foeA.status || '-') + ' ability ' + foeA.set.ability + ' item ' + foeA.set.item);
+					// Damage table: every move of ours vs their active, and their
+					// active's moves vs each of ours. Ranges are the 16 no-crit rolls.
+					const rng = r => (!r || r.immune) ? 'immune' : (r.noCrit && r.noCrit.length
+						? r.noCrit[0] + '-' + r.noCrit[r.noCrit.length - 1] : '?');
+					st.me.team.forEach((m, mi) => {
+						if (m.fainted) return;
+						const pr = B.clone(st); pr.me.active = mi;
+						const ours = (m.set.moves || []).map(mv => {
+							let r = null; try { r = B.damageRolls(pr, 'me', mv); } catch (e) { r = null; }
+							return mv + ' ' + rng(r);
+						});
+						const theirs = (foeA.set.moves || []).map(mv => {
+							let r = null; try { r = B.damageRolls(pr, 'foe', mv); } catch (e) { r = null; }
+							return mv + ' ' + rng(r);
+						});
+						console.log('  DMG ' + m.set.species + ' (' + m.curHP + '/' + m.maxHP + ') -> ' + foeA.set.species
+							+ ': ' + ours.join(', ') + '   | takes: ' + theirs.join(', '));
+					});
+				}
 			}
 			console.log('  bestDamage inputs for the active vs theirs (median noCrit x hits):');
 			for (const a of B.legalActions(st, 'me')) {
@@ -2831,6 +2852,17 @@ setInterval(() => {
 			answerTurn = nowQ.turn;
 		}
 	} catch (e) { /* an unreadable question changes nothing */ }
+	// INPUT JITTER (2026-09-05). From a save state the game's RNG advances
+	// per frame, so identical decisions delivered at identical frames replay
+	// identical rolls: runs 2 and 3 on s5 both saw Pawmot crit Mienshao from
+	// 84 HP at the same turn. A live human never presses on the same frame
+	// twice, so a random delay before the answer is what makes a rehearsal
+	// run a fair sample instead of a replay. RR_JITTER_MS=0 disables.
+	const JITTER = process.env.RR_JITTER_MS === undefined ? 900 : Number(process.env.RR_JITTER_MS);
+	if (JITTER > 0) {
+		const ms = Math.floor(Math.random() * JITTER);
+		try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* no sleep, no harm */ }
+	}
 	fs.writeFileSync(CMD, JSON.stringify({
 		turn: answerTurn,
 		action: d.best.action.type === 'switch' ? 'switch' : 'move',

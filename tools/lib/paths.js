@@ -366,7 +366,11 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 			they: theirs.type === 'switch'
 				? '-> ' + before.foe.team[theirs.index].set.species : theirs.move,
 			us: st.me.team.map(m => m.fainted ? 'X' : Math.round(100 * m.curHP / m.maxHP)).join('/'),
-			them: Math.round(100 * st.foe.team[fi].curHP / st.foe.team[fi].maxHP)
+			them: Math.round(100 * st.foe.team[fi].curHP / st.foe.team[fi].maxHP),
+			fs: (st.foe.team[fi].status || '-')
+				+ (st.foe.team[fi].status === 'slp' ? st.foe.team[fi].sleepTurns : ''),
+			fa: st.foe.team[st.foe.active].set.species + '@' + st.foe.team[st.foe.active].curHP,
+			nu: (st.unmodelled || []).slice((before.unmodelled || []).length)
 		});
 	}
 	if (outcome === 'stall' && st.foe.team[fi].fainted) outcome = 'kill';

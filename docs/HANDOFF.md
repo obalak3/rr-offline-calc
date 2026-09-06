@@ -1,5 +1,59 @@
 # Handoff -- 2026-09-01 (final for this session)
 
+## UPDATE 2026-09-05 (away-work loop, latest): s5 runs analysed, seven fixes
+
+Retrievable version before this work: tag `pre-planner-2026-09-05` (commit
+6394334). Work so far: commit 8d52c2f. Test protocol James set: change, then
+play s5 (Surge) LIVE, then `node tools/analyze_fight.js ~/rr-agent/turns/<dir>`
+and read WHY each move happened, not the death count.
+
+Run 1 (old code, EXPENDABLE nobody, 20 s panel timeout): WIN losing Lanturn.
+Lanturn was thrown away at turn 535: an 18 HP Lanturn "absorb pivot" into a
+fresh Pawmot, priced as a certain loss and 0.6 cheaper than staying, because
+the rest-of-fight estimate charged a PROJECTED later death the same 6 as a
+certain one now (die now == maybe die later). Nobody answered the panel, and
+the timeout played the plan's own sacrifice. The Baby-Doll Eyes line that
+followed killed Pawmot losing nobody.
+  Also found: Bellibolt's Hidden Power priced as a neutral 60-power hit (16%)
+  and it did Hidden Power Grass for 32%. The RAM roster ships the move as bare
+  "Hidden Power"; the IVs are in the same record.
+
+Run 2 (escalation + timeout fix + projected-death discount, before the other
+fixes): WHITEOUT, all six lost. Mienshao died to a crit Thunder Punch from 84
+HP (Pawmot at -1 Attack; crits ignore the drop; James has said to ignore crits)
+and with it the only Vikavolt answer. Then: Bulldoze twice into a Levitate
+Vikavolt for "their spe -1" (the lever gate only asked about status immunity);
+"slp, then Victreebel kills" shipped as a bare Mega Drain because the killer's
+own Sleep Powder job was filtered out of the plan; a sleeping opponent was given
+exactly ONE lost turn in every engine mode, so no sleep line ever priced as
+worth anything; the timeout/standing-choice chain accepted a sacrifice every
+turn once every option on the table lost somebody.
+
+Fixes (all in 8d52c2f):
+  - replan.js: zero-death escalation -- when the cheapest line buries a
+    non-expendable, generate wider (escalate:true, maxStack 4, perKiller 8),
+    price, re-sort; log line `[zero-death search: ...]`.
+  - gameplan.js: projected deaths charged AHEAD_DEATH = 3 (RR_AHEAD_DEATH).
+  - agent.js: panel timeout takes the cheapest option that loses nobody, the
+    plan only when every option loses somebody.
+  - agent.js: foeRosterFromRAM types Hidden Power from IVs (hiddenPowerType);
+    verified against the known Surge sets (Pincurchin Ice, Bellibolt Grass,
+    Manectric Grass).
+  - candidates.js: leversUsable -- a lever move that the engine reads as
+    immune against this foe kills the condition (Bulldoze vs Levitate);
+    RR_DEBUG_LEVERS=1 prints every lever duel; the killer's own lever jobs are
+    kept in the plan.
+  - rr-battle.js + duels.js: sleep is 1-3 lost turns. `sleepTurns` now counts
+    turns already lost, `sleepMax` is set when the length is exact (Rest 2).
+    maxroll: foe loses 2 (ctx.risks.sleep overrides), ours 3; odds forks on
+    1/3 then 1/2; worst: foe 1, ours 3; sample draws.
+
+Known and left: at turn 565 of run 2 (post-crit) no zero-death line exists in
+the planner's eyes; Breloom's Spore is the human answer but Breloom cannot
+switch into Bug Buzz, so it is only reachable off a free switch. Manectric-Mega
+Flame Burst vs Victreebel: engine 64-75 with RAM stats, the one live hit seen
+was 45 (turn 561, possibly pre-mega stats that turn) -- unverified.
+
 ## UPDATE 2026-09-01 (latest): Sucker Punch fixed, team v4, 57/60
 
 James's two corrections after the v3 run: Alakazam cannot have Focus Blast by
