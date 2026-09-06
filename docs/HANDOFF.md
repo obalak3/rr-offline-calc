@@ -144,6 +144,16 @@ Scoreboard s5 live: 1 old WIN-1 | 2 WIPE | 3 WIPE | 4 WIN-2 | 5 WIN-2 |
 6 WIN-4 | 7 WIN-1 | 8 WIN-0. Runs 7 and 8 are the current code; variance
 between them is one Rock Tomb roll.
 
+PROCEDURE NOTE: agent-node.log is overwritten on every restart, and the logs
+of runs 7 and 8 were lost that way. At the end of a run copy it into the run's
+turns dir (`cp ~/rr-agent/agent-node.log ~/rr-agent/turns/<dir>/`);
+analyze_fight.js now reads it from there first. It also prints a CHURN line:
+runs 1/5/7/8 = 29/32/30/33% voluntary switches, plan text changing on most
+turns (the why-strings carry HP percentages, so that count over-reads).
+Run 8's three Mienshao entries were all death-veto dodges after the plan had
+put Breloom or Victreebel in front of a Bug Buzz; whether plan and veto judged
+that hit with different dice could not be checked without the log.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
