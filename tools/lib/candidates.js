@@ -659,7 +659,12 @@ function candidatesFor(ctx, fi, options) {
 							condC, {retreatAt: at})
 							.filter(l => l.outcome === 'retreat' || l.outcome === 'left'
 								|| l.outcome === 'kill')
-							.filter(l => !(l.moves && l.moves.length
+							// ...unless the Pokemon REGENERATES on the way out. Runs 8/9
+							// on s5: Mienshao (Regenerator) came in on Vikavolt, Fake
+							// Out, took a hit, left and healed 32 each time -- that
+							// is the classic Fake Out pivot and it won the fight. A
+							// self-funding cycle is a chip leg the market may price.
+							.filter(l => p.ability === 'Regenerator' || !(l.moves && l.moves.length
 								&& l.moves.every(m => ENTRY_FLINCH[m])))
 							// NET VALUE, NOT RAW CHIP. Picking the leg by chip alone
 							// chose Sucker Punch (56% chip for 56% of Hitmonlee) over
