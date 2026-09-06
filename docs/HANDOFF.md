@@ -57,6 +57,16 @@ crit the post-Mienshao position (Vikavolt with no answer) produced the known
 switch churn (7 switches in 10 turns) and a death-veto fallback that sent a 15
 HP Lilligant into Vikavolt.
 
+Run 4 (jitter on, ability byte): WIN losing Lilligant and Mienshao. No crit
+replay. Both deaths were the death veto's DODGE: it took the first one-turn
+option that did not die this turn, which was a 14 HP Lilligant (turn 627) and
+a 29 HP Mienshao (turn 632) sent in as dodges. Turn 634: the veto chose Detect
+and the timeout-accepted "standing choice" put the losing Rock Tomb back.
+Fixed after the run: the dodge prefers a switch-in at >=35% HP; a timeout's
+acceptance never overrides the veto (only a hand choice does); family 2 now
+emits both orders of a two-lever setup (sleep first, then Baby-Doll Eyes).
+Run 5 = those three.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe

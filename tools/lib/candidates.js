@@ -625,10 +625,19 @@ function candidatesFor(ctx, fi, options) {
 						// a full Crawdaunt with Fire Fang, its resisted move, twice,
 						// while Brick Break, Play Rough and Thunder Fang all removed
 						// it outright (2026-09-03). Dead lines stay excluded.
+						// A chip leg that is nothing but Fake Out is a Pokemon
+						// cycled in to steal one turn and cycled out again,
+						// paying entry damage each time (run 5 on s5: Mienshao in
+						// three times against Vikavolt, 98 -> 31). James's rule:
+						// Fake Out on entry when already in, never an entry FOR
+						// Fake Out unless a priced plan needs the stolen turn --
+						// that is the opener family's job, not this one's.
 						const chip = duelLinesM(mi, fi,
 							condC, {retreatAt: at})
 							.filter(l => l.outcome === 'retreat' || l.outcome === 'left'
 								|| l.outcome === 'kill')
+							.filter(l => !(l.moves && l.moves.length
+								&& l.moves.every(m => ENTRY_FLINCH[m])))
 							// NET VALUE, NOT RAW CHIP. Picking the leg by chip alone
 							// chose Sucker Punch (56% chip for 56% of Hitmonlee) over
 							// Fake Out (16% chip for nothing, and the opponent loses
