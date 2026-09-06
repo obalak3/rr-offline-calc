@@ -2306,7 +2306,7 @@ setInterval(() => {
 					: 'panel closed with the question open')
 					+ '; taking the ' + (safe.dead.length ? 'plan, which loses ' + deathKey(safe.dead)
 						: 'option that loses nobody: ' + safe.why) + ']');
-				standingAnswer = {foe: pendingAsk.foe, accept: deathKey(safe.dead)};
+				standingAnswer = {foe: pendingAsk.foe, accept: deathKey(safe.dead), auto: true};
 				clearAsk();
 			} else {
 				// Restamp so the panel shows the live turn while it waits.
@@ -2511,7 +2511,14 @@ setInterval(() => {
 					// It dies this turn and does not take the opponent with it.
 					// A plan is a sequence, so losing the Pokemon it depends on
 					// costs the rest of the plan, not just this turn.
-					const alt = oneTurn.all.find(r => !r.mineDead);
+					// The dodge must not be a Pokemon that is nearly dead itself:
+					// run 3 on s5 (turn 600) sent a 15 HP Lilligant into Vikavolt
+					// because Mud Shot would not quite kill her. Prefer a switch-in
+					// with real HP; take the best one-turn alternative otherwise.
+					const alts = oneTurn.all.filter(r => !r.mineDead && !same(r.action, chosen));
+					const hpOf = r => r.action.type === 'switch' && st.me.team[r.action.index]
+						? st.me.team[r.action.index].curHP / st.me.team[r.action.index].maxHP : 1;
+					const alt = alts.find(r => hpOf(r) >= 0.35) || alts[0];
 					if (alt && !same(alt.action, chosen)) {
 						console.log('  [plan would lose '
 							+ st.me.team[st.me.active].set.species
@@ -2598,7 +2605,15 @@ setInterval(() => {
 		// The outcome already signed off on, if it is still on the table.
 		const standing = standingAnswer && standingAnswer.foe === foeName
 			? options.find(o => deathKey(o.dead) === standingAnswer.accept) : null;
-		if (standing) {
+		if (standing && standingAnswer.auto && plannerSaid && plannerSaid.overridden
+			&& standing.dead.length) {
+			// Nobody chose this loss; the timeout did. A timeout's acceptance
+			// must not put the sacrifice back over the death veto's dodge (run 4
+			// on s5, turn 634: veto said Detect, the standing choice played the
+			// Rock Tomb that got Mienshao killed). A hand choice still may.
+			console.log('  [standing choice was a timeout; keeping the veto\'s dodge instead of the loss of '
+				+ standing.dead.join(', ') + ']');
+		} else if (standing) {
 			d.best.action = standing.action;
 			console.log('  [standing choice: ' + (standing.dead.length
 				? 'accepting the loss of ' + standing.dead.join(', ')

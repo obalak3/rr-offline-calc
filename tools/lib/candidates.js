@@ -354,6 +354,18 @@ function candidatesFor(ctx, fi, options) {
 				E.describeEffect(entry.cond) + ', then ' + p.species
 				+ ' kills for ' + pctOf(line.cost),
 				entry.effort * 0.15 + line.cost + 3 * line.deathRisk);
+			// BOTH ORDERS of a two-lever setup. "Sleep it, then drop its Attack"
+			// and "drop its Attack, then sleep it" are different plans: on s5
+			// Lilligant's Baby-Doll Eyes costs her ~85 HP into an awake Pawmot
+			// and nothing into a sleeping one, and only one order was ever
+			// generated (run 4, turns 617-619).
+			if (prep.length >= 2 && new Set(prep.map(j => j.mon)).size >= 2) {
+				const rev = prep.slice().reverse();
+				push(rev.concat([{mon: p.species, moves: line.moves}]),
+					E.describeEffect(entry.cond) + ' (other order), then ' + p.species
+					+ ' kills for ' + pctOf(line.cost),
+					entry.effort * 0.15 + line.cost + 3 * line.deathRisk + 0.01);
+			}
 			// The same idea with somewhere to hand the last hit to. "*" lets the
 			// attacker re-pick its best move each turn, which matters when the
 			// obvious move ruins itself -- Leaf Storm drops its own Sp. Atk two
