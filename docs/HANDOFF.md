@@ -96,6 +96,36 @@ NEXT PLAN (in order):
   5. Churn: count switches per fight in analyze_fight and add the incumbent
      STICK only if the count stays high after 1-3.
 
+Run 6 (absorb gate not yet in): WIN but FOUR lost. Cascade from turn 695:
+the market ranked a line losing nobody (here 6.35, rest-of-fight 18.0) below
+one that buried Lilligant (here 12.56, rest 9.5) -- a certain death now bought
+with the flat no-answer penalties of a fight not yet played -- then the veto
+dodge sent Lanturn into Hidden Power Grass, Victreebel into Flame Burst, and
+the bodies followed. FIX: RR_DEATH_LAST (default on, replan.js): lines that
+bury a non-expendable rank below every line that buries nobody, in the
+finalist pick, the final sort, and the switch-margin rule. Verified offline at
+695: the no-death line is chosen. Also: absorb pivots (family 3) now ask the
+AI port what it throws at OUR ACTIVE and are dropped when it is not the
+absorbed type (Vikavolt Roost); generator calls carry `active`.
+
+Run 7 (all of the above): WIN losing only Mienshao -- the best run yet, and
+zero deaths was ONE HP away: Lanturn Scald 34 + Fake Out 18 + Rock Tomb 51
+left Vikavolt at 1/104 and Bug Buzz took the 23 HP Mienshao. Pawmot and
+Manectric-Mega were both handled losing nobody (Diggersby Bulldoze, Breloom
+Bullet Seed + Mach Punch).
+
+Scoreboard s5 live: 1 old WIN-1 | 2 WIPE | 3 WIPE | 4 WIN-2 | 5 WIN-2 |
+6 WIN-4 | 7 WIN-1.
+
+NEXT PLAN:
+  1. Kill legs that hinge on a coin-flip roll (turn 742: Rock Tomb 47-55 vs
+     52) should carry their miss branch; check what deathRisk/killOdds said
+     for that leg and whether a safer finisher existed (Breloom was full).
+  2. Run 8 unchanged to see variance now that the RNG is jittered; two more
+     runs before believing any single result.
+  3. Items 3-5 of the previous plan (dying Pokemon's last move, damage-vs-live
+     gap, churn count).
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
