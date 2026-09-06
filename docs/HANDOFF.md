@@ -48,6 +48,37 @@ Fixes (all in 8d52c2f):
     maxroll: foe loses 2 (ctx.risks.sleep overrides), ours 3; odds forks on
     1/3 then 1/2; worst: foe 1, ours 3; sample draws.
 
+Run 3 (all seven fixes): WHITEOUT again, and it replayed run 2 move for move
+up to Mienshao's death -- same crit, same turn, same HP. From a save state the
+game RNG is deterministic under identical input frames, so a rehearsal run
+replays one unlucky roll unless the timing varies. Fix: agent.js sleeps a
+random 0-900 ms before writing cmd.json (RR_JITTER_MS=0 disables). After the
+crit the post-Mienshao position (Vikavolt with no answer) produced the known
+switch churn (7 switches in 10 turns) and a death-veto fallback that sent a 15
+HP Lilligant into Vikavolt.
+
+Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
+of ours vs their active and their moves vs each of ours (16-roll ranges, no
+items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
+status + sleep turns taken), `fa` (real foe active @HP) and `nu` (new engine
+notes) per simulated turn. Verified with them: the engine's "Bulldoze did
+nothing" was Diggersby's Sitrus Berry masking hit sizes plus Pawmot's top-roll
+Drain Punch healing 45 vs Bulldoze's 44 -- correct, not a bug.
+
+OPEN, measured not fixed: live hits around Pawmot ran 10-30% under the
+engine's ranges in both directions (our Drain Punch 42 live vs 52-63; Pawmot's
+Ice Punch into Lilligant 50 live vs 56-66 with Natural Cure) while Fake Out
+matched exactly. Also: the RAM party record decodes Pawmot's ability as Natural
+Cure (PID bit rule; hidden abilities cannot come from it) while the gBattleMons
+ability byte says 93 = Iron Fist. The active's true ability should come from
+that byte (foeTeamFor does not override it yet). Manectric-Mega Flame Burst vs
+Victreebel: engine 64-75, one live hit 45. Do a controlled live comparison
+before touching the calculator. Instrument check done: the calculator's stats
+for all six of ours (from the RAM records) equal the live battle stats exactly,
+so the gap is not an input problem. Live Drain Punch (both sides) equals the
+engine's no-STAB figure; Scald, Bug Buzz, Hidden Power Grass and Fake Out match.
+The active foe's ability now comes from the battle struct byte (Iron Fist).
+
 Known and left: at turn 565 of run 2 (post-crit) no zero-death line exists in
 the planner's eyes; Breloom's Spore is the human answer but Breloom cannot
 switch into Bug Buzz, so it is only reachable off a free switch. Manectric-Mega

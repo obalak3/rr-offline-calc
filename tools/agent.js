@@ -266,6 +266,19 @@ function foeTeamFor(obs) {
 	// against it instead of the one Water Shuriken that removes the real one.
 	const ram = foeRosterFromRAM(obs);
 	if (ram && foeSet && ram.some(r => r.species === foeSet.species)) {
+		// The party record can only say which of the two ordinary ability
+		// slots the PID picks; a HIDDEN ability is invisible to it, and gym
+		// Pokemon carry them (Surge's Pawmot decoded as Natural Cure, the
+		// battle struct's ability byte says Iron Fist). For the one on the
+		// field the battle struct is the truth, so it overrides.
+		const trueAb = foeSet.ability;
+		if (trueAb) {
+			const i = ram.findIndex(r => r.species === foeSet.species
+				&& (!obs.foe.maxhp || !obs.foeparty || obs.foeparty.some(row => row && row.maxhp === obs.foe.maxhp)));
+			if (i >= 0 && ram[i].ability !== trueAb) {
+				ram[i] = Object.assign({}, ram[i], {ability: trueAb});
+			}
+		}
 		return ram;
 	}
 	const bt = battleOf(obs);
