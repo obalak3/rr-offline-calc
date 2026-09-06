@@ -215,6 +215,22 @@ Extender confirms) -- the live agent uses the battle byte, the audit uses
 records. Not explained by STAB, typing, Iron Fist, stats or level; parked for
 James's in-game check.
 
+INCIDENT 2026-09-06 ~02:00-02:25 (night, James away, display asleep): the Lua
+heartbeat had stopped at 23:14 (unexplained; James was active then -- likely
+the scripting console/window was closed), so F5 via System Events did nothing.
+While chasing it I triggered the Lua's restart path (restart marker +
+load.txt + touch ~/rr-agent/reload) and mGBA quit at 02:17 (config rewritten =
+clean quit); cause not pinned. The display was asleep/locked, so no window
+could be driven. Relaunched headlessly with `mGBA -t RadicalRed.ss3 <rom>`
+(the -t/--savestate flag loads a state at start; there is NO --script flag),
+so James's game is on s3 but the agent script is NOT loaded: he must do
+Tools > Scripting > File > Load recent script (bootstrap.lua) before the
+agent can play. Rules learned: check the heartbeat mtime before any live run;
+the bootstrap reloads on `touch ~/rr-agent/reload`, not on the script's
+mtime; the Lua's restart path reseeds the game RNG (real variance), the F5
+route does not.
+No run 10 happened; the Regenerator/fewest-deaths changes remain untested live.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
