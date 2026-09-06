@@ -154,6 +154,16 @@ Run 8's three Mienshao entries were all death-veto dodges after the plan had
 put Breloom or Victreebel in front of a Bug Buzz; whether plan and veto judged
 that hit with different dice could not be checked without the log.
 
+Run 9 (unchanged): zero deaths again, and the Vikavolt phase replayed run 8
+roll for roll (Headbutt 30, Fake Out 17/18/23, Rock Tomb finish) despite the
+0-900 ms brain-side jitter. Conclusion: this ROM's battle RNG is consumed per
+call, not per frame, so from a save state the fight is deterministic GIVEN OUR
+ACTIONS. Runs 2/3 (same crit) and 8/9 (same win) are the evidence. So s5 is a
+reproducible puzzle: a different outcome needs a different decision, and two
+identical runs prove nothing about variance. Jitter stays (harmless).
+Scoreboard s5 live: 1 old WIN-1 | 2 WIPE | 3 WIPE | 4 WIN-2 | 5 WIN-2 |
+6 WIN-4 | 7 WIN-1 | 8 WIN-0 | 9 WIN-0.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
