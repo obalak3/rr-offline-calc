@@ -89,7 +89,7 @@ function playPlan(ctx, plan, opts) {
 		probe.me.active = index;
 		const r = B.damageRolls(probe, 'foe', foeAction.move);
 		if (!r || r.immune) return true;
-		const worst = r.noCrit[r.noCrit.length - 1] * (r.hits || 1);
+		const worst = r.noCrit[r.noCrit.length - 1];   // already the whole multi-hit lump
 		return worst < probe.me.team[index].curHP;
 	}
 

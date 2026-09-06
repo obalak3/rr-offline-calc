@@ -63,7 +63,7 @@ function runDuel(engine, state, strategy, opts) {
 	const B = engine.B, RRAI = engine.sandbox.RRAI;
 	const options = opts || {};
 	const flags = options.flags || {checkBadMove: true, checkGoodMove: true};
-	const cap = options.turnCap || 12;
+	let cap = options.turnCap || 12;
 
 	let st = B.clone(state);
 	const myIndex = st.me.active, foeIndex = st.foe.active;
@@ -90,6 +90,10 @@ function runDuel(engine, state, strategy, opts) {
 		const me = st.me.team[myIndex], foe = st.foe.team[foeIndex];
 		if (foe.fainted) { outcome = 'kill'; break; }
 		if (me.fainted) { outcome = 'died'; break; }
+		// A STALL WE ARE NOT LOSING IS ALLOWED TO RUN ON. Twelve turns cut off
+		// every grind that wins on PP or flinches; extended once, to 24, when
+		// our duellist still holds half its HP at the cap.
+		if (t === cap - 1 && cap < 24 && me.curHP >= 0.5 * startHP) cap = 24;
 		if (retreatAt !== undefined && t > 0 && me.curHP / me.maxHP <= retreatAt) {
 			outcome = 'retreat'; break;
 		}
@@ -102,7 +106,21 @@ function runDuel(engine, state, strategy, opts) {
 		const legal = B.legalActions(st, 'me');
 		const want = strategy[Math.min(t, strategy.length - 1)];
 		const mine = legal.find(a => a.type === 'move' && a.move === want);
-		if (!mine) { outcome = 'nomove'; break; }
+		if (!mine) {
+			// AN ENTRY-ONLY MOVE'S LINE ENDS BY HANDING OVER, NOT BY FAILING.
+			// A one-move strategy repeats its move, and Fake Out is illegal
+			// from the second turn, so "Fake Out" always ended here as
+			// `nomove` -- which the chip family refuses -- and no plan could
+			// ever open with it. James's line against Vikavolt (switch to
+			// Hitmonlee, Fake Out, then Dugtrio Rock Blast) was unfindable for
+			// exactly this reason (2026-09-03). After at least one turn of an
+			// entry-only move the line is a voluntary exit with its chip
+			// banked, which is what `left` means everywhere else.
+			const wd = B.moveData(want);
+			const entryOnly = wd && wd.effect && (wd.effect.firstTurnOnly || wd.effect.kind === 'firstTurnOnly');
+			outcome = (t > 0 && entryOnly) ? 'left' : 'nomove';
+			break;
+		}
 
 		// Their best COMMITTED choice -- see committedChoice.
 		const scored = RRAI.scoreAll(st, 'foe', flags, {});
@@ -158,6 +176,12 @@ function runDuel(engine, state, strategy, opts) {
 		moves: strategy,
 		outcome: outcome,
 		turns: turns,
+		// How much of the target is left after our FIRST turn, as a fraction.
+		// Two lines that both kill in two turns at the same cost are not
+		// equal: Play Rough into a Focus Sash Pawmot leaves 1 HP, Brick Break
+		// leaves 54, and the one that leaves 1 finishes with anything at all.
+		// Without this the tie went to array order, i.e. move slot.
+		firstLeft: log.length ? log[0].theirHP / foeMon0.maxHP : 1,
 		// The price, as a fraction of OUR maximum HP. Negative is possible and
 		// is not a bug: Volt Absorb, Drain moves and Leftovers all mean a duel
 		// can end with more HP than it started with.
@@ -286,7 +310,16 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
 	lines.sort((a, b) => {
 		const ka = a.outcome === 'kill' ? 0 : 1, kb = b.outcome === 'kill' ? 0 : 1;
 		if (ka !== kb) return ka - kb;
-		if (ka === 0) return a.cost - b.cost;
+		if (ka === 0) {
+			if (Math.abs(a.cost - b.cost) > 1e-9) return a.cost - b.cost;
+			// TIES ARE BROKEN BY PLAY, NOT BY MOVE SLOT: fewer turns, then the
+			// line that leaves the target lowest after its first hit, then the
+			// surer kill. James, 2026-09-03: "when play rough kills pawmot why
+			// use brick break. This is the easiest stuff."
+			if (a.turns !== b.turns) return a.turns - b.turns;
+			if (Math.abs(a.firstLeft - b.firstLeft) > 1e-9) return a.firstLeft - b.firstLeft;
+			return (b.killOdds || 0) - (a.killOdds || 0);
+		}
 		return (b.chip - b.cost) - (a.chip - a.cost);
 	});
 	return lines;
@@ -355,7 +388,7 @@ function committedChoice(B, scored, state) {
 			let d = 0;
 			try {
 				const r = B.damageRolls(state, 'foe', e.action.move);
-				if (r && !r.immune) d = r.noCrit[Math.floor(r.noCrit.length / 2)] * (r.hits || 1);
+				if (r && !r.immune) d = r.noCrit[Math.floor(r.noCrit.length / 2)];   // the band is the whole move, hits included
 			} catch (err) { d = 0; }
 			dmg.push({e, d, lethal: me && d >= me.curHP});
 		}

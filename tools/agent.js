@@ -1,7 +1,8 @@
 /**
  * The planner, playing. One turn at a time.
  *
- * Run: node tools/agent.js          (then load tools/lua/agent.lua in mGBA)
+ * Run: node tools/agent.js          (then load tools/lua/bootstrap.lua in mGBA;
+ *                                    it hot-reloads tools/lua/agent_impl.lua)
  *
  * The loop James asked for: "It does a move, the model makes a quicksave to
  * look at the AI's next move and finds the best move for us, and then the next
@@ -58,18 +59,144 @@ const RRAI = engine.sandbox.RRAI;
 const AI_FLAGS = {checkBadMove: true, checkGoodMove: true};
 const dex = H.loadDex();
 const party = H.realTeam();
+const SPECIES_ID = (() => {
+	const map = {};
+	const d = engine.sandbox && engine.sandbox.RR_DEX_DATA;
+	if (d && d.species) Object.keys(d.species).forEach(id => {
+		const sp = d.species[id];
+		if (sp && sp.name && map[sp.name] === undefined) map[sp.name] = Number(id);
+	});
+	return map;
+})();
+function speciesIdOf(name) { return SPECIES_ID[name] || SPECIES_ID[String(name).split('-')[0]] || 0; }
+function liveRoster(obs) {
+	const RRSave = engine.sandbox && engine.sandbox.RRSave;
+	if (!RRSave || !RRSave.readRecord || !obs || !obs.party) return null;
+	const out = [];
+	for (const row of obs.party) {
+		if (!row || typeof row.raw !== 'string' || row.raw.length < 200) return null;
+		const bytes = Buffer.from(row.raw, 'hex');
+		const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		let mon = null;
+		try { mon = RRSave.readRecord(view, 0, true); } catch (e) { mon = null; }
+		if (!mon) return null;
+		out.push({species: mon.species, level: mon.level, nature: mon.nature,
+			ability: mon.ability, item: mon.item, moves: mon.moves, evs: mon.evs, ivs: mon.ivs});
+	}
+	return out.length ? out : null;
+}
 
 /**
  * Which trainer battle is this? Identified by the opponent's active species,
  * so the real sets (abilities, items, Hidden Power types, EV spreads) can be
  * used instead of anything inferred from RAM.
  */
-const ALL_BATTLES = H.earlyBattles(engine, {maxLevel: 60});
+/**
+ * THE BATTLE LIST HAS TO INCLUDE THE SCALING FIGHTS.
+ *
+ * `earlyBattles` skips every trainer whose levels scale to the player unless it
+ * is given a `relativeBase` to resolve them against -- 103 of the dataset's
+ * fights against 36. This was built once, with no base, so the live agent could
+ * only ever recognise the fixed-level fights. On 2026-09-02 that meant Lass
+ * Anne in Viridian Forest was not found at all, and `foeTeamFor` fell back to
+ * CLONING the active: the agent fought Stufful/Clefairy/Audino believing it
+ * faced three Stuffuls, one of them showing 46 HP against a 42 maximum. It
+ * could not plan for a Pokemon it did not know existed.
+ *
+ * The base is our own level, so it is rebuilt whenever the team levels up.
+ * Resolved against Lass Anne this gives Stufful 12, Clefairy 10, Audino 12,
+ * which is exactly what RAM reports.
+ */
+const battleLists = new Map();
+function battlesFor(level) {
+	const base = Math.max(1, Number(level) || 0);
+	if (!battleLists.has(base)) {
+		battleLists.set(base, H.earlyBattles(engine, {maxLevel: 100, relativeBase: base}));
+	}
+	return battleLists.get(base);
+}
+function ourLevel(obs) {
+	const levels = (obs && obs.party || []).map(r => r && r.level).filter(Boolean);
+	return levels.length ? Math.max.apply(null, levels) : (obs && obs.me && obs.me.level) || 5;
+}
 const battleCache = {};
+/**
+ * ONE SOURCE OF TRUTH FOR WHO IS FIGHTING, and a guard that shouts if anything
+ * disagrees with it.
+ *
+ * This is the fourth bug of the same shape in one day. The roster was read from
+ * the .sav in one place and from RAM in another; the battle list was built for
+ * fixed-level fights in one place and matched against a scaling one elsewhere;
+ * a switch target was resolved by max HP on one side and by species on the
+ * other. Each time, both halves ran happily and produced a confident answer
+ * about a fight that was not happening -- the planner duelling a level 3 SENTRET
+ * while a level 15 Furret stood on the field, and asking which two Pokemon to
+ * sacrifice to a Clefairy that Furret one-shots.
+ *
+ * James, 2026-09-02: "I am actually bored of this problem coming up and up and
+ * up again. One thing finds something one thing finds another and then they
+ * don't communicate well and then we are looking at a completely dumb error."
+ *
+ * So: derive the teams ONCE per observation, hand the same object to the state
+ * builder and to the planner, and CHECK on every decision that the state and
+ * the plan context still describe the same six Pokemon. A mismatch is printed
+ * loudly rather than silently producing a plan about the wrong team.
+ */
+let teamsCache = {obs: null, teams: null};
+function teamsFor(obs) {
+	if (teamsCache.obs === obs && teamsCache.teams) return teamsCache.teams;
+	const teams = {party: liveRoster(obs) || party, foeSets: foeTeamFor(obs)};
+	teamsCache = {obs: obs, teams: teams};
+	return teams;
+}
+
+/** Loud, not fatal: a wrong plan is worse than a slow one, but stopping is worse still. */
+function assertSameTeams(st, pctx, where) {
+	const namesOf = arr => arr.map(x => (x.set ? x.set.species : x.species)).join(',');
+	const inState = namesOf(st.me.team), inPlan = namesOf(pctx.party);
+	if (inState !== inPlan) {
+		console.log('  [!! THE TWO HALVES DISAGREE ABOUT OUR TEAM (' + where + ')');
+		console.log('      state:  ' + inState);
+		console.log('      plan:   ' + inPlan);
+		console.log('      any plan from here is about a team that is not on the field]');
+		return false;
+	}
+	const foeState = namesOf(st.foe.team), foePlan = namesOf(pctx.foeSets);
+	if (foeState !== foePlan) {
+		console.log('  [!! THE TWO HALVES DISAGREE ABOUT THEIR TEAM (' + where + ')');
+		console.log('      state:  ' + foeState);
+		console.log('      plan:   ' + foePlan + ']');
+		return false;
+	}
+	return true;
+}
+
+// More generation on a fight that does not read easy; cached per turn.
+const deepCache = {turn: null, deep: false};
+function planDeep(obs) {
+	if (deepCache.turn === obs.turn) return deepCache.deep;
+	let deep = false;
+	try { deep = DIFFICULTY.classify(engine, buildState(obs)).tier === 'hard'; } catch (e) { deep = false; }
+	deepCache.turn = obs.turn; deepCache.deep = deep;
+	return deep;
+}
+
 function planCtx(obs) {
 	return {
-		engine, party,
-		foeSets: foeTeamFor(obs),
+		engine,
+		// THE PLANNER GETS THE LIVE TEAM, not the battery save's.
+		//
+		// `party` is read once at startup from the .sav, which only holds what
+		// the game last WROTE. On 2026-09-02 that made the planner duel with a
+		// level 3 SENTRET while a level 15 Furret stood on the field, and with
+		// level 3 versions of everyone else: every solo duel came back "died,
+		// cost 100%", the only survivors of generation were multi-Pokemon
+		// sacrifices, and the panel asked James which two of his team to give
+		// up to a Clefairy that his Furret one-shots. buildState was fixed to
+		// read the roster from RAM earlier the same day; this context was not,
+		// so the two halves of the agent disagreed about who was even alive.
+		party: teamsFor(obs).party,
+		foeSets: teamsFor(obs).foeSets,
 		// EXPENDABLE="" MEANS NOBODY, not "use the default". Written with `||`,
 		// an empty string is falsy and silently became the Surge cap, so there
 		// was no way to say "every death is forbidden" -- which is exactly what
@@ -77,6 +204,7 @@ function planCtx(obs) {
 		// with `=== undefined`; the two disagreed, so the planner could price
 		// Lilligant as spendable while the recorder counted her death as a
 		// loss.
+		deep: planDeep(obs),
 		expendable: (process.env.EXPENDABLE === undefined
 			? 'Lilligant' : process.env.EXPENDABLE).split(',').filter(Boolean)
 	};
@@ -94,8 +222,37 @@ function planCtx(obs) {
  * printed "no plan found". Same shape as every bug on this project: two parts
  * keeping their own idea of the position.
  */
+/** Their party decoded straight from RAM, or null if the Lua did not ship it. */
+function foeRosterFromRAM(obs) {
+	const RRSave = engine.sandbox && engine.sandbox.RRSave;
+	if (!RRSave || !RRSave.readRecord || !obs || !obs.foeparty) return null;
+	const out = [];
+	for (const row of obs.foeparty) {
+		if (!row || !row.maxhp) continue;                   // empty slot
+		if (typeof row.raw !== 'string' || row.raw.length < 200) return null;
+		let mon = null;
+		try {
+			const bytes = Buffer.from(row.raw, 'hex');
+			mon = RRSave.readRecord(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0, true);
+		} catch (e) { mon = null; }
+		if (!mon) return null;
+		out.push({species: mon.species, level: mon.level, nature: mon.nature,
+			ability: mon.ability, item: mon.item || '', moves: mon.moves, evs: mon.evs, ivs: mon.ivs});
+	}
+	return out.length ? out : null;
+}
+
 function foeTeamFor(obs) {
 	const foeSet = setFromBattler(obs.foe, null);
+	// THE GAME'S OWN RECORDS FIRST. The sheet covers the bosses; everyone else
+	// was matched by species and level to the nearest boss set, or cloned from
+	// the active. A Rock Tunnel Flareon became Professor Oak's postgame one
+	// (Sacred Fire, level 44) and the planner priced three turns of Icy Wind
+	// against it instead of the one Water Shuriken that removes the real one.
+	const ram = foeRosterFromRAM(obs);
+	if (ram && foeSet && ram.some(r => r.species === foeSet.species)) {
+		return ram;
+	}
 	const bt = battleOf(obs);
 	const known = bt ? (H.foeSets(bt) || []) : [];
 	let team = null;
@@ -111,33 +268,174 @@ function foeTeamFor(obs) {
 		team = [];
 		for (let i = 0; i < n; i++) team.push(Object.assign({}, foeSet));
 	}
+	// THE ACTIVE ONE CARRIES ITS REAL STATS, AT THE SOURCE. This team feeds
+	// every duel and every priced plan, and until now it was the sheet's set
+	// alone: the sheet's Crawdaunt computes to Speed 70 where the game's reads
+	// 50, so in every duel it outran a 61-Speed Lanturn and Knock Off killed
+	// her before the second Shock Wave. No "Lanturn kills" line could exist,
+	// the market had nothing but sacrifices, and the agent stopped to ask who
+	// to lose while James played the two Shock Waves himself (2026-09-03).
+	if (obs.foe && obs.foe.stats && obs.foe.stats.length === 5) {
+		const rows = obs.foeparty || [];
+		let at = rows.findIndex(r => r && r.maxhp === obs.foe.maxhp && r.hp === obs.foe.hp && r.level === obs.foe.level);
+		if (at < 0) at = rows.findIndex(r => r && r.maxhp === obs.foe.maxhp && r.level === obs.foe.level);
+		if (at < 0) at = team.findIndex(t => t && t.species === foeSet.species);
+		if (at >= 0 && team[at]) {
+			// ... and its live PP, so every duel knows how many Roosts are left.
+			const ramNames = (obs.foe.moves || []).map(id => moveName(id));
+			const pp = (team[at].moves || []).map(mv => {
+				const i = ramNames.indexOf(mv);
+				return i >= 0 && obs.foe.pp && obs.foe.pp[i] !== undefined ? obs.foe.pp[i] : undefined;
+			});
+			team[at] = Object.assign({}, team[at], {rawStats: {atk: obs.foe.stats[0],
+				def: obs.foe.stats[1], spe: obs.foe.stats[2], spa: obs.foe.stats[3],
+				spd: obs.foe.stats[4]}, pp: pp});
+		}
+	}
 	return team;
+}
+
+/**
+ * IS THIS A WILD ENCOUNTER? James, 2026-09-03: "stop it from fighting if it is
+ * a regular encounter (like an actual bush pokemon). I need to catch pokemon."
+ *
+ * Judged from what we can see rather than from a RAM flag, because the
+ * vanilla gBattleTypeFlags word reads 0 in every save state on disk and this
+ * ROM moves things; its value is shipped as `btype` so the real bit can be
+ * pinned from a live wild fight later. The rule: one opponent, and NO trainer
+ * in the dataset fields exactly that party (same size, same levels, that
+ * species). James's stops are all dataset trainers, so a lone opponent nobody
+ * in the table brings at that level is a bush Pokemon. RR_WILD=off disables.
+ */
+function isWild(obs) {
+	if (process.env.RR_WILD === 'off') return false;
+	// THE FLAG IS NOW THE RULE. Three live readings pinned gBattleTypeFlags at
+	// 0x02022B4C in this ROM: 0x4 in a wild fight (Snubbull), 0xc in a single
+	// trainer fight, 0xd in a double trainer fight -- bit 3 is TRAINER, bit 0
+	// is DOUBLE, exactly the vanilla layout. The dataset lookup below misfired
+	// on turn 295 (a lone Naclstack, trainer bit SET, read as wild) and the
+	// agent stood down in a real fight. The lookup remains only for a state
+	// that carries no flag word at all.
+	if (typeof obs.btype === 'number' && obs.btype !== 0) return !(obs.btype & 0x8);
+	const alive = (obs.foeparty || []).filter(r => r && r.maxhp);
+	if (alive.length !== 1) return false;
+	const name = speciesName(obs.foe.species);
+	if (!name) return false;
+	const base = n => String(n || '').split('-')[0];
+	const level = ourLevel(obs);
+	for (const b of battlesFor(level)) {
+		const sets = H.foeSets(b) || [];
+		if (sets.length !== 1) continue;
+		if (base(sets[0].species) !== base(name)) continue;
+		if (sets[0].level === alive[0].level) return false;   // a real one-Pokemon trainer
+	}
+	return true;
+}
+
+/**
+ * IS THIS A DOUBLE BATTLE? Nothing here plays doubles: the actuator reads one
+ * battler a side and has no map of the target-selection screen, so left to
+ * itself it would pick a move and then tap A and B at a screen it does not
+ * know, against whoever is holding the controller. James, 2026-09-03: "I will
+ * have to play those. It won't break if a double battle comes up right?"
+ *
+ * Two independent readings, either is enough:
+ *   1. the dataset marks the fight DOUBLES (27 of 167 -- Mt. Moon's Miguel,
+ *      Nugget Bridge, Sabrina, the Rocket guards ...), matched on the active
+ *      species, party size and levels like battleOf;
+ *   2. RAM: gBattleMons has four battlers, and slots 2 and 3 only hold a
+ *      species in doubles. Shipped as b2sp/b3sp; a singles fight reads 0.
+ */
+let handsOffSaid = -1;
+const fightOverride = {sig: null};
+const DOUBLES_BATTLES = [];
+for (const seg of (engine.TRAINERS && engine.TRAINERS.segments) || []) {
+	for (const b of (seg.battles || [])) {
+		if ((b.effects || []).some(x => /DOUBLES/i.test(x))) DOUBLES_BATTLES.push(b);
+	}
+}
+function isDoubles(obs) {
+	if (process.env.RR_DOUBLES === 'off') return false;
+	if ((obs.b2sp || 0) > 0 && (obs.b3sp || 0) > 0) return 'RAM: four battlers';
+	const name = speciesName(obs.foe.species);
+	if (!name) return false;
+	const base = n => String(n || '').split('-')[0];
+	const alive = (obs.foeparty || []).filter(r => r && r.maxhp);
+	const level = ourLevel(obs);
+	for (const b of DOUBLES_BATTLES) {
+		const lvl = b.team && b.team[0] && b.team[0].level;
+		b.__relativeBase = lvl && lvl.type === 'fixed' ? 0 : Math.max(1, level);
+		const sets = H.foeSets(b) || [];
+		if (!sets.some(m => base(m.species) === base(name))) continue;
+		if (alive.length && sets.length !== alive.length) continue;
+		const want = alive.map(r => r.level).sort().join(','), got = sets.map(m => m.level).sort().join(',');
+		if (alive.length && want !== got) continue;
+		return 'dataset: ' + H.label(b);
+	}
+	return false;
 }
 
 function battleOf(obs) {
 	const name = speciesName(obs.foe.species);
 	if (!name) return null;
-	if (battleCache[name] !== undefined) return battleCache[name];
+	const alive = (obs.foeparty || []).filter(r => r && r.maxhp);
+	const level = ourLevel(obs);
+	// Keyed by everything the answer depends on: who is out, how many they
+	// brought, at what levels, and what our own level resolves theirs against.
+	const key = name + '|' + level + '|' + alive.map(r => r.level).join(',') + '|' + (obs.foe.moves || []).join(',');
+	if (battleCache[key] !== undefined) return battleCache[key];
 	// Match FORMS too. RAM reports the base species -- "Manectric" -- while the
 	// trainer data lists "Manectric-Mega", so an exact-name lookup returned
 	// nothing the moment Surge's last Pokemon came in, and foeSets(null) threw.
-	// That killed the planner mid-fight and left the agent waiting forever on an
-	// answer that was never coming.
 	const base = n => String(n || '').split('-')[0];
-	let found = null;
-	for (const b of ALL_BATTLES) {
-		if ((b.team || []).some(m => m.species === name)) { found = b; break; }
-	}
-	if (!found) {
-		for (const b of ALL_BATTLES) {
-			if ((b.team || []).some(m => base(m.species) === base(name))) { found = b; break; }
+	// SCORED, not first-match. With the scaling fights included the list is
+	// eight times longer and a common species appears in many of them, so the
+	// party we can actually see -- how many they brought and at what levels --
+	// decides which trainer this is.
+	let found = null, bestScore = -1;
+	for (const b of battlesFor(level)) {
+		const sets = H.foeSets(b) || [];
+		const hasIt = sets.some(m => m.species === name)
+			|| sets.some(m => base(m.species) === base(name));
+		if (!hasIt) continue;
+		let score = 1;
+		if (alive.length && sets.length === alive.length) score += 3;
+		if (alive.length) {
+			const want = alive.map(r => r.level).sort().join(',');
+			const got = sets.map(m => m.level).sort().join(',');
+			if (want === got) score += 5;
+			else {
+				const pool = sets.map(m => m.level);
+				for (const r of alive) {
+					const at = pool.indexOf(r.level);
+					if (at >= 0) { score += 1; pool.splice(at, 1); }
+				}
+			}
 		}
+		if (sets.some(m => m.species === name)) score += 1;
+		// THE MOVES WE CAN SEE ARE THE STRONGEST EVIDENCE. RAM shows the active
+		// Pokemon's four moves; a candidate whose set for that species shares
+		// them is that trainer, and one that shares none is not, whatever the
+		// levels say. On 2026-09-04 a Route Flareon (Fire Fang, Fire Spin,
+		// Scary Face, Smog, Flash Fire) was matched to Professor Oak's postgame
+		// Flareon (Sacred Fire, Last Resort, Wild Charge, Superpower, level
+		// 44), and every line was priced against a Pokemon that was not there.
+		const ramMoves = (obs.foe.moves || []).map(id => moveName(id)).filter(Boolean);
+		const candSet = sets.find(m => m.species === name) || sets.find(m => base(m.species) === base(name));
+		if (candSet && ramMoves.length) {
+			const shared = (candSet.moves || []).filter(m => ramMoves.includes(m)).length;
+			score += 3 * shared;
+			if (shared === 0 && (candSet.moves || []).length) score -= 6;
+		}
+		if (score > bestScore) { bestScore = score; found = b; }
 	}
-	battleCache[name] = found;
+	battleCache[key] = found;
 	return found;
 }
 
-const speciesName = id => (dex.byID[id] && dex.byID[id].name) || null;
+// KEY, NOT NAME: `name` strips every regional forme and mega. Same collision
+// as rr-save.js readRecord, on the live side.
+const speciesName = id => (dex.byID[id] && (dex.byID[id].key || dex.byID[id].name)) || null;
 const moveName = id => dex.moveName[id] || null;
 const abilityName = id => {
 	for (const k in dex.dex.abilities) {
@@ -169,6 +467,19 @@ function sampleName(res, tag) {
 	if (act === 1) return 'switch ' + tgt;
 	const mv = awaiting.foeMoves && awaiting.foeMoves[tgt];
 	return (mv && moveName(mv)) || ('slot ' + tgt);
+}
+
+/**
+ * THE TOXIC COUNTER LIVES IN THE SAME WORD, bits 8-11, and it was never read.
+ * `statusOf` returned 'tox' and the engine's counter stayed at the 0 that
+ * createState gives it, so the end-of-turn tick was maxHP * 0 / 16: a badly
+ * poisoned Pokemon took NO poison damage in the model, ever. On 2026-09-03
+ * Kilowattrel sat at 9 HP with a 15-point tick coming, the planner priced its
+ * death at 0%, and it died to the tick. Read the counter; never below 1.
+ */
+function toxicTurns(word) {
+	if (!(word & 0x80)) return 0;
+	return Math.max(1, (word >> 8) & 0xF);
 }
 
 function statusOf(word) {
@@ -266,7 +577,13 @@ function buildState(obs) {
 	// Level and max HP together identify a member unambiguously here, and both
 	// are outside Gen 3's party encryption, so the order can be read directly
 	// rather than assumed.
-	const roster = party.slice();
+	// THE ROSTER COMES FROM THE GAME WHEN IT CAN. The battery save only holds
+	// what the game last wrote; on 2026-09-02 a fight loaded from a save state
+	// was planned with the previous run's Lanturn and Lilligant because the
+	// .sav was a run behind. The Lua now ships each party record raw, and this
+	// ROM keeps them unencrypted, so they decode with the save reader's own
+	// record decoder. The .sav stays as the fallback.
+	const roster = teamsFor(obs).party.slice();   // the same object the planner gets
 	const ordered = [];
 	(obs.party || []).forEach(row => {
 		let best = -1;
@@ -327,7 +644,7 @@ function buildState(obs) {
 	// describe the same team. NEVER HAND createState A NULL TEAM: outside a
 	// known trainer battle that used to throw and kill the whole agent process,
 	// which looked exactly like the emulator being stuck.
-	const foeTeam = foeTeamFor(obs);
+	const foeTeam = teamsFor(obs).foeSets;   // the same object the planner gets
 	const st = B.createState(mySets, foeTeam, {});
 	// Put THEIR active where it really is, and apply what we can see of them.
 	// THEIR ACTIVE, matched on the base name too. A mega arrives as its base
@@ -378,7 +695,7 @@ function buildState(obs) {
 		if (!m || !row.maxhp) return;
 		m.curHP = row.hp;
 		m.fainted = row.hp <= 0;
-		m.status = statusOf(row.status);
+		m.status = statusOf(row.status); m.toxicCounter = toxicTurns(row.status);
 	});
 	st.me.active = activeIndex;
 	// THE FIELD IS READ, NOT INHERITED. createState fires the entry ability of
@@ -407,8 +724,20 @@ function buildState(obs) {
 	// exact. Zero means "first action after coming in", which is when Fake Out
 	// works and after which it must fail.
 	const meKey = obs.me.maxhp + ':' + obs.me.species;
-	outCount.me = (meKey === outCount.meKey) ? outCount.me + 1 : 0;
-	outCount.meKey = meKey;
+	// ONCE PER TURN, NOT ONCE PER CALL. buildState runs more than once on a
+	// decision (the plan, the veto, the diagnostics), and each call was counting
+	// as a turn: the first read saw 0 and the ones that mattered saw 1, so
+	// `justEntered` was false by the time policy.js asked, and Fake Out was
+	// never offered on a switch-in. James, 2026-09-03: "hitmonlee is still not
+	// using fake out... I don't remember how many times I have mentioned the
+	// importance of fake out." The Lua tracks turnsOut from the emulator's own
+	// switches; where present it is the truth and wins.
+	if (outCount.turn !== obs.turn) {
+		outCount.turn = obs.turn;
+		outCount.me = (meKey === outCount.meKey) ? outCount.me + 1 : 0;
+		outCount.meKey = meKey;
+	}
+	if (typeof obs.turnsOut === 'number') outCount.me = obs.turnsOut;
 	const foeKey = obs.foe.maxhp + ':' + obs.foe.species;
 	outCount.foe = (foeKey === outCount.foeKey) ? outCount.foe + 1 : 0;
 	outCount.foeKey = foeKey;
@@ -444,6 +773,19 @@ function buildState(obs) {
 	// after the Baby-Doll Eyes instead of dying to Mach Punch.
 	const me = st.me.team[activeIndex], foe = st.foe.team[st.foe.active];
 	me.curHP = obs.me.hp; foe.curHP = obs.foe.hp;
+	// THEIR ACTIVE GETS ITS REAL STATS TOO. Ours has carried rawStats from RAM
+	// since setFromBattler; theirs came from the sheet's set, and the sheet's
+	// Crawdaunt computed to Speed 70 where the game's reads 50. Lanturn at 61
+	// is faster, so the second Shock Wave lands before Knock Off and a 1 HP
+	// Crawdaunt dies -- but the engine had Crawdaunt moving first, every
+	// Lanturn move scored as a death, and the agent stopped to ask who to
+	// sacrifice while James played the two Shock Waves himself (2026-09-03).
+	if (obs.foe.stats && obs.foe.stats.length === 5) {
+		foe.set = Object.assign({}, foe.set, {rawStats: {atk: obs.foe.stats[0],
+			def: obs.foe.stats[1], spe: obs.foe.stats[2], spa: obs.foe.stats[3],
+			spd: obs.foe.stats[4]}});
+		if (obs.foe.maxhp) foe.maxHP = obs.foe.maxhp;
+	}
 	// A FORCED SWITCH: our Pokemon has fainted and the game is asking who comes
 	// in. Setting HP to zero was not enough -- nothing marked it fainted, so
 	// moves still looked legal, the planner answered with a move, and the
@@ -454,6 +796,8 @@ function buildState(obs) {
 		me.fainted = true;
 	}
 	me.status = statusOf(obs.me.status); foe.status = statusOf(obs.foe.status);
+	me.toxicCounter = toxicTurns(obs.me.status); foe.toxicCounter = toxicTurns(obs.foe.status);
+	foe.volatiles.usedMoves = foeUsedMovesFor(obs);
 	// CONFUSION, from status2. Without it the model could not see confusion it
 	// had itself applied, so Confuse Ray kept looking useful and got spammed
 	// into an already-confused target.
@@ -464,16 +808,22 @@ function buildState(obs) {
 		me.boosts[STAT_ORDER[i]] = (obs.me.stages[i] || 6) - 6;
 		foe.boosts[STAT_ORDER[i]] = (obs.foe.stages[i] || 6) - 6;
 	}
-	for (let i = 0; i < 4; i++) {
-		if (obs.me.pp[i] !== undefined) me.pp[i] = obs.me.pp[i];
-		if (obs.foe.pp[i] !== undefined) foe.pp[i] = obs.foe.pp[i];
-	}
+	// BY MOVE NAME, NOT SLOT: the sheet lists a set's moves in its own order,
+	// RAM in the game's, and copying by slot handed Roost's PP to Bug Buzz.
+	const copyPP = (mon, b) => {
+		const ramNames = (b.moves || []).map(id => moveName(id));
+		(mon.set.moves || []).forEach((mv, j) => {
+			const i = ramNames.indexOf(mv);
+			if (i >= 0 && b.pp && b.pp[i] !== undefined) mon.pp[j] = b.pp[i];
+		});
+	};
+	copyPP(me, obs.me); copyPP(foe, obs.foe);
 	(obs.party || []).forEach(row => {
 		const m = st.me.team[row.slot];
 		if (!m || row.slot === activeIndex) return;
 		m.curHP = row.hp;
 		m.fainted = row.hp <= 0;
-		m.status = statusOf(row.status);
+		m.status = statusOf(row.status); m.toxicCounter = toxicTurns(row.status);
 	});
 	return st;
 }
@@ -538,7 +888,7 @@ function modelAction(st) {
 			let d = 0;
 			try {
 				const r = B.damageRolls(st, 'foe', e.action.move);
-				if (r && !r.immune) d = r.noCrit[Math.floor(r.noCrit.length / 2)] * (r.hits || 1);
+				if (r && !r.immune) d = r.noCrit[Math.floor(r.noCrit.length / 2)];   // lump, hits included
 			} catch (err) { d = 0; }
 			if (d > pickDmg) { pickDmg = d; pick = e; }
 		}
@@ -601,7 +951,7 @@ function greedyAction(st) {
 	let best = null, bestValue = -1;
 	legal.forEach(a => {
 		const r = B.damageRolls(st, 'me', a.move);
-		const d = r && !r.immune ? r.noCrit[8] * (r.hits || 1) : 0;
+		const d = r && !r.immune ? r.noCrit[8] : 0;   // lump, hits included
 		if (d > bestValue) { bestValue = d; best = a; }
 	});
 	return best || B.legalActions(st, 'me')[0];
@@ -620,6 +970,31 @@ let lastPlan = {foe: null, jobs: null, progress: null};
 
 // Decisions since each active last changed -- see buildState.
 const outCount = {me: 0, meKey: null, foe: 0, foeKey: null};
+/**
+ * WHAT EACH OF THEIRS HAS USED THIS FIGHT, for Last Resort. Rebuilt from RAM
+ * every turn, the state cannot remember; this can. Two sources: the move they
+ * COMMITTED to last turn (the AI byte), credited once the next observation
+ * arrives, and any move whose PP is below the dex's base PP. Reset whenever the
+ * opposing party's signature changes, which is a new trainer.
+ */
+const foeUsed = {fight: null, byKey: {}, pending: {}};
+function foeUsedMovesFor(obs) {
+	const fight = (obs.foeparty || []).map(r => r && r.maxhp || 0).join(',');
+	if (fight !== foeUsed.fight) { foeUsed.fight = fight; foeUsed.byKey = {}; foeUsed.pending = {}; }
+	const key = obs.foe.maxhp + ':' + obs.foe.species;
+	const used = foeUsed.byKey[key] || (foeUsed.byKey[key] = {});
+	if (foeUsed.pending[key]) { used[foeUsed.pending[key]] = true; foeUsed.pending[key] = null; }
+	(obs.foe.moves || []).forEach((id, i) => {
+		const name = moveName(id);
+		const rec = dex.dex.moves[id];
+		if (name && rec && rec.pp && obs.foe.pp && obs.foe.pp[i] < rec.pp) used[name] = true;
+	});
+	if (obs.ai_action === 0 && obs.foe.moves && obs.foe.moves[obs.ai_target]) {
+		foeUsed.pending[key] = moveName(obs.foe.moves[obs.ai_target]);
+	}
+	return Object.assign({}, used);
+}
+
 // PROTECT DOES NOT WORK TWICE RUNNING, and a rebuilt state cannot remember
 // that. The engine models it (`protectChain`), but createState zeroes every
 // volatile and the agent rebuilds from RAM each turn, so live it always
@@ -630,6 +1005,77 @@ const outCount = {me: 0, meKey: null, foe: 0, foeKey: null};
 const protectRun = {key: null, chain: 0};
 const PROTECT_MOVES = {'Protect': 1, 'Detect': 1, 'Spiky Shield': 1, 'Baneful Bunker': 1,
 	'King\'s Shield': 1, 'Obstruct': 1, 'Silk Trap': 1, 'Burning Bulwark': 1};
+
+/**
+ * HOW MUCH RISK THIS POSITION CAN AFFORD. James, 2026-09-02: "that type of crit
+ * risk is fine in actual hard battles, but I don't want to lose my greninja
+ * sometime later because every fight we are putting it at crit risk... the plan
+ * should be choosing the best path that has the least risk."
+ *
+ * The death check has always asked "does this kill me on their MEDIAN roll",
+ * with no crit at all, so a Pokemon standing in one-crit range read as perfectly
+ * safe. That is why a 15 HP Froakie stayed in front of a Low Sweep that crits
+ * for roughly double while five healthy Pokemon sat on the bench.
+ *
+ * The first version keyed this off a body count, which James rejected: "that
+ * shouldn't be a rule. You should classify match difficulty according to the
+ * level of difficulty of the opponent team." So it is read from their team, in
+ * lib/difficulty.js, off the duel table this project already builds. Living
+ * Pokemon only, on both sides, so no separate rule about our own numbers is
+ * needed: down to one Pokemon nothing can have two answers and the fight can
+ * never classify as easy, which is exactly when risk has to be taken.
+ *
+ * IF THIS BACKFIRES, THIS IS THE PLACE. The failure mode to watch for is
+ * excessive switching in easy fights: every switch is a free turn for them, and
+ * a pessimistic death reading makes staying in look worse than it is. Turn it
+ * off with RR_CAREFUL=off. Documented in docs/ASSUMPTIONS.md.
+ */
+const DIFFICULTY = require('./lib/difficulty.js');
+function deathReadFor(st) {
+	if (process.env.RR_CAREFUL === 'off') return {risks: {roll: 'median'}, tier: null};
+	let r = null;
+	try { r = DIFFICULTY.classify(engine, st); } catch (e) { r = null; }
+	if (!r) return {risks: {roll: 'median'}, tier: null};
+	return {risks: DIFFICULTY.deathRisksFor(r.tier), tier: r.tier, worst: r.worst};
+}
+
+
+/**
+ * THEY ARE LEAVING, SO HIT WHOEVER IS COMING IN. When the AI byte says the
+ * opponent is switching, our move lands on the replacement, and a plan built
+ * against the Pokemon that is walking off the field is fiction for this turn.
+ * Turn 304, 2026-09-03: Floatzel on 15 HP committed to switching to Starmie;
+ * every move of Granbull's kills a 15 HP Floatzel, so the plan took the first
+ * in its list -- Fire Fang, into a Water/Psychic -- while the one-turn scorer
+ * had Thunder Fang, super effective on both, at the top. James: "why has the
+ * granbull played fire fang in a water gym". Among our moves, take the one
+ * that does most to the incoming Pokemon; a planned switch is left alone.
+ */
+function aimAtIncoming(st, theirs, chosen) {
+	if (!theirs || theirs.type !== 'switch' || !chosen || chosen.type !== 'move') return chosen;
+	if (theirs.index === st.foe.active) return chosen;
+	const incoming = st.foe.team[theirs.index];
+	if (!incoming || incoming.fainted) return chosen;
+	const probe = B.clone(st);
+	probe.foe.active = theirs.index;
+	let best = null, bestDmg = -1, chosenDmg = 0;
+	for (const a of B.legalActions(st, 'me')) {
+		if (a.type !== 'move') continue;
+		let r = null;
+		try { r = B.damageRolls(probe, 'me', a.move); } catch (e) { r = null; }
+		const band = r && r.noCrit && r.noCrit.length ? r.noCrit : [0];
+		const dmg = r && r.immune ? 0 : band[Math.floor(band.length / 2)];
+		if (a.move === chosen.move) chosenDmg = dmg;
+		if (dmg > bestDmg) { bestDmg = dmg; best = a; }
+	}
+	if (best && best.move !== chosen.move && bestDmg > chosenDmg) {
+		console.log('  [they are switching to ' + incoming.set.species + '; '
+			+ chosen.move + ' does ' + chosenDmg + ' to it, ' + best.move + ' does '
+			+ bestDmg + ' -- playing ' + best.move + ']');
+		return best;
+	}
+	return chosen;
+}
 
 function decide(st, obs) {
 	const src = foeAction(st, obs);
@@ -645,11 +1091,25 @@ function decide(st, obs) {
 	// in instead, and nothing here knows what that is, so no kill is claimed
 	// and the damage number is a proxy rather than a prediction.
 	const theySwitch = theirs && theirs.type === 'switch';
+	// Judged once per turn, so every action in this market is priced on the
+	// same risk appetite.
+	const read = deathReadFor(st);
+	const deathRisks = read.risks;
+	// Announced when it CHANGES, not every call: decide() runs more than once
+	// on some turns and three identical lines per turn is noise.
+	const stamp = read.tier + '/' + read.worst;
+	if (read.tier && deathReadFor.said !== stamp) {
+		deathReadFor.said = stamp;
+		console.log('  [fight reads ' + read.tier.toUpperCase()
+			+ ' (their weakest link has ' + read.worst + ' clean answers); death judged on '
+			+ (deathRisks.crit ? 'their top roll AND a crit'
+				: (deathRisks.foeRoll === 'max' ? 'their top roll' : 'their median roll')) + ']');
+	}
 	for (const a of legal) {
 		if (!theirs) break;
 		let out;
 		try {
-			out = B.step(st, a, theirs, {mode: 'maxroll', risks: {roll: 'median'}});
+			out = B.step(st, a, theirs, {mode: 'maxroll', risks: deathRisks});
 		} catch (e) {
 			// Swallowing this silently is how every move on a Pokemon vanished
 			// from the options while the switches stayed: the planner reported
@@ -772,6 +1232,8 @@ if (process.argv[2] === '--probe') {
 	let obs = readJSONSync(arg || STATE);
 	if (obs && obs.obs) obs = obs.obs;
 	if (!obs) { console.log('no state.json'); process.exit(1); }
+	console.log('WILD? ' + (isWild(obs) ? 'YES -- would stand down' : 'no -- trainer')
+		+ '   DOUBLES? ' + (isDoubles(obs) ? 'YES (' + isDoubles(obs) + ') -- would stand down' : 'no'));
 	const st = buildState(obs);
 	if (!st) { console.log('buildState returned null'); process.exit(1); }
 	// TURNSOUT COMES FROM THE ARCHIVED TURN, not from a fresh rebuild. Without
@@ -789,6 +1251,107 @@ if (process.argv[2] === '--probe') {
 	}
 	if (obs.foeTurnsOut !== undefined && st.foe.team[st.foe.active]) {
 		st.foe.team[st.foe.active].turnsOut = obs.foeTurnsOut;
+	}
+	// RR_PROBE_DIFFICULTY=1 prints the fight's difficulty table for this
+	// position -- the duel answers their team has, which is what the risk
+	// appetite is read from. Offline, on the real sets, not hand-built ones.
+	if (process.env.RR_PROBE_DIFFICULTY) {
+		const DF = require('./lib/difficulty.js');
+		const r = DF.classify(engine, st);
+		console.log('DIFFICULTY: ' + r.tier + '  (fewest clean answers: ' + r.worst + ')');
+		r.answers.forEach(a => console.log('   ' + a.foe.padEnd(14)
+			+ a.clean.length + '  ' + (a.clean.join(', ') || '(none)')));
+		console.log('   death read: ' + JSON.stringify(DF.deathRisksFor(r.tier)));
+		if (process.env.RR_PROBE_DIFFICULTY === 'gen') {
+			// WHY DOES THE GENERATOR OFFER SO LITTLE? Runs the same call the
+			// planner makes, in the same live position, and reports what each
+			// of ours produced.
+			const C = require('./lib/candidates.js');
+			const D2 = require('./lib/duels.js');
+			const pctx2 = planCtx(obs);
+			const ourHp = {}, ourStatus = {};
+			st.me.team.forEach(m => {
+				ourHp[m.set.species] = m.fainted ? 0 : m.curHP / m.maxHP;
+				if (m.status && !m.fainted) ourStatus[m.set.species] = m.status;
+			});
+			const fi2 = st.foe.active;
+			const foeMon2 = st.foe.team[fi2];
+			const opts2 = {field: st.field,
+				foeHp: foeMon2 && foeMon2.maxHP ? foeMon2.curHP / foeMon2.maxHP : undefined,
+				ourHp, ourStatus};
+			console.log('GENERATOR against ' + foeMon2.set.species
+				+ ' (' + foeMon2.curHP + '/' + foeMon2.maxHP + ')');
+			console.log('  ourHp passed: ' + JSON.stringify(ourHp));
+			const ideas2 = C.candidatesFor(pctx2, fi2, opts2) || [];
+			console.log('  candidates: ' + ideas2.length);
+			ideas2.filter(i => /steals a turn|takes the hit|absorbs/.test(i.why)).slice(0, 8)
+				.forEach(i => console.log('    [purpose] ' + i.why + '  <- ' + i.jobs.map(j => j.mon + ':' + (j.moves || []).join('>')).join(' | ')));
+			ideas2.slice(0, 12).forEach(i => console.log('    ' + i.why
+				+ '  <- ' + i.jobs.map(j => j.mon + ':' + (j.moves || []).join('>')).join(' | ')));
+			{
+				const meA = st.me.team[st.me.active], foeA = st.foe.team[st.foe.active];
+				console.log('  SPEED: ours ' + B.finalSpeed(st, 'me') + ' (rawStats ' + JSON.stringify(meA.set.rawStats || null)
+					+ ') vs theirs ' + B.finalSpeed(st, 'foe') + ' (rawStats ' + JSON.stringify(foeA.set.rawStats || null) + ')');
+			}
+			console.log('  bestDamage inputs for the active vs theirs (median noCrit x hits):');
+			for (const a of B.legalActions(st, 'me')) {
+				if (a.type !== 'move') continue;
+				let r2 = null; try { r2 = B.damageRolls(st, 'me', a.move); } catch (err) { r2 = 'threw ' + err.message; }
+				if (typeof r2 === 'string' || !r2) { console.log('    ' + a.move.padEnd(14) + r2); continue; }
+				const band = r2.noCrit || []; const med = band.length ? band[Math.floor(band.length / 2)] : 0;
+				console.log('    ' + a.move.padEnd(14) + 'median ' + med + '  hits ' + (r2.hits || 1)
+					+ '  immune ' + !!r2.immune + '  -> bestDamage sees ' + med + ' (band is the whole move)');
+			}
+			if (process.env.RR_PROBE_DUEL) {
+				let miA = st.me.active; const fiA = st.foe.active;
+				// RR_PROBE_DUEL_MON=<species> dumps the lines for a BENCH member.
+				if (process.env.RR_PROBE_DUEL_MON) {
+					const want = pctx2.party.findIndex(pp => pp.species === process.env.RR_PROBE_DUEL_MON);
+					if (want >= 0) miA = want;
+				}
+				const foeA = st.foe.team[fiA];
+				const condA = {hpFrac: ourHp[pctx2.party[miA].species],
+					foeChip: foeA && foeA.maxHP ? 1 - foeA.curHP / foeA.maxHP : 0};
+				let lines = [];
+				try { lines = D2.duelLines(engine, pctx2.party, pctx2.foeSets, miA, fiA, condA, {}) || []; } catch (e) { console.log('  duelLines threw ' + e.message); }
+				console.log('  ALL DUEL LINES for ' + pctx2.party[miA].species + ' vs ' + pctx2.foeSets[fiA].species + ' (' + lines.length + ')'
+					+ '  their set moves ' + JSON.stringify(pctx2.foeSets[fiA].moves) + ' pp ' + JSON.stringify(pctx2.foeSets[fiA].pp || null) + ':');
+				if (lines[0] && lines[0].log) console.log('    top line, turn by turn: ' + JSON.stringify(lines[0].log).slice(0, 700));
+				lines.forEach(l => console.log('    ' + (l.moves || []).join('>').padEnd(24) + l.outcome.padEnd(6)
+					+ ' cost ' + (100 * l.cost).toFixed(0) + '%  chip ' + (100 * (l.chip || 0)).toFixed(0)
+					+ '%  death ' + (100 * (l.deathRisk || 0)).toFixed(0) + '%  turns ' + l.turns
+					+ '  foeStatus ' + (l.foeStatus || '-') + '  theirBoosts ' + JSON.stringify(l.theirBoosts || {})));
+			}
+			console.log('  SOLO DUELS in this live condition:');
+			pctx2.party.forEach((pmon, mi) => {
+				const hp = ourHp[pmon.species];
+				const cond = {hpFrac: hp};
+				let l = null;
+				try { l = (D2.duelLines(engine, pctx2.party, pctx2.foeSets, mi, fi2, cond, {}) || [])[0]; }
+				catch (e) { l = 'threw: ' + e.message; }
+				console.log('    ' + pmon.species.padEnd(11) + 'hp ' + (hp === undefined ? '?' : hp.toFixed(2))
+					+ '  ' + (typeof l === 'string' ? l
+						: (l ? l.outcome + ' cost ' + (l.cost * 100).toFixed(0) + '% turns ' + l.turns
+							+ ' moves ' + (l.moves || []).join('>') : 'no line')));
+			});
+		}
+		if (process.env.RR_PROBE_DIFFICULTY === 'full') {
+			const D = require('./lib/duels.js');
+			const pty = st.me.team.map(m => m.set), fs2 = st.foe.team.map(m => m.set);
+			for (let fi = 0; fi < fs2.length; fi++) {
+				if (st.foe.team[fi].fainted) continue;
+				console.log('   == ' + fs2[fi].species);
+				for (let mi = 0; mi < pty.length; mi++) {
+					if (st.me.team[mi].fainted) continue;
+					let l = null;
+					try { l = (D.duelLines(engine, pty, fs2, mi, fi, {}, {}) || [])[0]; } catch (e) { l = null; }
+					console.log('      ' + pty[mi].species.padEnd(11)
+						+ (l ? l.outcome.padEnd(6) + ' cost ' + (l.cost * 100).toFixed(0)
+							+ '%  death ' + ((l.deathRisk || 0) * 100).toFixed(0)
+							+ '%  turns ' + l.turns : 'no line'));
+				}
+			}
+		}
 	}
 	// RR_PROBE_PROTECT=n reproduces a live protect chain, which the archive
 	// does not record: it is counted by the running agent, so a probe always
@@ -831,16 +1394,26 @@ if (process.argv[2] === '--probe') {
 	const C = require('./lib/candidates.js');
 	const {pricePath} = require('./lib/paths.js');
 	const pctx = planCtx(obs);
+	assertSameTeams(st, pctx, 'plan');
 	const fi = st.foe.active;
 	const fld = {terrain: st.field.terrain, terrainTurns: st.field.terrainTurns};
 	let ideas = [];
-	try { ideas = C.candidatesFor(pctx, fi, {field: fld}); }
+	// FAITHFUL TO THE LIVE CALL: the live generator sees their current HP and
+	// ours; without these the probe priced kills against a full-HP opponent
+	// and told a different story from the one the agent actually saw.
+	const probeOurHp = {}, probeOurStatus = {};
+	st.me.team.forEach(m => { probeOurHp[m.set.species] = m.fainted ? 0 : m.curHP / m.maxHP; if (m.status && !m.fainted) probeOurStatus[m.set.species] = m.status; });
+	const probeFoe = st.foe.team[fi];
+	try { ideas = C.candidatesFor(pctx, fi, {field: fld,
+		foeHp: probeFoe && probeFoe.maxHP ? probeFoe.curHP / probeFoe.maxHP : undefined,
+		ourHp: probeOurHp, ourStatus: probeOurStatus}); }
 	catch (e) { console.log('candidatesFor THREW: ' + e.message); }
 	console.log('\ncandidates generated: ' + ideas.length);
 	const hp = {}, dead = [], foeDead = [];
 	st.me.team.forEach(m => { hp[m.set.species] = m.curHP / m.maxHP; if (m.fainted) dead.push(m.set.species); });
 	st.foe.team.forEach((m, i) => { if (m.fainted) foeDead.push(i); });
 	const entry = {hp, dead, foeDead, field: fld,
+		foeChip: probeFoe && probeFoe.maxHP ? 1 - probeFoe.curHP / probeFoe.maxHP : 0,
 		active: st.me.team[st.me.active].set.species,
 		turnsOut: st.me.team[st.me.active].turnsOut};
 	const tally = {};
@@ -856,6 +1429,23 @@ if (process.argv[2] === '--probe') {
 					: ' (planAction returned nothing)') : ''));
 		tally[k] = (tally[k] || 0) + 1;
 	});
+	if (process.env.RR_PROBE_LINES) {
+		console.log('top candidates, priced from HERE:');
+		const matchRe = process.env.RR_PROBE_LINES_MATCH ? new RegExp(process.env.RR_PROBE_LINES_MATCH) : null;
+		(matchRe ? ideas.filter(c => matchRe.test(c.why)) : ideas).slice(0, Number(process.env.RR_PROBE_LINES) || 10).forEach((cand, i) => {
+			let r = null;
+			try { r = pricePath(pctx, fi, cand.jobs, entry, {expendable: pctx.expendable || []}); } catch (e) { r = {outcome: 'threw ' + e.message}; }
+			console.log('   ' + String(i + 1).padStart(2) + '. ' + cand.why + '  <- '
+				+ cand.jobs.map(j => j.mon + ':' + (j.moves || []).join('>')).join(' | ')
+				+ (matchRe && r && r.log ? '\n       log: ' + JSON.stringify(r.log).slice(0, 900)
+					+ '\n       blockedEntries: ' + JSON.stringify(r.blockedEntries || null) : '')
+				+ '\n       ' + (r ? ('outcome ' + r.outcome + (r.kills ? ' KILLS' : '')
+					+ ' spend ' + JSON.stringify(r.spend)
+					+ ' endHP ' + JSON.stringify(r.endHP) + ' turns ' + r.turns + ' foeLeft ' + r.foeLeft
+					+ ' death ' + (r.deathRisk !== undefined ? (100 * r.deathRisk).toFixed(0) + '%' : '?')
+					+ ' loses ' + JSON.stringify(r.lost || r.deaths || [])) : 'null'));
+		});
+	}
 	console.log('what the top 25 candidates do from HERE:');
 	Object.keys(tally).sort((a, b) => tally[b] - tally[a])
 		.forEach(k => console.log('   ' + String(tally[k]).padStart(3) + '  ' + k));
@@ -876,7 +1466,19 @@ if (process.argv[2] === '--probe') {
 	try { pick = R2.chooseAction(pctx, st, probeOpts); } catch (e) { console.log('chooseAction THREW: ' + e.message); }
 	console.log('chooseAction -> ' + (pick
 		? JSON.stringify(pick.action) + '   ' + pick.path.cand.why
+			+ '\n   jobs: ' + pick.path.cand.jobs.map(j => j.mon + ':' + (j.moves || []).join('>') + (j.until ? ' until ' + JSON.stringify(j.until) : '')).join(' | ')
 		: 'NULL  (this is what prints "no plan found")'));
+	if (pick) {
+		const theirsNow = foeAction(st, obs).chosen;
+		const aimed = aimAtIncoming(st, theirsNow, pick.action);
+		console.log('after aimAtIncoming -> ' + JSON.stringify(aimed));
+		// The probe has no byte history, so it often calls the byte stale; show
+		// what the override would do if the byte is taken at face value too.
+		if (obs.ai_action === 1) {
+			const raw = {type: 'switch', index: obs.ai_target};
+			console.log('with the raw switch byte -> ' + JSON.stringify(aimAtIncoming(st, raw, pick.action)));
+		}
+	}
 	process.exit(0);
 }
 
@@ -1030,7 +1632,7 @@ if (process.argv[2] === '--score-live') {
 						let dmg = 0;
 						try {
 							const r2 = B.damageRolls(st, 'foe', e2.action.move);
-							if (r2 && !r2.immune) dmg = r2.noCrit[Math.floor(r2.noCrit.length / 2)] * (r2.hits || 1);
+							if (r2 && !r2.immune) dmg = r2.noCrit[Math.floor(r2.noCrit.length / 2)];   // lump, hits included
 						} catch (e3) { dmg = 0; }
 						if (dmg > pd) { pd = dmg; pick2 = e2; }
 					}
@@ -1369,7 +1971,7 @@ if (!fs.existsSync(PRED)) {
 }
 
 let lastTurn = 0, awaiting = null;
-console.log('agent: watching ' + DIR + '. Load tools/lua/agent.lua in mGBA.');
+console.log('agent: watching ' + DIR + '. Load tools/lua/bootstrap.lua in mGBA (it hot-reloads agent_impl.lua).');
 
 function readJSONSync(p) {
 	try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
@@ -1663,6 +2265,50 @@ setInterval(() => {
 	}
 	lastTurn = obs.turn;
 
+	// A BUSH POKEMON IS NOT OURS TO FIGHT. Hand the controller back and say so
+	// once; the Lua stands down on the marker and clears it when the battle
+	// ends.
+	let handsOffWhy = isDoubles(obs) ? ('DOUBLE BATTLE (' + isDoubles(obs) + ')')
+		: (isWild(obs) ? 'WILD ' + speciesName(obs.foe.species) + ' L' + obs.foe.level : null);
+	// "FIGHT THIS ONE ANYWAY" on the panel writes `fight`; it overrides the
+	// stand-down for THIS opposing party only and is cleared when that changes.
+	const FIGHT = path.join(DIR, 'fight');
+	const fightSig = (obs.foeparty || []).map(r => r && r.maxhp || 0).join(',');
+	if (fs.existsSync(FIGHT)) {
+		if (fightOverride.sig && fightOverride.sig !== fightSig) {
+			try { fs.unlinkSync(FIGHT); } catch (e) { /* gone */ }
+			fightOverride.sig = null;
+		} else if (handsOffWhy) {
+			if (fightOverride.sig !== fightSig) {
+				fightOverride.sig = fightSig;
+				console.log('turn ' + obs.turn + ': fighting this one on your say-so (' + handsOffWhy + ')');
+			}
+			handsOffWhy = null;
+		}
+	}
+	// A STALE MARKER MUST NOT OUTLIVE THE MISJUDGMENT THAT WROTE IT.
+	if (!handsOffWhy && fs.existsSync(path.join(DIR, 'wild'))) {
+		try { fs.unlinkSync(path.join(DIR, 'wild')); } catch (e) { /* the Lua clears it too */ }
+		console.log('turn ' + obs.turn + ': this is a trainer fight after all; standing back up');
+	}
+	if (handsOffWhy) {
+		const WILD = path.join(DIR, 'wild');
+		if (!fs.existsSync(WILD)) fs.writeFileSync(WILD, String(obs.turn) + '\n');
+		// CONSUME THE OBSERVATION. Left on disk, a wild observation kept being
+		// re-read after the encounter ended: the Lua cleared the marker on the
+		// overworld, this re-wrote it from the stale file, and the agent sat
+		// out the start of the Brennan fight believing a Galarian Meowth was
+		// still in front of it. The answering path deletes it; so does this.
+		try { fs.unlinkSync(STATE); } catch (e) { /* already gone */ }
+		if (handsOffSaid !== obs.turn) {
+			handsOffSaid = obs.turn;
+			console.log('turn ' + obs.turn + ': ' + handsOffWhy
+				+ ' (btype 0x' + Number(obs.btype || 0).toString(16)
+				+ ', b2sp ' + (obs.b2sp || 0) + ', b3sp ' + (obs.b3sp || 0)
+				+ ') -- yours to play, not answering');
+		}
+		return;
+	}
 	const st = buildState(obs);
 	if (!st) { console.log('turn ' + obs.turn + ': could not identify the position'); return; }
 	// THE PLANNER DRIVES. Every turn it re-prices the ways to kill the Pokemon
@@ -1678,7 +2324,31 @@ setInterval(() => {
 	// no notion of reserving a Pokemon for a job or of what the fight needs
 	// three turns from now.
 	let d = null, plannerSaid = null;
-	if (!process.env.GREEDY && !process.env.NOPLAN) {
+	// THE OBVIOUS TURNS ARE ANSWERED AT ONCE. James, 2026-09-04: "when
+	// hitmonlee is going to use fake out we don't really need to think about
+	// it that much." Two cases need no market: a clean kill in hand (the
+	// one-turn scorer sees the foe fall, we do not, and nothing is coming for
+	// us next turn), and a usable entry-only move on the turn we arrived.
+	if (!process.env.RR_NO_QUICK && obs.kind !== 'forced') {
+		try {
+			const q = decide(st, obs);
+			const top = q && q.best;
+			const mine = st.me.team[st.me.active];
+			if (top && top.action.type === 'move' && top.foeDead && !top.mineDead
+				&& !top.dyingNext && !top.unknownTarget) {
+				console.log('  [quick: ' + top.action.move + ' removes it and nothing comes back; no market run]');
+				d = q;
+			} else if (mine && mine.volatiles && mine.volatiles.justEntered) {
+				const fo = q && q.all.find(r => r.action.type === 'move' && r.action.move === 'Fake Out');
+				const canFlinch = !/Inner Focus|Shield Dust/i.test(st.foe.team[st.foe.active].set.ability || '');
+				if (fo && canFlinch && !fo.mineDead && (fo.theirLoss > 0 || fo.score > -1)) {
+					console.log('  [quick: Fake Out on entry; no market run]');
+					d = Object.assign({}, q, {best: fo});
+				}
+			}
+		} catch (e) { d = null; }
+	}
+	if (!d && !process.env.GREEDY && !process.env.NOPLAN) {
 		try {
 			// The line we were already following, so it can defend itself against
 		// this turn's challengers instead of being re-derived from nothing.
@@ -1715,6 +2385,7 @@ setInterval(() => {
 			userLine = null;
 			try { fs.unlinkSync(LINE_RESULT); } catch (e) { /* nothing to clear */ }
 		}
+		assertSameTeams(st, planCtx(obs), 'decide');
 		const pick = R.chooseAction(planCtx(obs), st,
 			{incumbent: lastPlan.foe === foeNow ? lastPlan.jobs : null,
 				// A plan is about an OPPONENT, so how far through it we are
@@ -1767,7 +2438,7 @@ setInterval(() => {
 				// one-turn scoring ranked every move at -61.39 because
 				// Lilligant dies, and switching at -2.45. It knew. Nobody asked.
 				const oneTurn = decide(st, obs);
-				let chosen = pick.action;
+				let chosen = aimAtIncoming(st, oneTurn.theirs, pick.action);
 				const same = (a, b) => a && b && a.type === b.type
 					&& (a.type === 'switch' ? a.index === b.index : a.move === b.move);
 				const mine = oneTurn.all.find(r => same(r.action, chosen));
@@ -1993,8 +2664,7 @@ setInterval(() => {
 		try {
 			const fr = B.damageRolls(st, 'foe', nm);
 			if (fr && !fr.immune) {
-				const h = fr.hits || 1;
-				foeBands[nm] = fr.noCrit.map(v => v * h).join(',');
+				foeBands[nm] = fr.noCrit.join(',');   // whole multi-hit lump already
 			}
 		} catch (e) { /* status move, no band */ }
 	});
@@ -2006,9 +2676,9 @@ setInterval(() => {
 		try {
 			const r = B.damageRolls(st, 'me', d.best.action.move);
 			if (r && !r.immune) {
-				const hits = r.hits || 1;
-				rolls = r.noCrit.map(v => v * hits);
-				critRolls = r.crit[r.crit.length - 1] * hits;
+				// The band is already the whole multi-hit move; no second multiply.
+				rolls = r.noCrit.slice();
+				critRolls = r.crit[r.crit.length - 1];
 			}
 		} catch (e) { /* a status move has no band */ }
 	}
@@ -2150,6 +2820,11 @@ setInterval(() => {
 		// member uniquely, so the actuator can resolve them against the very
 		// RAM the screen is drawn from and refuse to commit if the slot it is
 		// sitting on is not the Pokemon that was chosen.
+		// Max HP and level are NOT unique on every team: on 2026-09-02 Ledyba and
+		// Froakie were both 41 HP at level 15, the actuator picked Ledyba for a
+		// Froakie switch, then tried to switch to the Ledyba already out, forever.
+		// The species id is in the same unencrypted record and is the real key.
+		wantSpecies: st.me.team[slot] ? speciesIdOf(st.me.team[slot].set.species) : 0,
 		wantMax: st.me.team[slot] ? st.me.team[slot].maxHP : 0,
 		wantLevel: st.me.team[slot] ? st.me.team[slot].level : 0,
 		from: 0

@@ -63,7 +63,7 @@ function turnRate(engine, state, foeIdx) {
 		let r;
 		try { r = B.damageRolls(probe, 'foe', mv); } catch (e) { continue; }
 		if (!r || r.immune || !r.noCrit || !r.noCrit.length) continue;
-		const med = r.noCrit[Math.floor(r.noCrit.length / 2)] * (r.hits || 1);
+		const med = r.noCrit[Math.floor(r.noCrit.length / 2)];   // whole multi-hit lump
 		const frac = Math.min(med, active.curHP) / active.maxHP;
 		if (frac > worst) worst = frac;
 	}
@@ -988,7 +988,10 @@ function chooseAction(ctx, state, opts) {
 	//
 	// Behind RR_CARRY_PROGRESS while it is A/B'd, because it changes what gets
 	// played on a quarter of all plans.
-	const CARRY = !!process.env.RR_CARRY_PROGRESS;
+	// ON by default since 2026-09-03: a plan whose jobs mean "do this once,
+	// then hand over" cannot exist without its progress surviving the turn.
+	// RR_CARRY_PROGRESS=0 turns it off for A/B.
+	const CARRY = process.env.RR_CARRY_PROGRESS !== '0';
 	const held = (CARRY && options.progress) ? options.progress : null;
 	const jobsKey = jobs => JSON.stringify(jobs);
 	const cloneProgress = p => ({job: Object.assign({}, p.job),
@@ -1077,6 +1080,35 @@ function chooseAction(ctx, state, opts) {
 				total: totalOf(item),
 				dead: (item.r && item.r.dead) || [],
 				deathRisk: item.r ? item.r.deathRisk : null});
+		}
+	}
+	// A SWITCH NEEDS A REASON. The margin above was recorded and never acted
+	// on, so a tie -- Gyarados on a 25 HP Ivysaur that is switching out, "kill
+	// it now" at 0.00 against "bring Hitmonlee in, Fake Out, bring Gyarados
+	// back" at 0.00 -- went to the switch, and Hitmonlee was walked in, hit,
+	// and walked out for nothing. James, 2026-09-04: "there should be a reason
+	// to get hitmonlee in unless it is a very specific fake out strategy."
+	// Leaving the field now has to beat staying by half a point on the full
+	// criterion, the same bar the log has always used to call a switch
+	// NEEDLESS. A deliberate pivot clears it; a coin flip does not.
+	{
+		const SWITCH_MIN_MARGIN = Number(process.env.RR_SWITCH_MARGIN || 0.5);
+		let topIdx = -1, stayIdx = -1;
+		for (let i = 0; i < ranked.length; i++) {
+			const a = firstAction(ranked[i]);
+			if (!a) continue;
+			if (topIdx < 0) topIdx = i;
+			if (a.type !== 'switch') { stayIdx = i; break; }
+		}
+		if (topIdx >= 0 && stayIdx > topIdx) {
+			const top = ranked[topIdx], stayItem = ranked[stayIdx];
+			const gap = totalOf(stayItem) - totalOf(top);
+			if (gap < SWITCH_MIN_MARGIN) {
+				ranked.splice(stayIdx, 1);
+				ranked.splice(topIdx, 0, stayItem);
+				console.log('  [stayed: leaving would gain only ' + gap.toFixed(2)
+					+ ' over "' + stayItem.cand.why + '"]');
+			}
 		}
 	}
 	for (const item of ranked) {

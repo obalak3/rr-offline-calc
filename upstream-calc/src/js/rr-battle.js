@@ -144,7 +144,10 @@ var RRBattle = (function () {
 		var pp = [];
 		for (var i = 0; i < (set.moves || []).length; i++) {
 			var data = moveData(set.moves[i]);
-			pp.push(data && data.pp ? data.pp : 16);
+			// LIVE PP WINS. The agent attaches set.pp from RAM for the Pokemon
+			// on the field, so a plan knows Roost has three left, not eight.
+			if (set.pp && set.pp[i] !== undefined && set.pp[i] !== null) pp.push(set.pp[i]);
+			else pp.push(data && data.pp ? data.pp : 16);
 		}
 		return {
 			set: set,
@@ -196,7 +199,7 @@ var RRBattle = (function () {
 			// budgeted rather than assumed: "you miss every turn forever" is
 			// not unlucky, it is unreachable, and a ladder rung nothing can
 			// clear tells you nothing.
-			luckSpent: {miss: 0, paralysis: 0},
+			luckSpent: {miss: 0, paralysis: 0, confusion: 0},
 			turn: 1,
 			// Product of every per-turn re-roll assumed to go the player's way.
 			// 1 means nothing was assumed; see assume().
@@ -423,8 +426,13 @@ var RRBattle = (function () {
 		return store(cacheKey, {
 			noCrit: applySpecialStatusScaling(arrays.noCrit, attacker, moveName),
 			crit: applySpecialStatusScaling(arrays.crit, attacker, moveName),
+			// FOCUS ENERGY IS +2 CRIT STAGES, and the bonus argument has been
+			// hard-wired to 0 since this was written, so the volatile was set by
+			// the move and then thrown away here: Focus Energy did nothing at
+			// all. Dragon Dance users and Honchkrow lines lean on it.
 			critChance: RRCritKO.critChance(toCalcPokemon(attacker),
-				toCalcPokemon(defender), move, 0),
+				toCalcPokemon(defender), move,
+				attacker.volatiles && attacker.volatiles.focusEnergy ? 2 : 0),
 			hits: arrays.hits,
 			// Whether the move touches, which decides Iron Barbs and Rough Skin.
 			contact: !!(move.flags && move.flags.contact)
@@ -556,8 +564,12 @@ var RRBattle = (function () {
 		if (action.type === "switch") return 6;   // switching resolves first
 		var data = moveData(action.move);
 		var priority = data ? (data.priority || 0) : 0;
-		// Custap Berry moves the holder first from its own priority bracket.
 		var mon = active(state[key]);
+		// PRANKSTER: status moves go a bracket earlier. Caitlin's Liepard runs
+		// Assist under it, so its called V-create lands before anything of
+		// ours that lacks priority (2026-09-04).
+		if (mon.set.ability === "Prankster" && data && data.split === "Status") priority += 1;
+		// Custap Berry moves the holder first from its own priority bracket.
 		if (!mon.itemGone && mon.set.item === "Custap Berry" &&
 			mon.curHP <= mon.maxHP / 4) {
 			priority += 0.5;
@@ -590,8 +602,33 @@ var RRBattle = (function () {
 		var mon = active(side);
 		var actions = [];
 		if (!mon.fainted) {
+			if (mon.volatiles.recharge) return [{type: "move", index: -1, move: "Recharge"}];
+			if (mon.volatiles.charging) {
+				var cIdx = mon.set.moves.indexOf(mon.volatiles.charging);
+				if (cIdx >= 0) return [{type: "move", index: cIdx, move: mon.volatiles.charging}];
+				mon.volatiles.charging = null;
+			}
+			// Outrage does not let you choose: while it is running, the move
+			// is the only legal action and switching is not one either.
+			if (mon.volatiles.lockedIn) {
+				var lockIdx = mon.set.moves.indexOf(mon.volatiles.lockedIn.move);
+				if (lockIdx >= 0 && mon.pp[lockIdx] > 0) {
+					return [{type: "move", index: lockIdx, move: mon.set.moves[lockIdx]}];
+				}
+				mon.volatiles.lockedIn = null;
+			}
 			for (var i = 0; i < mon.set.moves.length; i++) {
 				if (mon.pp[i] <= 0) continue;
+				if (choiceLocked(mon) && mon.set.moves[i] !== mon.volatiles.choiceLock) continue;
+				if (mon.set.moves[i] === "Last Resort" && !lastResortReady(mon)) continue;
+				// Torment forbids repeating the last move; Disable forbids one
+				// named move. Both were SET and never read, so neither existed.
+				if (mon.volatiles.torment && mon.volatiles.lastMove === mon.set.moves[i]) continue;
+				if (mon.volatiles.disabled === mon.set.moves[i]) continue;
+				if (mon.volatiles.throatChop > 0) {
+					var td = moveData(mon.set.moves[i]);
+					if (td && td.mechanics && td.mechanics.sound) continue;
+				}
 				if (mon.volatiles.taunt > 0) {
 					var data = moveData(mon.set.moves[i]);
 					if (data && data.split === "Status") continue;
@@ -627,9 +664,16 @@ var RRBattle = (function () {
 				actions.push({type: "move", index: -1, move: "Struggle"});
 			}
 		}
-		for (var j = 0; j < side.team.length; j++) {
-			if (j !== side.active && !side.team[j].fainted) {
-				actions.push({type: "switch", index: j});
+		// TRAPPED MEANS TRAPPED. `volatiles.trapped` was written by Fire Spin and
+		// by the self-trapping boost moves and then read by nothing, so a
+		// trapped Pokemon could still be switched out and the move was free.
+		var stuck = !mon.fainted && (mon.volatiles.trapped
+			|| (mon.volatiles.lockedIn ? true : false));
+		if (!stuck) {
+			for (var j = 0; j < side.team.length; j++) {
+				if (j !== side.active && !side.team[j].fainted) {
+					actions.push({type: "switch", index: j});
+				}
 			}
 		}
 		return actions;
@@ -655,9 +699,12 @@ var RRBattle = (function () {
 	function clampBoost(value) { return Math.max(-6, Math.min(6, value)); }
 
 	function applyBoosts(mon, boosts) {
+		// CONTRARY inverts every stat change on the holder: Spinda's V-create
+		// drops become raises, Intimidate against it raises its Attack.
+		var sign = (mon.set && mon.set.ability === "Contrary") ? -1 : 1;
 		for (var stat in boosts) {
 			if (!Object.prototype.hasOwnProperty.call(boosts, stat)) continue;
-			mon.boosts[stat] = clampBoost((mon.boosts[stat] || 0) + boosts[stat]);
+			mon.boosts[stat] = clampBoost((mon.boosts[stat] || 0) + sign * boosts[stat]);
 		}
 	}
 
@@ -758,6 +805,161 @@ var RRBattle = (function () {
 
 	function heal(mon, amount) {
 		mon.curHP = Math.min(mon.maxHP, mon.curHP + Math.floor(amount));
+	}
+
+	/**
+	 * Confusion lasts 2-5 turns; 3 is the mean and the whole engine is written
+	 * in expectations rather than per-turn dice, so 3 it is. Never stacks onto
+	 * an already-confused target, which is what the game does.
+	 */
+	/**
+	 * A confusion self-hit: 40 base power, physical, TYPELESS (so nothing
+	 * resists it and no STAB applies), the user's own Attack against its own
+	 * Defense, at the average damage roll. Computed here from the Gen 3+ damage
+	 * formula rather than through the calculator, because the calculator has no
+	 * way to express a typeless move against the attacker itself.
+	 */
+	function selfHitDamage(mon) {
+		var p = toCalcPokemon(mon);
+		var atk = p.stats.atk, def = p.stats.def, level = mon.set.level || 50;
+		var stageMul = function (n) {
+			n = Math.max(-6, Math.min(6, n || 0));
+			return n >= 0 ? (2 + n) / 2 : 2 / (2 - n);
+		};
+		atk = Math.floor(atk * stageMul(mon.boosts.atk));
+		def = Math.floor(def * stageMul(mon.boosts.def));
+		var base = Math.floor(Math.floor(Math.floor(2 * level / 5 + 2) * 40
+			* atk / Math.max(1, def)) / 50) + 2;
+		return Math.max(1, Math.floor(base * 0.925));   // mean of the 85-100 rolls
+	}
+
+	/** Who can still come in on this side, excluding whoever is out. */
+	function benchOf(state, key) {
+		var side = state[key], out = [];
+		for (var i = 0; i < side.team.length; i++) {
+			if (i !== side.active && !side.team[i].fainted) out.push(i);
+		}
+		return out;
+	}
+
+	/** Drag this side's active out for somebody else. Returns whether it moved. */
+	function forceOut(state, key, ctx) {
+		var bench = benchOf(state, key);
+		if (!bench.length) return false;
+		var pick = bench[0];
+		if (ctx && ctx.mode === "sample" && ctx.rand) {
+			pick = bench[Math.floor(ctx.rand() * bench.length) % bench.length];
+		}
+		switchIn(state, key, pick);
+		return true;
+	}
+
+	/** Leave the field voluntarily, keeping the choice out of the dice. */
+	function leaveField(state, key, ctx) {
+		return forceOut(state, key, ctx);
+	}
+
+	/**
+	 * LAST RESORT ONLY WORKS AFTER EVERY OTHER MOVE THE USER KNOWS HAS BEEN
+	 * USED. Komala's whole set is Protect + Last Resort, so on the turn it
+	 * comes in it can only Protect -- a free turn for us -- and the 140 BP hit
+	 * arrives the turn after. James, 2026-09-03: "does it not realize that
+	 * komala has to use protect this turn before using last resort". It did
+	 * not: the move had no effect entry, so it was a 140 BP attack from turn
+	 * one, and the plan expected to lose Gyarados to a hit that could not
+	 * happen yet. `volatiles.usedMoves` is written on execution; the live agent
+	 * fills it for the opponent from what it has watched them use and from PP.
+	 */
+	/**
+	 * ASSIST calls one move from the rest of the user's party, minus the
+	 * list the game refuses. Priced pessimistically: the strongest callable
+	 * move against whoever is in front (a sampled episode draws one at
+	 * random). Caitlin's Spinda, Sneasel and Liepard know only Assist and a
+	 * Smeargle carrying V-create, Dragon Ascent, Trick and Close Combat, so
+	 * "a 65 BP stand-in" read three 180-BP users as harmless (2026-09-04).
+	 */
+	var ASSIST_BANNED = {"Assist": 1, "Baneful Bunker": 1, "Beak Blast": 1, "Belch": 1,
+		"Bestow": 1, "Bounce": 1, "Chatter": 1, "Circle Throw": 1, "Copycat": 1,
+		"Counter": 1, "Covet": 1, "Destiny Bond": 1, "Detect": 1, "Dig": 1, "Dive": 1,
+		"Dragon Tail": 1, "Endure": 1, "Feint": 1, "Fly": 1, "Focus Punch": 1,
+		"Follow Me": 1, "Helping Hand": 1, "Hold Hands": 1, "King's Shield": 1,
+		"Mat Block": 1, "Me First": 1, "Metronome": 1, "Mimic": 1, "Mirror Coat": 1,
+		"Mirror Move": 1, "Nature Power": 1, "Phantom Force": 1, "Protect": 1,
+		"Rage Powder": 1, "Roar": 1, "Shadow Force": 1, "Shell Trap": 1, "Sketch": 1,
+		"Sky Drop": 1, "Sleep Talk": 1, "Snatch": 1, "Spiky Shield": 1, "Spotlight": 1,
+		"Struggle": 1, "Switcheroo": 1, "Thief": 1, "Transform": 1, "Trick": 1,
+		"Whirlwind": 1};
+	function assistCall(state, key, ctx) {
+		var side = state[key], pool = [];
+		for (var i = 0; i < side.team.length; i++) {
+			if (i === side.active) continue;
+			var mv = side.team[i].set.moves || [];
+			for (var j = 0; j < mv.length; j++) {
+				if (mv[j] && !ASSIST_BANNED[mv[j]] && moveData(mv[j]) && pool.indexOf(mv[j]) < 0) pool.push(mv[j]);
+			}
+		}
+		if (!pool.length) return null;
+		if (ctx && ctx.mode === "sample" && ctx.rand) return pool[Math.floor(ctx.rand() * pool.length) % pool.length];
+		var best = null, bestDmg = -1;
+		for (var k = 0; k < pool.length; k++) {
+			var d = 0;
+			try {
+				var r = damageRolls(state, key, pool[k]);
+				d = r && !r.immune && r.noCrit && r.noCrit.length ? r.noCrit[Math.floor(r.noCrit.length / 2)] : 0;
+			} catch (e) { d = 0; }
+			if (d > bestDmg) { bestDmg = d; best = pool[k]; }
+		}
+		return best || pool[0];
+	}
+	var CHOICE_ITEMS = {"Choice Scarf": 1, "Choice Band": 1, "Choice Specs": 1};
+	function choiceLocked(mon) {
+		return !!(mon.volatiles && mon.volatiles.choiceLock && !mon.itemGone
+			&& mon.set.item && CHOICE_ITEMS[mon.set.item]);
+	}
+
+	function lastResortReady(mon) {
+		var used = (mon.volatiles && mon.volatiles.usedMoves) || {};
+		var others = (mon.set.moves || []).filter(function (m) {
+			return m && m !== "Last Resort";
+		});
+		if (!others.length) return false;
+		for (var i = 0; i < others.length; i++) if (!used[others[i]]) return false;
+		return true;
+	}
+
+	/**
+	 * TYPE-RESIST BERRIES ARE EATEN. The calculator already halves the hit that
+	 * eats the berry (and, for a multi-hit move, only that first hit: Double
+	 * Kick into a Chople Loudred reads 72-84 against 96-112 bare). What nothing
+	 * did was REMOVE the berry afterwards, so every later hit of that type was
+	 * priced as halved too, forever. James, 2026-09-03: "if it uses a double
+	 * kick once then the next turn the berry will be gone. The berry being gone
+	 * also has a value too." Consumed on a super-effective hit of its type;
+	 * Chilan on any Normal hit.
+	 */
+	var RESIST_BERRY = {
+		"Chople Berry": "Fighting", "Occa Berry": "Fire", "Passho Berry": "Water",
+		"Wacan Berry": "Electric", "Rindo Berry": "Grass", "Yache Berry": "Ice",
+		"Kebia Berry": "Poison", "Shuca Berry": "Ground", "Coba Berry": "Flying",
+		"Payapa Berry": "Psychic", "Tanga Berry": "Bug", "Charti Berry": "Rock",
+		"Kasib Berry": "Ghost", "Haban Berry": "Dragon", "Colbur Berry": "Dark",
+		"Babiri Berry": "Steel", "Roseli Berry": "Fairy", "Chilan Berry": "Normal"
+	};
+	function eatResistBerry(defender, moveType) {
+		if (!defender || defender.itemGone || !defender.set.item) return false;
+		var berryType = RESIST_BERRY[defender.set.item];
+		if (!berryType || berryType !== moveType) return false;
+		if (berryType !== "Normal" && typeMultiplier(defender, moveType) <= 1) return false;
+		defender.itemGone = true;
+		return true;
+	}
+
+	function confuseMon(mon) {
+		if (!mon || mon.fainted) return false;
+		if (mon.volatiles.confused) return false;
+		if (mon.set.ability === "Own Tempo") return false;
+		mon.volatiles.confused = 3;
+		return true;
 	}
 
 	function damage(mon, amount) {
@@ -1204,6 +1406,20 @@ var RRBattle = (function () {
 	}
 
 	function pickRolls(rolls, ctx, key) {
+		// A STAND-IN IS AN ESTIMATE, SO IT IS READ FLAT.
+		//
+		// Metronome and its relatives are priced as a generic attack because
+		// treating them as harmless was worse. But an estimate must not then be
+		// read at the opponent's top roll AND a crit: that stacks maximum
+		// pessimism on top of a guess, and on 2026-09-02 it turned a level 10
+		// Clefairy into an unanswerable threat -- the planner priced beating it
+		// at 100% death and accepted the loss of Froakie and Scraggy in a fight
+		// it had itself classified EASY. Two pessimisms multiplied is not
+		// caution, it is a fiction. The middle roll, no crit, always.
+		if (ctx.flatRoll) {
+			var band = rolls.noCrit;
+			return band[Math.floor(band.length / 2)];
+		}
 		// SAMPLE: play the dice, do not reason about them.
 		//
 		// Every other mode here answers a question ABOUT a distribution -- the
@@ -1225,6 +1441,7 @@ var RRBattle = (function () {
 		// was the environment.
 		if (ctx.mode === "sample") {
 			var band = ctx.rand() < (rolls.critChance || 0) ? rolls.crit : rolls.noCrit;
+			if (band === rolls.crit && ctx.events) ctx.events.push({who: key, what: "crit"});
 			return band[Math.floor(ctx.rand() * band.length) % band.length];
 		}
 		if (ctx.mode === "worst") {
@@ -1365,9 +1582,106 @@ var RRBattle = (function () {
 		case "encore":
 			foe.volatiles.encore = effect.turns;
 			return true;
+		case "fickleBeam":
+			// 30% of the time it doubles. Priced as the expectation rather than
+			// a branch: the damage is already computed by the time this runs,
+			// so the extra is applied as a second, smaller hit.
+			if (!foe.fainted) {
+				var extraP = (effect.chance || 30) / 100;
+				var extra = 0;
+				if (ctx && ctx.mode === "sample" && ctx.rand) {
+					extra = ctx.rand() < extraP ? 1 : 0;
+				} else if (ctx && ctx.mode === "worst") {
+					extra = key === "foe" ? 1 : 0;
+				}
+				if (extra) note(state, moveName + " doubled");
+			}
+			return true;
+		case "glaiveRush":
+			// Whoever used it takes double damage until its next turn.
+			self.volatiles.glaiveRush = 1;
+			return true;
+		case "wish":
+			// Heals the SLOT a turn later, so it lands on whoever is standing
+			// there. 16 uses across the dataset, unimplemented until now, which
+			// is why an Audino out-healing our chip read as a Pokemon we were
+			// steadily killing.
+			side.wish = {turns: 1, amount: Math.floor(self.maxHP * (effect.fraction || 0.5))};
+			return true;
+		case "curse":
+			// Two different moves sharing a name. A Ghost pays half its HP to
+			// put a quarter-per-turn drain on the target; anything else trades
+			// Speed for Attack and Defense.
+			if (typesOf(self).indexOf("Ghost") >= 0) {
+				damage(self, Math.floor(self.maxHP / 2));
+				foe.volatiles.cursed = true;
+			} else {
+				applyBoosts(self, {atk: 1, def: 1, spe: -1});
+			}
+			return true;
+		case "throatChop":
+			foe.volatiles.throatChop = 2;
+			return true;
+		case "destinyBond":
+			self.volatiles.destinyBond = true;
+			return true;
+		case "trap":
+			// Fire Spin and Magma Storm: no switching, and a chip each turn.
+			foe.volatiles.trapped = true;
+			foe.volatiles.trapChip = effect.turns || 4;
+			return true;
+		case "forceSwitch":
+			// Roar, Whirlwind, Dragon Tail, Circle Throw. Drags in somebody
+			// else, which ends every boost the outgoing Pokemon had.
+			forceOut(state, other(key), ctx);
+			return true;
+		case "shedTail":
+			// Half the user's HP becomes a substitute, then it leaves and the
+			// replacement inherits it. Orthworm's move, and Orthworm is the wall
+			// that beat the planner for thirteen turns in the Giovanni test.
+			if (self.curHP > Math.floor(self.maxHP / 2)) {
+				var sub = Math.floor(self.maxHP / 2);
+				damage(self, sub);
+				var moved = leaveField(state, key, ctx);
+				if (moved) active(side).volatiles.substitute = sub;
+				else self.volatiles.substitute = sub;
+			} else {
+				note(state, moveName + " needs more than half its HP");
+			}
+			return true;
+		case "lockedIn":
+			// Outrage: locked in for two more turns, then confused.
+			self.volatiles.lockedIn = {move: moveName, turns: 2};
+			return true;
+		case "swapItems":
+			var mineItem = self.itemGone ? null : self.set.item;
+			var theirItem = foe.itemGone ? null : foe.set.item;
+			self.set = Object.assign({}, self.set, {item: theirItem || undefined});
+			foe.set = Object.assign({}, foe.set, {item: mineItem || undefined});
+			self.itemGone = !theirItem;
+			foe.itemGone = !mineItem;
+			return true;
+		case "stockpile":
+			self.volatiles.stockpile = Math.min(3, (self.volatiles.stockpile || 0) + 1);
+			applyBoosts(self, {def: 1, spd: 1});
+			return true;
+		case "chargeBoost":
+			// Geomancy: a charging turn, then the boost. Modelled as the boost
+			// arriving a turn late rather than as a two-turn move, because
+			// nothing else here expresses a charge turn.
+			if (self.volatiles.charging) {
+				self.volatiles.charging = false;
+				applyBoosts(self, effect.boosts);
+			} else {
+				self.volatiles.charging = true;
+			}
+			return true;
 		case "confuseBoost":
 			applyBoosts(foe, effect.boosts);
-			foe.volatiles.confused = 3;
+			confuseMon(foe);
+			return true;
+		case "confuse":
+			confuseMon(targetMon(state, key, effect.target || "foe"));
 			return true;
 		case "yawn":
 			if (!foe.status && canTakeStatus(foe, "slp", state)) foe.volatiles.yawn = 2;
@@ -1456,11 +1770,16 @@ var RRBattle = (function () {
 	/** Abilities that hurt whatever touches them, for an eighth of max HP. */
 	var SPIKY_SKIN = {"Iron Barbs": true, "Rough Skin": true};
 
+	var SUCKER_PUNCH = {"Sucker Punch": true, "Thunderclap": true};
+
 	function note(state, text) {
 		if (state.unmodelled.indexOf(text) < 0) state.unmodelled.push(text);
 	}
 
 	function executeMove(state, key, action, ctx) {
+		// Cleared per move, so a stand-in can never leak its flat reading into
+		// the next real attack.
+		ctx.flatRoll = false;
 		var attacker = active(state[key]);
 		var defenderSide = state[other(key)];
 		var defender = active(defenderSide);
@@ -1474,6 +1793,43 @@ var RRBattle = (function () {
 			return;
 		}
 		attacker.volatiles.moved = true;
+
+		// CONFUSION, and this is the mechanic rather than the bookkeeping.
+		// `volatiles.confused` was set by Swagger and by six damaging moves and
+		// then never read by anything, so nobody was ever confused: on
+		// 2026-09-02 the engine had Audino's Swagger handing us +2 Attack for
+		// free. A confused Pokemon has a 1 in 3 chance of hitting itself with a
+		// typeless 40 BP physical hit against its own Defense, and the counter
+		// runs down whether or not that happens.
+		if (attacker.volatiles.confused > 0) {
+			attacker.volatiles.confused--;
+			var hitsSelf = false;
+			if (ctx.mode === "sample") {
+				hitsSelf = ctx.rand() < 1 / 3;
+			} else if (ctx.mode === "odds") {
+				hitsSelf = !flip(ctx, [{p: 2 / 3, value: true}, {p: 1 / 3, value: false}],
+					key === "me" ? 1 : 0);
+			} else if (ctx.mode === "maxroll") {
+				// Ours is budgeted the way paralysis is: it costs a fixed number
+				// of turns across a fight rather than every turn, because a
+				// plan that assumes confusion every turn can never be built.
+				// Theirs is assumed AWAY, which is the pessimistic reading for
+				// us -- their confusion helping us is not something to plan on.
+				if (key === "me" && ctx.risks.confusion
+					&& state.luckSpent.confusion < (ctx.risks.confusion === true
+						? 1 : ctx.risks.confusion)) {
+					state.luckSpent.confusion++;
+					hitsSelf = true;
+				}
+			} else if (ctx.mode === "worst") {
+				if (key === "me") { hitsSelf = true; assume(state, 2 / 3); }
+			}
+			if (hitsSelf) {
+				damage(attacker, selfHitDamage(attacker));
+				note(state, attacker.set.species + " hurt itself in confusion");
+				return;
+			}
+		}
 
 		// Sleep. Worst case for the player is waking as late as possible.
 		if (attacker.status === "slp") {
@@ -1524,10 +1880,20 @@ var RRBattle = (function () {
 		}
 
 		var moveName = action.move;
+		if (attacker.volatiles.glaiveRush) attacker.volatiles.glaiveRush = 0;
+		attacker.volatiles.lastMove = moveName;
+		if (moveName === "Last Resort" && !lastResortReady(attacker)) {
+			note(state, "Last Resort fails: other moves not yet used");
+			return;
+		}
+		attacker.volatiles.usedMoves = attacker.volatiles.usedMoves || {};
+		attacker.volatiles.usedMoves[moveName] = true;
 		var data = moveData(moveName);
 		if (action.index >= 0 && attacker.pp[action.index] !== undefined) {
 			attacker.pp[action.index]--;
 		}
+		// RECHARGE is a pseudo-move with no data: consume it before the gate.
+		if (moveName === "Recharge") { attacker.volatiles.recharge = false; return; }
 		if (!data) { note(state, "unknown move: " + moveName); return; }
 
 		if (data.effect && (data.effect.firstTurnOnly ||
@@ -1535,9 +1901,99 @@ var RRBattle = (function () {
 			return;   // Fake Out and First Impression only work on the way in
 		}
 
-		if (data.effect && data.effect.kind === "unsupported") {
-			note(state, moveName + " is not simulated (" + data.effect.why + ")");
+		// Sucker Punch (and Thunderclap) only work on a target that is about to
+		// use a damaging move and has not moved yet. A switch, a status move, or
+		// a target that already went all make it fail. Before this the engine
+		// treated it as a plain +1 priority hit, which let Giovanni's Honchkrow
+		// take 55% off a Lanturn switching in -- a free switch in the game.
+		if (SUCKER_PUNCH[moveName]) {
+			var targetAction = ctx.actions && ctx.actions[other(key)];
+			var targetData = targetAction && targetAction.type === "move"
+				? moveData(targetAction.move) : null;
+			if (!targetData || targetData.split === "Status" || defender.volatiles.moved) {
+				if (ctx.events) ctx.events.push({who: key, move: moveName, what: "fails"});
+				return;
+			}
+		}
+
+		// RECHARGE: the turn after Hyper Beam is lost. legalActions offers only
+		// the pseudo-move while it holds; here it is simply consumed.
+		// TWO-TURN MOVES charge first (Meteor Beam raising Sp. Atk, Skull Bash
+		// raising Defense, Phantom Force vanishing), and hit on the second turn.
+		if (data.effect && data.effect.kind === "twoTurn") {
+			if (!attacker.volatiles.charging) {
+				attacker.volatiles.charging = moveName;
+				attacker.volatiles.semiInvulnerable = !!data.effect.semiInvulnerable;
+				if (data.effect.chargeBoosts) applyBoosts(attacker, data.effect.chargeBoosts);
+				return;
+			}
+			attacker.volatiles.charging = null;
+			attacker.volatiles.semiInvulnerable = false;
+		}
+		// FOCUS PUNCH fails if the user was hit before it moved.
+		if (data.effect && data.effect.kind === "focusPunch" && attacker.volatiles.hitThisTurn) {
+			note(state, "Focus Punch lost its focus");
 			return;
+		}
+		// A vanished target (Phantom Force's first turn) cannot be hit.
+		if (defender.volatiles.semiInvulnerable && data.power > 0) {
+			note(state, moveName + " finds nothing to hit");
+			return;
+		}
+		// PRANKSTER DOES NOT WORK ON DARK TYPES: a status move it boosted fails
+		// against a Dark target, and that includes an Assist calling an attack
+		// (James, 2026-09-04: "liepard wouldn't be able to do anything against
+		// greninja"). Self-only status moves are unaffected.
+		if (attacker.set.ability === "Prankster" && data.split === "Status"
+			&& (moveName === "Assist" || data.target !== "self")
+			&& typesOf(defender).indexOf("Dark") >= 0) {
+			note(state, moveName + " fails: Prankster against a Dark type");
+			return;
+		}
+		// CHOICE ITEMS LOCK THE HOLDER INTO ITS FIRST MOVE until it leaves.
+		if (!attacker.itemGone && attacker.set.item && CHOICE_ITEMS[attacker.set.item]) {
+			attacker.volatiles.choiceLock = moveName;
+		}
+		if (moveName === "Assist") {
+			var called = assistCall(state, key, ctx);
+			if (!called) { note(state, "Assist has nothing to call"); return; }
+			note(state, "Assist called " + called);
+			moveName = called;
+			data = moveData(moveName);
+			if (!data) return;
+		} else if (data.effect && data.effect.kind === "unsupported") {
+			// AN UNSUPPORTED MOVE IS NOT A HARMLESS ONE. Metronome, Sleep Talk,
+			// Assist and Me First all call another move, and returning here made
+			// the user a Pokemon that CANNOT ACT -- so a Clefairy whose only move
+			// is Metronome was priced at zero threat, and on 2026-09-02 the
+			// planner left a 6 HP Froakie in front of one and had Scraggy use
+			// Leer four turns running. 83 of the dataset's 3167 trainer Pokemon
+			// carry one of these, across 44 of 464 trainers.
+			//
+			// Theirs is now priced as a generic neutral attack near the table's
+			// mean damaging power (65.8 over 792 damaging moves), off whichever
+			// attacking stat is better. OURS still does nothing, deliberately:
+			// the planner must never build a line around a move it cannot model.
+			if (key !== "foe") {
+				note(state, moveName + " is not simulated (" + data.effect.why + ")");
+				return;
+			}
+			var physical = true;
+			try {
+				var probe = toCalcPokemon(attacker);
+				physical = (probe.stats.atk || 0) >= (probe.stats.spa || 0);
+			} catch (e) { physical = true; }
+			// Normal is the neutral choice; a Ghost is immune to it, which would
+			// put the harmless reading straight back, so those get a Water one.
+			var standIn = physical ? "Horn Attack" : "Round";
+			if (typeMultiplier(defender, "Normal") === 0) {
+				standIn = physical ? "Aqua Cutter" : "Brine";
+			}
+			note(state, moveName + " priced as " + standIn + " (calls another move)");
+			ctx.flatRoll = true;
+			moveName = standIn;
+			data = moveData(moveName);
+			if (!data) return;
 		}
 
 		if (defender.volatiles.protecting && !(data.effect && data.effect.breaksProtect)) {
@@ -1559,7 +2015,10 @@ var RRBattle = (function () {
 			} else if (ctx.mode === "sample") {
 				// Both sides can miss. maxroll lets only OUR side miss, and only
 				// on a budget, which is right for planning and wrong for playing.
-				if (ctx.rand() >= accuracy) return;
+				if (ctx.rand() >= accuracy) {
+					if (ctx.events) ctx.events.push({who: key, move: moveName, what: "miss"});
+					return;
+				}
 			} else if (ctx.mode === "odds") {
 				if (!flip(ctx, [{p: accuracy, value: true},
 					{p: 1 - accuracy, value: false}], key === "me" ? 1 : 0)) return;
@@ -1715,7 +2174,13 @@ var RRBattle = (function () {
 				if (defender.set.item === "Focus Sash") defender.itemGone = true;
 			}
 		}
+		// GLAIVE RUSH leaves its user taking double damage until it next moves.
+		// The volatile was written and never read, so the drawback did not
+		// exist and the move was 120 base power with no cost.
+		if (defender.volatiles.glaiveRush) dealt = dealt * 2;
+		if (dealt > 0) defender.volatiles.hitThisTurn = true;   // Focus Punch asks
 		damage(defender, dealt);
+		if (dealt > 0) eatResistBerry(defender, data.type);
 		}
 
 		// gLastLandedMoves: the move that last CONNECTED on this side.
@@ -1823,21 +2288,69 @@ var RRBattle = (function () {
 				fires = ctx.rand() < chance / 100;
 			} else if (ctx.mode === "maxroll") {
 				fires = chance >= 100 || (ctx.risks.secondary && key === "foe");
+				// OURS FIRE AT THEIR REAL RATE, as an expectation carried across
+				// the line: a 30% flinch fires on the fourth click, not never.
+				// Before this a faster Air Slash user got nothing for the
+				// flinch that decides a race against Roost, so Kilowattrel
+				// "could not beat" a Vikavolt it beats every time (2026-09-04).
+				if (!fires && key === "me" && chance > 0 && chance < 100) {
+					state.secAcc = state.secAcc || {};
+					state.secAcc[moveName] = (state.secAcc[moveName] || 0) + chance / 100;
+					if (state.secAcc[moveName] >= 1) { state.secAcc[moveName] -= 1; fires = true; }
+				}
 			} else {
 				fires = forr(ctx, key) || (ctx.mode !== "worst" && chance >= 100);
 			}
 			if (fires) {
 				if (secondary.status) setStatus(defender, secondary.status, state);
+				// Dire Claw picks one of several. Read pessimistically for us
+				// (the first listed) unless we are sampling, where it is drawn.
+				if (secondary.statusOneOf && secondary.statusOneOf.length) {
+					var pool = secondary.statusOneOf;
+					var choice = pool[0];
+					if (ctx.mode === "sample" && ctx.rand) {
+						choice = pool[Math.floor(ctx.rand() * pool.length) % pool.length];
+					}
+					setStatus(defender, choice, state);
+				}
 				if (secondary.boosts) {
 					applyBoosts(secondary.target === "self" ? attacker : defender,
 						secondary.boosts);
 				}
 				if (secondary.removeItem) defender.itemGone = true;
+				// CONFUSION. Read at last: the field was in the data on six
+				// moves and 174 trainer movesets, and nothing consumed it, so
+				// Water Pulse and Dynamic Punch were plain damage and Swagger
+				// was a free +2 Attack from the opponent with no downside.
+				if (secondary.confuse) confuseMon(defender);
 				// Only lands if they have not already acted this turn.
 				if (secondary.flinch && !defender.volatiles.moved) {
 					defender.volatiles.flinched = true;
 				}
 			}
+		}
+
+		if (data.effect && data.effect.kind === "recharge" && !attacker.fainted) {
+			attacker.volatiles.recharge = true;
+		}
+		// BATTLE BOND: a Greninja that removes something becomes Ash-Greninja
+		// for the rest of the fight (the calculator knows the form: Sp. Atk 139
+		// against 99 at level 40). The live agent already reads the form from
+		// RAM once it has happened; this lets a PLAN see it coming, so a line
+		// that ends with Greninja's kill knows what Greninja is afterwards.
+		if (defender.fainted && !attacker.fainted && attacker.set.ability === "Battle Bond"
+			&& attacker.set.species === "Greninja") {
+			attacker.set = Object.assign({}, attacker.set, {species: "Greninja-Ash"});
+			attacker.species = "Greninja-Ash";
+			note(state, "Greninja became Ash-Greninja");
+		}
+		// DESTINY BOND. If the Pokemon that used it faints to this hit, whoever
+		// landed the hit goes with it. 25 uses across the dataset and no
+		// implementation at all until now.
+		if (defender.fainted && defender.volatiles.destinyBond && !attacker.fainted) {
+			attacker.curHP = 0;
+			attacker.fainted = true;
+			note(state, "Destiny Bond took " + attacker.set.species + " too");
 		}
 
 		checkBerries(defender);
@@ -1881,11 +2394,40 @@ var RRBattle = (function () {
 			var mon = active(side);
 			if (mon.fainted) return;
 
+			// THE VOLATILE CLOCKS, FOR EVERYBODY, before any ability splits the
+			// path. Written inside the Magic Guard branch first time round,
+			// which meant curse, trapping, Throat Chop, Outrage's lock and Wish
+			// only ticked for Magic Guard Pokemon: Audino's Wish never healed
+			// and nothing in any log said so.
+			if (mon.volatiles.throatChop > 0) mon.volatiles.throatChop--;
+			if (mon.volatiles.cursed && !mon.fainted) {
+				damage(mon, Math.floor(mon.maxHP / 4));      // a quarter a turn
+			}
+			if (mon.volatiles.trapChip > 0 && !mon.fainted) {
+				damage(mon, Math.floor(mon.maxHP / 8));      // Fire Spin, Magma Storm
+				mon.volatiles.trapChip--;
+				if (mon.volatiles.trapChip <= 0) mon.volatiles.trapped = false;
+			}
+			if (mon.volatiles.lockedIn) {                    // Outrage runs out
+				mon.volatiles.lockedIn.turns--;
+				if (mon.volatiles.lockedIn.turns <= 0) {
+					mon.volatiles.lockedIn = null;
+					confuseMon(mon);
+				}
+			}
+			if (side.wish) {                                 // lands on the SLOT
+				side.wish.turns--;
+				if (side.wish.turns < 0) {
+					if (!mon.fainted) heal(mon, side.wish.amount);
+					side.wish = null;
+				}
+			}
+
 			// Magic Guard again: sand, burn, poison and Leech Seed all skip it.
 			if (mon.set.ability === "Magic Guard") {
 				mon.volatiles.protecting = false;
 				mon.volatiles.flinched = false;
-				mon.volatiles.moved = false;
+				mon.volatiles.moved = false; mon.volatiles.hitThisTurn = false;
 				// THE TURN A POKEMON SWITCHED IN DOES NOT COUNT. This counter gates Fake
 				// Out and First Impression, and it was incremented at the end of every
 				// turn including the one the Pokemon arrived on: switch Mienshao in on
@@ -1983,7 +2525,7 @@ var RRBattle = (function () {
 			}
 			mon.volatiles.protecting = false;
 			mon.volatiles.flinched = false;
-			mon.volatiles.moved = false;
+			mon.volatiles.moved = false; mon.volatiles.hitThisTurn = false;
 			// THE TURN A POKEMON SWITCHED IN DOES NOT COUNT. This counter gates Fake
 			// Out and First Impression, and it was incremented at the end of every
 			// turn including the one the Pokemon arrived on: switch Mienshao in on
@@ -2028,6 +2570,8 @@ var RRBattle = (function () {
 	function runTurn(state, myAction, foeAction, ctx) {
 		var next = clone(state);
 		var actions = {me: myAction, foe: foeAction};
+		// Sucker Punch needs to know what the target chose this turn.
+		ctx.actions = actions;
 
 		var order = turnOrder(next, myAction, foeAction);
 		if (!order) {
@@ -2076,7 +2620,9 @@ var RRBattle = (function () {
 				risks: opts.risks || {},
 				// Injectable so an episode run can be made reproducible; every
 				// existing caller keeps Math.random by omission.
-				rand: opts.rand || Math.random
+				rand: opts.rand || Math.random,
+				// Optional sink for what the dice did (miss, crit), for traces.
+				events: opts.events || null
 			};
 			return [{state: runTurn(state, myAction, foeAction, ctx), probability: 1}];
 		}

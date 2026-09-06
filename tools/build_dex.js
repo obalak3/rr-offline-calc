@@ -118,6 +118,11 @@ for (const key of Object.keys(dex.species)) {
 		id: s.ID,
 		dexID: s.dexID,
 		name: s.name,
+		// THE FORME-QUALIFIED IDENTITY. `name` is the base species ("Sandshrew")
+		// and was all the bundle carried, so every consumer lost regional formes
+		// and megas: species 1023 is Sandshrew-Alola, Ice/Steel, and read as
+		// Ground. The save reader and the live agent now prefer this.
+		key: s.key || s.name,
 		// Stats arrive in the games' internal order: HP, Atk, Def, Spe, SpA, SpD.
 		stats: s.stats,
 		types: (s.type || []).map(t => typeName[t]).filter(Boolean),

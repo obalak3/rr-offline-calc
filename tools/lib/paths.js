@@ -47,7 +47,7 @@ const FLAGS = {checkBadMove: true, checkGoodMove: true};
 function pricePath(ctx, fi, jobs, entry, opts) {
 	const engine = ctx.engine, B = engine.B, RRAI = engine.sandbox.RRAI;
 	const options = opts || {};
-	const cap = options.turnCap || 16;
+	let cap = options.turnCap || 16;
 	const en = entry || {};
 	const expendable = options.expendable || [];
 
@@ -185,6 +185,11 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 	let outcome = 'stall', turns = 0, survive = 1, blocked = 0;
 
 	for (let t = 0; t < cap; t++) {
+		// Same rule as the duels: a line still standing at the cap runs on.
+		if (t === cap - 1 && cap < 28) {
+			const a = st.me.team[st.me.active];
+			if (a && !a.fainted && a.curHP >= 0.5 * a.maxHP) cap = 28;
+		}
 		const target = st.foe.team[fi];
 		if (target.fainted) { outcome = 'kill'; break; }
 		if (st.foe.active !== fi) { outcome = 'left'; break; }
@@ -234,7 +239,7 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 				let r;
 				try { r = B.damageRolls(probe, 'foe', threat.move); } catch (e) { continue; }
 				const dmg = (r && !r.immune && r.noCrit && r.noCrit.length)
-					? r.noCrit[r.noCrit.length - 1] * (r.hits || 1) : 0;
+					? r.noCrit[r.noCrit.length - 1] /* whole multi-hit lump */ : 0;
 				if (dmg > worstDmg) { worstDmg = dmg; worst = threat; }
 			}
 			if (worst) theirs = worst;
@@ -284,7 +289,7 @@ function pricePath(ctx, fi, jobs, entry, opts) {
 						let r;
 						try { r = B.damageRolls(probe, 'foe', a.move); } catch (e) { continue; }
 						const dmg = (r && !r.immune && r.noCrit && r.noCrit.length)
-							? r.noCrit[r.noCrit.length - 1] * (r.hits || 1) : 0;
+							? r.noCrit[r.noCrit.length - 1] /* whole multi-hit lump */ : 0;
 						if (dmg >= inc.curHP && dmg > killerDmg) { killerDmg = dmg; killer = a; }
 					}
 					if (killer) theirs = killer;
@@ -406,7 +411,7 @@ function survivesEntry(B, state, index, foeAction) {
 	probe.me.active = index;
 	const r = B.damageRolls(probe, 'foe', foeAction.move);
 	if (!r || r.immune) return true;
-	const worst = r.noCrit[r.noCrit.length - 1] * (r.hits || 1);
+	const worst = r.noCrit[r.noCrit.length - 1] /* whole multi-hit lump */;
 	return worst < probe.me.team[index].curHP;
 }
 

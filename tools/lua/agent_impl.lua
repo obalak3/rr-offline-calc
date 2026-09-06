@@ -203,10 +203,18 @@ local function foeParty()
 	local rows = {}
 	for i = 0, 5 do
 		local b = FOE_PARTY + i * P_SIZE
+		-- THEIR RECORDS TOO, raw. gEnemyParty is laid out like ours and is
+		-- unencrypted in this ROM, so species, moves, ability, item, nature,
+		-- EVs and IVs of every opponent are readable. The sheet only has the
+		-- bosses; a Rock Tunnel Pokemaniac's Flareon was matched to Professor
+		-- Oak's and every line priced against a Pokemon that was not there
+		-- (2026-09-04). RAM is the truth; the sheet is now the fallback.
+		local hex = {}
+		for k = 0, P_SIZE - 1 do hex[#hex+1] = string.format("%02x", emu:read8(b + k)) end
 		rows[#rows+1] = string.format(
-			'{"slot":%d,"level":%d,"hp":%d,"maxhp":%d,"status":%d}',
+			'{"slot":%d,"level":%d,"hp":%d,"maxhp":%d,"status":%d,"raw":"%s"}',
 			i, emu:read8(b + P_LEVEL), emu:read16(b + P_HP),
-			emu:read16(b + P_MAX), emu:read32(b + P_STATUS))
+			emu:read16(b + P_MAX), emu:read32(b + P_STATUS), table.concat(hex))
 	end
 	return table.concat(rows, ",")
 end
@@ -215,9 +223,15 @@ local function party()
 	local rows = {}
 	for i = 0, 5 do
 		local b = PARTY + i * P_SIZE
-		rows[#rows+1] = string.format('{"slot":%d,"level":%d,"hp":%d,"maxhp":%d,"status":%d}',
+		-- The whole 100-byte record too, as hex. This ROM keeps party records
+		-- unencrypted, so the node side decodes species, moves, item, ability,
+		-- nature, EVs and IVs from it directly -- the battery save only knows
+		-- what the game last WROTE, and a save state loaded mid-run is not that.
+		local hex = {}
+		for k = 0, P_SIZE - 1 do hex[#hex+1] = string.format("%02x", emu:read8(b + k)) end
+		rows[#rows+1] = string.format('{"slot":%d,"level":%d,"hp":%d,"maxhp":%d,"status":%d,"raw":"%s"}',
 			i, emu:read8(b + P_LEVEL), emu:read16(b + P_HP), emu:read16(b + P_MAX),
-			emu:read32(b + P_STATUS))
+			emu:read32(b + P_STATUS), table.concat(hex))
 	end
 	return table.concat(rows, ",")
 end
@@ -377,10 +391,12 @@ local function writeState(kind)
 
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
-		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,'
+		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,"btype":%d,'
+		.. '"b2sp":%d,"b3sp":%d,'
 		.. '"ai_action":%d,"ai_target":%d,"terrainTurns":%d,'
 		.. '"me":%s,"foe":%s,"party":[%s],"foeparty":[%s]}\n',
-		turn, kind, screen(), emu:read32(RNG),
+		turn, kind, screen(), emu:read32(RNG), emu:read32(0x02022B4C),
+		emu:read16(MON + 2 * SIZE + O_SP), emu:read16(MON + 3 * SIZE + O_SP),
 		emu:read8(AI_ACTION), emu:read8(AI_TARGET), emu:read8(TERRAIN_TIMER),
 		battler(MON), battler(MON + SIZE), party(), foeParty()))
 	f:close()
@@ -422,10 +438,11 @@ local function readCommand()
 	local from = tonumber(body:match('"from"%s*:%s*(%d+)'))
 	local wantMax = tonumber(body:match('"wantMax"%s*:%s*(%d+)'))
 	local wantLevel = tonumber(body:match('"wantLevel"%s*:%s*(%d+)'))
+	local wantSpecies = tonumber(body:match('"wantSpecies"%s*:%s*(%d+)'))
 	if not act or not slot then return nil end
 	say("read command: " .. body:gsub("%s+$", ""))
 	return {action = act, slot = slot, from = from,
-		wantMax = wantMax, wantLevel = wantLevel}
+		wantMax = wantMax, wantLevel = wantLevel, wantSpecies = wantSpecies}
 end
 
 local frame = 0
@@ -438,6 +455,22 @@ local frame = 0
 -- to the console. That is the third silent death tonight from the same cause:
 -- a diagnostic that can itself fail, positioned where its failure is invisible.
 -- The rule now is that tick() does nothing except call the guarded body.
+-- HANDS OFF MEANS HANDS OFF. Writing setKeys(0) on every idle frame is not
+-- "pressing nothing": the frontend writes James's real keys each frame too, so
+-- the two alternate and the game sees his button pressed, released, pressed,
+-- released -- one click became many, and at 5x fast-forward the catch screen
+-- became impossible to leave. Release once when going idle, then stop touching
+-- the keys until the agent actually has something to press.
+local function handsOff()
+	if not _RR.handsOff then
+		pcall(function() emu:setKeys(0) end)
+		_RR.handsOff = true
+	end
+end
+local function handsOn()
+	_RR.handsOff = false
+end
+
 local function tick_body()
 	_RR.beat = (_RR.beat or 0) + 1
 	if _RR.beat % 60 == 0 then
@@ -469,9 +502,37 @@ local function tick_body()
 	if _RR.beat % 10 == 0 then
 		local pf = io.open(DIR .. "pause", "r")
 		if pf then pf:close(); _RR.paused = true else _RR.paused = false end
+		-- WILD ENCOUNTERS ARE JAMES'S, NOT OURS. The node writes `wild` when
+		-- it judges the opponent a bush Pokemon rather than a trainer, and this
+		-- side then presses nothing, exactly as for STOP, so he can catch it.
+		-- Cleared here the moment the battle is over, so the next trainer
+		-- fight resumes without anybody touching a file.
+		local wf = io.open(DIR .. "wild", "r")
+		if wf then
+			wf:close()
+			-- SUSTAINED, not momentary. In a double battle the main callback
+			-- leaves its in-battle value between the two action prompts, so a
+			-- single "nobattle" read is not the end of anything: the first
+			-- live doubles fight cleared this 193 times and the agent kept
+			-- stepping back in on a fight that was James's to play.
+			local okScr, scrNow = pcall(screen)
+			if okScr and scrNow == "nobattle" then
+				_RR.wildIdle = (_RR.wildIdle or 0) + 10
+			else
+				_RR.wildIdle = 0
+			end
+			if (_RR.wildIdle or 0) >= 600 then
+				os.remove(DIR .. "wild"); _RR.wild = false; _RR.wildIdle = 0
+				say("hands-off battle over; standing back up")
+			else
+				_RR.wild = true
+			end
+		else
+			_RR.wild = false
+		end
 	end
-	if _RR.paused then
-		emu:setKeys(0)
+	if _RR.paused or _RR.wild then
+		handsOff()
 		return
 	end
 
@@ -542,8 +603,8 @@ function tick_inner()
 		end
 		if scr == "nobattle" then
 			-- Outside a battle the agent presses NOTHING. It has no map of the
-			-- overworld and no business acting there.
-			emu:setKeys(0)
+			-- overworld and no business acting there. ONCE, not every frame.
+			handsOff()
 			unstick = (unstick or 0) + 1
 			if unstick == 120 then
 				say("the battle is over. " .. (_RR.fights or 0) .. " fought so far")
@@ -789,11 +850,11 @@ function tick_inner()
 			say(string.format("turn %d: playing %s %d", turn, want.action, want.slot))
 			opened, moves, lastCur, cursorAt, swFrom, confirmAt = false, 0, -1, -1, nil, nil
 			phase, timer = (want.action == "switch") and "sw_open" or "mv_open", 0
-		elseif timer > 60 * 60 then
+		elseif timer > 180 * 60 then   -- three minutes: a long think must not be re-asked away
 			-- Ask again rather than giving up. The planner may simply not have
 			-- been started yet, and a half that goes quiet forever is worse
 			-- than one that repeats itself.
-			say("turn " .. turn .. ": no answer in 60s; asking again")
+			say("turn " .. turn .. ": no answer in 180s; asking again")
 			os.remove(DIR .. "state.json")
 			lastSig = ""
 			phase, timer = "wait", 0
@@ -908,15 +969,32 @@ function tick_inner()
 		-- the RAM slot exactly, with the six HP values logged in the same tick
 		-- as the screenshot that showed them.
 		local target = want.slot
-		if want.wantMax and want.wantMax > 0 then
+		if (want.wantMax and want.wantMax > 0) or (want.wantSpecies and want.wantSpecies > 0) then
+			-- SPECIES FIRST. Max HP plus level is not unique on every team: with
+			-- Ledyba and Froakie both at 41/L15 this picked Ledyba for a Froakie
+			-- switch and then kept "switching" to the Ledyba already out. The
+			-- species id sits at +0x20 of the same unencrypted record. The
+			-- Pokemon on the field is never a candidate: the game refuses it.
 			local found = nil
-			for i = 0, 5 do
+			local activeSp, activeHp = emu:read16(MON + O_SP), emu:read16(MON + O_HP)
+			local function candidate(i, bySpecies)
 				local b = PARTY + i * P_SIZE
-				if emu:read16(b + P_MAX) == want.wantMax
-					and emu:read16(b + P_HP) > 0
-					and (not want.wantLevel or emu:read8(b + P_LEVEL) == want.wantLevel) then
-					found = i; break
+				if emu:read16(b + P_HP) <= 0 then return false end
+				if want.wantLevel and emu:read8(b + P_LEVEL) ~= want.wantLevel then return false end
+				if bySpecies then
+					if emu:read16(b + 0x20) ~= want.wantSpecies then return false end
+				elseif want.wantMax and want.wantMax > 0 then
+					if emu:read16(b + P_MAX) ~= want.wantMax then return false end
 				end
+				-- not the one already out
+				if emu:read16(b + 0x20) == activeSp and emu:read16(b + P_HP) == activeHp then return false end
+				return true
+			end
+			if want.wantSpecies and want.wantSpecies > 0 then
+				for i = 0, 5 do if candidate(i, true) then found = i; break end end
+			end
+			if not found then
+				for i = 0, 5 do if candidate(i, false) then found = i; break end end
 			end
 			if found and found ~= target then
 				say("sw_pick: slot " .. target .. " is stale, "

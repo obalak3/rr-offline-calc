@@ -34,6 +34,9 @@ const path = require('path');
 
 const DIR = path.join(process.env.HOME, 'rr-agent');
 const PAUSE = path.join(DIR, 'pause');
+// Hands-off marker (wild or double battle) and James's override for it.
+const WILD = path.join(DIR, 'wild');
+const FIGHT = path.join(DIR, 'fight');
 const ASK = path.join(DIR, 'ask.json');
 const CHOICE = path.join(DIR, 'choice.json');
 const STATE = path.join(DIR, 'state.json');
@@ -51,6 +54,8 @@ function status() {
 	return {
 		line: readJSON(path.join(DIR, 'line_result.json')),
 		paused: fs.existsSync(PAUSE),
+		handsOff: fs.existsSync(WILD),
+		fighting: fs.existsSync(FIGHT),
 		// The emulator writes a heartbeat every frame it is alive. Anything
 		// beyond a few seconds means the Lua side is not running, which is
 		// worth showing rather than leaving the panel looking healthy.
@@ -118,9 +123,13 @@ async function tick(){
   render(s);
 }
 function render(s){
-  document.getElementById('btn').innerHTML = s.paused
+  document.getElementById('btn').innerHTML = (s.paused
     ? '<button class=go onclick="send(\\'/resume\\')">RESUME</button>'
-    : '<button class=stop onclick="send(\\'/pause\\')">STOP</button>';
+    : '<button class=stop onclick="send(\\'/pause\\')">STOP</button>')
+    + (s.handsOff && !s.fighting
+      ? '<div class=quiet style="margin-top:8px">Wild or double battle: the agent is standing down, this one is yours.</div>'
+        + '<button class=go style="margin-top:6px" onclick="send(\\'/fight\\')">FIGHT THIS ONE ANYWAY (singles only)</button>'
+      : '');
   document.getElementById('turn').textContent = s.turn ?? '–';
   document.getElementById('us').textContent   = s.us ? s.us.hp+'/'+s.us.max : '–';
   document.getElementById('them').textContent = s.them ? s.them.hp+'/'+s.them.max : '–';
@@ -230,6 +239,14 @@ http.createServer((req, res) => {
 	}
 	if (req.method === 'POST' && req.url === '/resume') {
 		try { fs.unlinkSync(PAUSE); } catch (e) { /* already running */ }
+		return send(200, '{"ok":true}');
+	}
+	if (req.method === 'POST' && req.url === '/fight') {
+		// James's call: fight this wild/double encounter after all. The agent
+		// honours the marker for this battle only and clears it when the
+		// opposing party changes.
+		fs.writeFileSync(FIGHT, String(Date.now()));
+		try { fs.unlinkSync(WILD); } catch (e) { /* already gone */ }
 		return send(200, '{"ok":true}');
 	}
 	if (req.method === 'POST' && req.url === '/line') {

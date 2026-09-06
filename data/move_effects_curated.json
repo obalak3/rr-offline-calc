@@ -1827,5 +1827,142 @@
  "First Impression": {
   "kind": "firstTurnOnly",
   "note": "Only usable on the turn the user comes in."
+ },
+ "Zap Cannon": {
+  "kind": "secondary",
+  "secondary": {
+   "status": "par"
+  }
+ },
+ "Inferno": {
+  "kind": "secondary",
+  "secondary": {
+   "status": "brn"
+  }
+ },
+ "Poison Fang": {
+  "kind": "secondary",
+  "secondary": {
+   "status": "tox"
+  }
+ },
+ "Tri Attack": {
+  "kind": "secondary",
+  "secondary": {
+   "statusOneOf": [
+    "brn",
+    "par",
+    "frz"
+   ]
+  }
+ },
+ "Hyper Fang": {
+  "kind": "secondary",
+  "secondary": {
+   "flinch": true
+  }
+ },
+ "Astonish": {
+  "kind": "secondary",
+  "secondary": {
+   "flinch": true
+  }
+ },
+ "Smog": {
+  "kind": "secondary",
+  "secondary": {
+   "status": "psn"
+  }
+ },
+ "Poison Sting": {
+  "kind": "secondary",
+  "secondary": {
+   "status": "psn"
+  }
+ },
+ "Thrash": {
+  "kind": "lockedIn",
+  "turns": [
+   2,
+   3
+  ],
+  "thenConfusesSelf": true
+ },
+ "Petal Dance": {
+  "kind": "lockedIn",
+  "turns": [
+   2,
+   3
+  ],
+  "thenConfusesSelf": true
+ },
+ "Flatter": {
+  "kind": "confuseBoost",
+  "target": "foe",
+  "boosts": {
+   "spa": 1
+  },
+  "confuses": true
+ },
+ "Feather Dance": {
+  "kind": "boost",
+  "target": "foe",
+  "boosts": {
+   "atk": -2
+  }
+ },
+ "Scale Shot": {
+  "kind": "selfDebuff",
+  "boosts": {
+   "spe": 1,
+   "def": -1
+  }
+ },
+ "Refresh": {
+  "kind": "healBell"
+ },
+ "Mind Blown": {
+  "kind": "boostCost",
+  "hpCost": 0.5,
+  "boosts": {}
+ },
+ "Hyper Beam": {
+  "kind": "recharge"
+ },
+ "Giga Impact": {
+  "kind": "recharge"
+ },
+ "Roar of Time": {
+  "kind": "recharge"
+ },
+ "Meteor Beam": {
+  "kind": "twoTurn",
+  "chargeBoosts": {
+   "spa": 1
+  }
+ },
+ "Solar Blade": {
+  "kind": "twoTurn"
+ },
+ "Skull Bash": {
+  "kind": "twoTurn",
+  "chargeBoosts": {
+   "def": 1
+  }
+ },
+ "Phantom Force": {
+  "kind": "twoTurn",
+  "semiInvulnerable": true
+ },
+ "Focus Punch": {
+  "kind": "focusPunch"
+ },
+ "Memento": {
+  "kind": "boost",
+  "target": "foe",
+  "boosts": {
+   "atk": -2,
+   "spa": -2
+  }
  }
 }

@@ -238,7 +238,11 @@ var RRSave = (function () {
 		if (!withStats) return null;   // nothing trustworthy without a stats block
 		var nickname = readText(view, offset + REC.NICK, 10) || "";
 		return {
-			species: species.name,
+			// THE FORME IS THE IDENTITY. `name` is the base species; the real
+			// identity is `key`: species 1023 is name "Sandshrew", key
+			// "Sandshrew-Alola", Ice/Steel. Reading `name` made an Ice/Steel
+			// Pokemon a Ground one and Low Sweep read neutral instead of 4x.
+			species: species.key || species.name,
 			nickname: nickname === species.name ? "" : nickname,
 			level: level,
 			nature: nature.nature,
@@ -410,7 +414,11 @@ var RRSave = (function () {
 		var ability = abilityFor(species, view.getUint32(offset + BOX.PID, true));
 
 		return {
-			species: species.name,
+			// THE FORME IS THE IDENTITY. `name` is the base species; the real
+			// identity is `key`: species 1023 is name "Sandshrew", key
+			// "Sandshrew-Alola", Ice/Steel. Reading `name` made an Ice/Steel
+			// Pokemon a Ground one and Low Sweep read neutral instead of 4x.
+			species: species.key || species.name,
 			nickname: nickname === species.name ? "" : nickname,
 			level: level,
 			// No stats are stored, so the fingerprint that pins a party
@@ -648,5 +656,8 @@ var RRSave = (function () {
 	});
 
 	return {parse: parse, deriveNature: deriveNature, abilityFor: abilityFor,
+		// One 100-byte party record, unencrypted in this ROM, so the live agent
+		// can decode the party straight out of RAM instead of the battery save.
+		readRecord: readRecord,
 		RECORD: REC};
 })();

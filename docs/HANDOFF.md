@@ -1,5 +1,53 @@
 # Handoff -- 2026-09-01 (final for this session)
 
+## UPDATE 2026-09-01 (latest): Sucker Punch fixed, team v4, 57/60
+
+James's two corrections after the v3 run: Alakazam cannot have Focus Blast by
+the Rocket Hideout (TM availability is NOT in the dex; treat every TM pick as
+an assumption to list for him), and Sucker Punch must fail against a switch.
+Done: `rr-battle.js` now fails Sucker Punch/Thunderclap when the target
+switched, used a status move, or already moved (runTurn exposes both actions
+as `ctx.actions`); `TRACE=1` prints a "dice:" line after any turn with a miss,
+a crit, or a failed Sucker Punch (`opts.events` sink on step). Team v4:
+Alakazam Psychic/Shadow Ball/Psyshock/Energy Ball, Gyarados
+Waterfall/Crunch/Ice Fang/Aqua Tail, rest as v3. Result, same flags:
+**57/60, 32 zero-faint, 3 wipes** (seeds 220813, 236651, 395031). Clean win
+with zero dice events: seed 125785, 16 turns. Loss 395031: a Pyro Ball crit
+removes Annihilape, then five switch turns into a full-HP Infernape bleed
+Gyarados and Greninja, then Veluza cleans up. Parental Bond still missing
+(unfixed, flagged twice). Also unmodelled: multi-hit moves always land the
+calculator's default 3 hits (Water Shuriken never rolls 2 or 4-5) and Battle
+Bond's +1 after a KO never happens; in seed 125785's last turn the two errors
+cancel (real game: 2 boosted hits still remove a -1 SpD Infernape).
+
+## UPDATE 2026-09-01 (late): the legal Giovanni team, measured
+
+Team file rebuilt from the dex learnsets (level-up <=47 or TM only, nothing on
+harness.js RESTRICTED_MOVES): Annihilape Bulk Up -> Stomping Tantrum and
+Defiant -> Vital Spirit, Alakazam Recover -> Energy Ball, Gyarados Dragon
+Dance -> Earthquake. Same flags as gio60b (VETO=1, SEED=7000, 60 episodes):
+**56/60 wins, 35 zero-faint, 4 full wipes** (seeds 94109, 157461, 434626,
+450464; per-episode CSV in the session scratchpad, gio60c.csv). Between the
+invalid v1 (60/60) and invalid v2 (49/60).
+
+Two instrument gaps surfaced by tracing seed 450464, both UNFIXED and both on
+this fight's roster:
+
+1. **Sucker Punch never fails.** `rr-move-effects` has `effect: null` for it,
+   so it is a plain +1 priority 70 BP hit. It struck Lanturn for 55% and
+   Gyarados for 21% on SWITCH turns, which in the game are free switches. This
+   flatters Honchkrow (Scope Lens + Super Luck), who took four of ours in that
+   seed.
+2. **No Parental Bond.** Kangaskhan-Mega's sheet set carries "Inner Focus" and
+   the engine has no mega-ability swap; its Fake Out on Alakazam matched a
+   plain single-hit 63 exactly. Kanga is under-stated by roughly a quarter.
+
+Fix both before reading the four wipes as planner failures. The switch-loop
+pattern (49% switch rate, Gyarados -> Greninja -> Gyarados -> Mienshao into
+Drill Peck) is real regardless and is the same "no answer to the wall" class
+as the Orthworm finding below. Trace HP columns show the state at the START
+of each turn.
+
 ## READ THIS FIRST: corrections from the last hours of the session
 
 1. **RESTRICTED MODE.** James plays Radical Red's restricted mode and both

@@ -41,7 +41,17 @@ function loadEngine() {
 	];
 	// rr-matchup.js is loaded when present so this harness works both before and
 	// after that file exists.
-	const optional = ['src/js/rr-matchup.js'];
+	const optional = ['src/js/rr-matchup.js', 'src/js/rr-save.js'];
+	// rr-save.js ends in jQuery page wiring and reads the dex from a global;
+	// give it a no-op $ and the built dex so its record decoder is usable here.
+	const chain = () => new Proxy({}, {get: (t, k) => k === 'length' ? 0 : chain});
+	sandbox.$ = sandbox.jQuery = () => chain();
+	sandbox.document = {getElementById: () => null, addEventListener: () => {},
+		createElement: () => ({style: {}, appendChild: () => {}})};
+	if (typeof sandbox.RR_DEX_DATA === 'undefined') {
+		const built = path.join(root, 'upstream-calc/dist/js/data/rr-dex-data.js');
+		if (fs.existsSync(built)) vm.runInContext(fs.readFileSync(built, 'utf8'), sandbox);
+	}
 	for (const file of files.concat(optional)) {
 		const full = path.join(root, 'upstream-calc', file);
 		if (!fs.existsSync(full)) {

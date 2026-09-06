@@ -101,6 +101,7 @@ const party = process.env.RR_TEAM_FILE
 	: (LEVEL
 		? H.realTeam().map(s => Object.assign({}, s, {level: LEVEL}))
 		: H.realTeam());
+const DIFFICULTY = require('./lib/difficulty.js');
 const battle = H.earlyBattles(engine, {maxLevel: 60})
 	.filter(b => H.label(b).toUpperCase().includes(process.env.FIGHT || 'SURGE'))[0];
 if (!battle) { console.log('no battle matching FIGHT=' + (process.env.FIGHT || 'SURGE')); process.exit(1); }
@@ -129,16 +130,19 @@ function bestDamage(st) {
 	let best = null, bv = -1;
 	legal.forEach(a => {
 		const r = B.damageRolls(st, 'me', a.move);
-		const d = r && !r.immune ? r.noCrit[8] * (r.hits || 1) : 0;
+		const d = r && !r.immune ? r.noCrit[8] : 0;   // whole multi-hit lump
 		if (d > bv) { bv = d; best = a; }
 	});
 	return best || B.legalActions(st, 'me')[0];
 }
 
+// TRACE=1 collects what the dice did on the real turn (miss, crit, a Sucker
+// Punch failing) so a traced line can be told apart from a lucky one.
+let traceEvents = null;
 function stepOpts(rand) {
 	if (DICE === 'odds') return {mode: 'odds', forkBudget: 3};
 	if (DICE === 'maxroll') return {mode: 'maxroll', risks: {roll: 'median', foeRoll: 'max'}};
-	return {mode: 'sample', rand: rand};
+	return {mode: 'sample', rand: rand, events: traceEvents};
 }
 function sample(br, rand) {
 	if (br.length === 1) return br[0].state;
@@ -404,7 +408,16 @@ for (let ep = 0; ep < N; ep++) {
 			const idx = st.me.active;
 			const dies = act => {
 				try {
-					const o = B.step(st, act, theirs, {mode: 'maxroll', risks: {roll: 'median', foeRoll: 'max'}});
+					// Same risk appetite as live: the fight's difficulty, read off
+					// the duel table (lib/difficulty.js), decides how
+					// pessimistically a death is read. RR_CAREFUL=off reverts to
+					// the old fixed reading for A/B.
+					let risks = {roll: 'median', foeRoll: 'max'};
+					if (process.env.RR_CAREFUL !== 'off') {
+						try { risks = DIFFICULTY.deathRisksFor(DIFFICULTY.classify(engine, st).tier); }
+						catch (e) { risks = {roll: 'median', foeRoll: 'max'}; }
+					}
+					const o = B.step(st, act, theirs, {mode: 'maxroll', risks: risks});
 					const s2 = o && o[0] && o[0].state;
 					if (!s2) return false;
 					return s2.me.team[idx].fainted && !s2.foe.team[st.foe.active].fainted;
@@ -446,9 +459,14 @@ for (let ep = 0; ep < N; ep++) {
 		const aheadNow = (pick && pick.path && pick.path.ahead !== undefined
 			&& pick.path.ahead !== null) ? pick.path.ahead : null;
 		const foesLeftNow = st.foe.team.filter(m => !m.fainted).length;
+		if (process.env.TRACE) traceEvents = [];
 		try { out = B.step(st, mine, theirs, stepOpts(rand)); } catch (e) { break; }
 		if (!out || !out.length) break;
 		st = sample(out, rand);
+		if (process.env.TRACE && traceEvents && traceEvents.length) {
+			console.log('       dice: ' + traceEvents.map(e => (e.who === 'me' ? 'our ' : 'their ') + (e.move ? e.move + ' ' : '') + e.what).join(', '));
+			traceEvents = null;
+		}
 		if (AHEADLOG) {
 			const hpNow = st.me.team.reduce((a, m) => a + (m.fainted ? 0 : m.curHP / m.maxHP), 0);
 			const deadNow2 = st.me.team.filter(m => m.fainted).length;
@@ -481,6 +499,10 @@ for (let ep = 0; ep < N; ep++) {
 	d.forEach(x => { deaths[x] = (deaths[x] || 0) + 1; });
 	// PER-EPISODE, so arms can be differenced episode by episode instead of
 	// total by total. This line is the unit of the paired comparison.
+	if (process.env.TRACE) {
+		console.log('  end  ' + ''.padEnd(62) + 'us ' + st.me.team.map(m => m.fainted ? 'X' : Math.round(100 * m.curHP / m.maxHP)).join('/')
+			+ ' them ' + st.foe.team.map(m => m.fainted ? 'X' : Math.round(100 * m.curHP / m.maxHP)).join('/'));
+	}
 	perEpisode.push([SEED + ep * 7919, w ? 1 : 0, surv, t,
 		st.foe.team.filter(m => m.fainted).length].join(','));
 }

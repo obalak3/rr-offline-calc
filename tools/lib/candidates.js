@@ -187,7 +187,7 @@ function safestPivot(ctx, fi, exclude) {
 		(foeSets[fi].moves || []).forEach(mv => {
 			const r = B.damageRolls(st, 'foe', mv);
 			if (!r || r.immune) return;
-			const hit = r.noCrit[r.noCrit.length - 1] * (r.hits || 1);
+			const hit = r.noCrit[r.noCrit.length - 1];   // already the whole multi-hit lump
 			if (hit > worst) worst = hit;
 		});
 		const frac = worst / me.maxHP;
@@ -238,6 +238,14 @@ function candidatesFor(ctx, fi, options) {
 	// Pricing was made honest long ago; existence was not. opts.ourHp and
 	// opts.ourStatus carry the live position; a fainted or empty mon simply
 	// generates nothing.
+	// ONE SIMULATION PER QUESTION. Every family asks for the same (ours,
+	// theirs, condition) duels; each re-ran them, and a gym turn took 45 s.
+	const duelMemo = new Map();
+	const duelLinesM = (mi, fiX, cond, o) => {
+		const k = mi + '|' + fiX + '|' + JSON.stringify(cond || {}) + '|' + JSON.stringify(o || {});
+		if (!duelMemo.has(k)) duelMemo.set(k, D.duelLines(engine, party, foeSets, mi, fiX, cond, o));
+		return duelMemo.get(k);
+	};
 	const duelCond = (mi, extra) => {
 		const sp = party[mi].species;
 		const c = Object.assign({}, fieldCond(opts.field, opts.foeHp), extra || {});
@@ -275,7 +283,7 @@ function candidatesFor(ctx, fi, options) {
 	party.forEach((p, mi) => {
 		const condS = duelCond(mi);
 		if (!condS) return;
-		const line = D.duelLines(engine, party, foeSets, mi, fi, condS, {})
+		const line = duelLinesM(mi, fi, condS, {})
 			.find(l => l.outcome === 'kill');
 		if (!line) return;
 		solo[mi] = true;
@@ -298,7 +306,7 @@ function candidatesFor(ctx, fi, options) {
 			if (!achievable(ctx, entry.cond, foe, opts.field)) continue;
 			const condE = duelCond(mi, entry.cond);
 			if (!condE) break;
-			const line = D.duelLines(engine, party, foeSets, mi, fi, condE, {})
+			const line = duelLinesM(mi, fi, condE, {})
 				.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
 			if (!line) continue;
 			found++;
@@ -346,7 +354,7 @@ function candidatesFor(ctx, fi, options) {
 			if (p.species === l.mon) return;
 			const condA = duelCond(mi);
 			if (!condA) return;
-			const line = D.duelLines(engine, party, foeSets, mi, fi, condA, {})
+			const line = duelLinesM(mi, fi, condA, {})
 				.find(x => x.outcome === 'kill');
 			if (!line) return;
 			push([{mon: l.mon, moves: [], until: {entered: true}},
@@ -356,6 +364,148 @@ function candidatesFor(ctx, fi, options) {
 				line.cost + 3 * line.deathRisk - (l.heals ? 0.25 : 0.1));
 		});
 	});
+
+	// 5. OPENERS: A TURN STOLEN IS A PURPOSE. James, 2026-09-03: "Your planner
+	//    only cares about what our pokemon can do there, not why it is actually
+	//    sent there." Fake Out is not 16% of damage; it is the opponent losing a
+	//    turn, and the value of that shows up in whoever acts next. A Pokemon
+	//    with an entry-only flinching move can head a plan whose job is exactly
+	//    that, and the simulation prices what the stolen turn is worth. His
+	//    line against Vikavolt -- switch to Hitmonlee, Fake Out, then Dugtrio
+	//    Rock Blast -- is this family.
+	const ENTRY_FLINCH = {'Fake Out': true};
+	const canFlinch = !/Inner Focus|Shield Dust/i.test(foe.ability || '');
+	if (process.env.RR_DEBUG_OPENER) console.log('[opener] foe ' + foe.species + ' ability ' + foe.ability + ' canFlinch ' + canFlinch);
+	if (canFlinch) party.forEach((p, mi) => {
+		const opener = (p.moves || []).find(m => ENTRY_FLINCH[m]);
+		if (!opener) return;
+		const condO = duelCond(mi);
+		if (process.env.RR_DEBUG_OPENER) console.log('[opener] ' + p.species + ' has ' + opener + ' cond ' + JSON.stringify(condO));
+		if (!condO) return;
+		let usable = true;
+		try {
+			const probe = engine.B.createState(party.slice(mi).concat(party.slice(0, mi)),
+				foeSets.slice(fi).concat(foeSets.slice(0, fi)), {});
+			const r = engine.B.damageRolls(probe, 'me', opener);
+			usable = !!(r && !r.immune);
+		} catch (e) { usable = false; }
+		if (process.env.RR_DEBUG_OPENER) console.log('[opener] ' + p.species + ' usable ' + usable);
+		if (!usable) return;
+		const steal = {mon: p.species, moves: [opener], until: {uses: 1}};
+		party.forEach((q, qi) => {
+			if (qi === mi) return;
+			const condQ = duelCond(qi);
+			if (!condQ) return;
+			const line = duelLinesM(qi, fi, condQ, {})
+				.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
+			if (!line) return;
+			push([steal, {mon: q.species, moves: line.moves}],
+				p.species + ' steals a turn with ' + opener + ', then ' + q.species
+				+ ' kills for ' + pctOf(line.cost),
+				line.cost + 3 * line.deathRisk);   // no discount: the stolen turn earns its keep in pricing or not at all
+		});
+		push([steal, {mon: p.species, moves: ['*']}],
+			p.species + ' steals a turn with ' + opener + ', then keeps hitting', 0.6);
+	});
+
+	// 6. TAKING THE HIT ON PURPOSE. A Pokemon that takes what they are about
+	//    to throw cheaply -- immunity, an absorb, a heavy resist -- can be sent
+	//    in for exactly that: eat the hit, hand over, and the finisher enters
+	//    on a turn that costs it nothing. Family 3 is the absorb-and-heal case;
+	//    this is the general one. "Cheaply" is the same damage reading
+	//    safestPivot uses, so it stays derived from data.
+	{
+		const theirMoves = (foe.moves || []).filter(Boolean);
+		party.forEach((w, wi) => {
+			const condW = duelCond(wi);
+			if (!condW) return;
+			let worst = 0, maxHP = 1;
+			try {
+				const st = engine.B.createState(party.slice(wi).concat(party.slice(0, wi)),
+					foeSets.slice(fi).concat(foeSets.slice(0, fi)), {});
+				maxHP = st.me.team[0].maxHP;
+				theirMoves.forEach(mv => {
+					const r = engine.B.damageRolls(st, 'foe', mv);
+					if (!r || r.immune) return;
+					const hit = r.noCrit[r.noCrit.length - 1];
+					if (hit > worst) worst = hit;
+				});
+			} catch (e) { return; }
+			const frac = worst / maxHP;
+			if (frac > 0.25) return;
+			const buffer = {mon: w.species, moves: ['*'], until: {uses: 1}};
+			party.forEach((q, qi) => {
+				if (qi === wi) return;
+				const condQ = duelCond(qi);
+				if (!condQ) return;
+				const line = duelLinesM(qi, fi, condQ, {})
+					.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
+				if (!line) return;
+				push([buffer, {mon: q.species, moves: line.moves}],
+					w.species + ' takes the hit for ' + pctOf(frac) + ', then '
+					+ q.species + ' kills for ' + pctOf(line.cost),
+					frac + line.cost + 3 * line.deathRisk + 0.05);
+			});
+		});
+	}
+
+	// 7. BAIT. James, 2026-09-04: "we switch to gyarados, and basically whoever
+	//    sees gyarados uses an electric move because x4 and we can safely heal
+	//    lanturn or kilowattrel." The absorb switch (family 3) is only free on
+	//    the turn the AI has COMMITTED to the absorbed type, and the AI only
+	//    commits to it when a Pokemon that type hurts is standing there. So
+	//    the line is three entries: the bait goes in and hands over, the
+	//    absorber enters into the move the AI chose against the bait, and
+	//    then somebody kills (or the absorber, healed, fights on). Whether the
+	//    AI really takes the bait is asked of the AI port with the bait on the
+	//    field, not assumed from a type chart.
+	{
+		const RRAI = ctx.engine.sandbox && ctx.engine.sandbox.RRAI;
+		const absorbers2 = LEVERS.filter(l => l.via === 'absorb-ability' && l.absorbs);
+		if (RRAI && absorbers2.length) absorbers2.forEach(l => {
+			const ai = party.findIndex(p => p.species === l.mon);
+			if (ai < 0 || !duelCond(ai)) return;
+			party.forEach((bait, bi) => {
+				if (bi === ai) return;
+				const condB = duelCond(bi);
+				if (!condB) return;
+				// What does the AI throw at the bait?
+				let takes = false, dbgChoice = null;
+				try {
+					const st = engine.B.createState(party.slice(bi).concat(party.slice(0, bi)),
+						foeSets.slice(fi).concat(foeSets.slice(0, fi)), {});
+					if (condB.hpFrac !== undefined) {
+						st.me.team[0].curHP = Math.max(1, Math.round(st.me.team[0].maxHP * condB.hpFrac));
+					}
+					const scored = RRAI.scoreAll(st, 'foe', {checkBadMove: true, checkGoodMove: true}, {});
+					const choice = scored.length ? D.committedChoice(engine.B, scored, st) : null;
+					const md = choice && choice.type === 'move' ? engine.B.moveData(choice.move) : null;
+					dbgChoice = choice;
+					takes = !!(md && md.type === l.absorbs && md.split !== 'Status');
+					if (process.env.RR_DEBUG_BAIT) console.log('[bait]   AI vs ' + bait.species + ' chooses ' + JSON.stringify(choice));
+				} catch (e) { takes = false; if (process.env.RR_DEBUG_BAIT) console.log('[bait] threw: ' + e.message); }
+				if (process.env.RR_DEBUG_BAIT) console.log('[bait] ' + l.mon + ' (' + l.absorbs + ') with ' + bait.species + ' out -> takes ' + takes);
+				if (!takes) return;
+				const baitLeg = {mon: bait.species, moves: [], until: {entered: true}};
+				const absorbLeg = {mon: l.mon, moves: [], until: {entered: true}};
+				const story = bait.species + ' baits ' + l.absorbs + ', ' + l.mon + ' absorbs it'
+					+ (l.heals ? ' and heals' : '');
+				// ... then the absorber, healed, fights on
+				push([baitLeg, {mon: l.mon, moves: ['*']}], story + ', then keeps hitting', 0.5);
+				// ... or somebody else finishes
+				party.forEach((q, qi) => {
+					if (qi === ai || qi === bi) return;
+					const condQ = duelCond(qi);
+					if (!condQ) return;
+					const line = duelLinesM(qi, fi, condQ, {}).find(x => x.outcome === 'kill' && x.deathRisk < 0.5);
+					if (!line) return;
+					push([baitLeg, absorbLeg, {mon: q.species, moves: line.moves}],
+						story + ', then ' + q.species + ' kills for ' + pctOf(line.cost),
+						line.cost + 3 * line.deathRisk - (l.heals ? 0.25 : 0.1));
+				});
+			});
+		});
+	}
 
 	// 4. CHIP CHAINS, any length. The unit of a plan is not one of ours
 	//    against one of theirs; on some fights that unit is simply wrong.
@@ -378,7 +528,10 @@ function candidatesFor(ctx, fi, options) {
 	//    Drain Punch) undoing the chip is caught there, not guessed here.
 	// RR_NO_CHIP_CHAINS disables this family for A/B measurement, the same
 	// pattern as RR_DISABLE_SWITCH_PORT.
-	const RETREATS = process.env.RR_NO_CHIP_CHAINS ? [] : [0.5, 0.35];
+	// A HARD FIGHT IS ALLOWED MORE THOUGHT (James: "it can wait for 2 minutes
+	// if it wants"). ctx.deep is set by the live agent when the fight does not
+	// read easy; the emulator side now waits three minutes for an answer.
+	const RETREATS = process.env.RR_NO_CHIP_CHAINS ? [] : (ctx.deep ? [0.65, 0.5, 0.35] : [0.5, 0.35]);
 	const CHIP_MIN = 0.15;      // a leg must bank at least this to extend
 	const MAX_CHIP_LEGS = 3;    // contributors before the finisher
 	const BEAM = 6;
@@ -397,7 +550,7 @@ function candidatesFor(ctx, fi, options) {
 				// Can this one FINISH the remaining fraction? Only meaningful
 				// once at least one chip leg exists: depth-0 kills are family 1.
 				if (node.legs.length) {
-					const fin = D.duelLines(engine, party, foeSets, mi, fi, condC, {})
+					const fin = duelLinesM(mi, fi, condC, {})
 						.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
 					if (fin) {
 						push(node.legs.concat([{mon: p.species, moves: fin.moves}]),
@@ -412,10 +565,24 @@ function candidatesFor(ctx, fi, options) {
 				// through their switching even though stat drops do not.
 				if (depth < MAX_CHIP_LEGS) {
 					for (const at of RETREATS) {
-						const chip = D.duelLines(engine, party, foeSets, mi, fi,
+						// A KILL IS THE BEST CHIP. Filtering to retreat/left only
+						// meant that when every good move KILLS, the one move that
+						// does not was the only chip line left -- Granbull chipped
+						// a full Crawdaunt with Fire Fang, its resisted move, twice,
+						// while Brick Break, Play Rough and Thunder Fang all removed
+						// it outright (2026-09-03). Dead lines stay excluded.
+						const chip = duelLinesM(mi, fi,
 							condC, {retreatAt: at})
-							.filter(l => l.outcome === 'retreat' || l.outcome === 'left')
-							.sort((a, b) => b.chip - a.chip)[0];
+							.filter(l => l.outcome === 'retreat' || l.outcome === 'left'
+								|| l.outcome === 'kill')
+							// NET VALUE, NOT RAW CHIP. Picking the leg by chip alone
+							// chose Sucker Punch (56% chip for 56% of Hitmonlee) over
+							// Fake Out (16% chip for nothing, and the opponent loses
+							// the turn), so the free opener never headed a plan and
+							// James's "switch to Hitmonlee, Fake Out, then Dugtrio
+							// Rock Blast" was unfindable (2026-09-03). Same order the
+							// non-kill duel sort already uses.
+							.sort((a, b) => (b.chip - b.cost) - (a.chip - a.cost))[0];
 						if (!chip || chip.chip < CHIP_MIN) continue;
 						const legs = node.legs.concat([
 							{mon: p.species, moves: chip.moves, until: {selfHp: at}}]);

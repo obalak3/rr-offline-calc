@@ -130,13 +130,22 @@ function planAction(engine, state, plan, progress) {
 	// live agent compares the active against last turn, and pricePath marks the
 	// Pokemon it just brought in. The engine does not enforce the restriction
 	// either, so this is also what keeps us from planning an illegal move.
-	{
-		const parting = entryInterject(engine, state, legal);
-		if (parting) return parting;
-	}
-
 	const key = foeSpecies + '/' + ji;
 	const step = progress.step[key] || 0;
+	{
+		const parting = entryInterject(engine, state, legal);
+		if (parting) {
+			// THE PLAN IS TOLD. If the entry move IS this job's move, the job
+			// has progressed: without this a job written as "Fake Out, once"
+			// never counted the Fake Out the interject played, wanted it again
+			// next turn when it was illegal, and the whole line stalled -- which
+			// is why "Hitmonlee steals a turn, then Dugtrio kills" priced as
+			// stuck (2026-09-03).
+			const wanted = job.moves && job.moves[Math.min(step, job.moves.length - 1)];
+			if (wanted === parting.move) progress.step[key] = step + 1;
+			return parting;
+		}
+	}
 	if (!job.moves || !job.moves.length) {
 		// Entry-only job whose mon is already in: nothing to click, hand over.
 		if (ji + 1 < jobs.length) {
@@ -154,6 +163,12 @@ function planAction(engine, state, plan, progress) {
 	// had already ruined while Pawmot finished it off, one turn from the kill.
 	const move = want === '*' ? bestDamage(engine, state, legal)
 		: legal.find(a => a.type === 'move' && a.move === want);
+	if (process.env.RR_DEBUG_BEST) {
+		console.log('  [planAction: job ' + job.mon + ' wants ' + want + ' -> '
+			+ (move ? (move.move || 'switch ' + move.index) : 'NOTHING')
+			+ '; active is ' + state.me.team[state.me.active].set.species
+			+ '; legal moves ' + legal.filter(a => a.type === 'move').map(a => a.move).join(',') + ']');
+	}
 	if (!move) {
 		// Out of PP, or taunted, or the move does not exist on this Pokemon.
 		// Advancing rather than failing lets a two-move job degrade into its
@@ -245,7 +260,7 @@ function entryInterject(engine, state, legal) {
 			const kr = B.damageRolls(state, 'me', kill.move);
 			if (kr && !kr.immune) {
 				const band = kr.noCrit;
-				killsNow = band[Math.floor(band.length / 2)] * (kr.hits || 1)
+				killsNow = band[Math.floor(band.length / 2)]
 					>= foeNow.curHP;
 			}
 		}
@@ -263,7 +278,12 @@ function bestDamage(engine, state, legal) {
 		const r = B.damageRolls(state, 'me', a.move);
 		if (!r || r.immune) return;
 		const band = r.noCrit;
-		const dmg = band[Math.floor(band.length / 2)] * (r.hits || 1);
+		// THE BAND IS ALREADY THE WHOLE MOVE. damageRolls returns a multi-hit move
+		// as one summed lump (see the Focus Sash note in rr-battle.js), so
+		// multiplying by hits again counted Double Kick twice: 99 became 198, a
+		// "kill" on a 105 HP Loudred that could not happen, and the entry rule
+		// yielded Fake Out to it. That is the Fake Out James kept asking for.
+		const dmg = band[Math.floor(band.length / 2)];
 		// Priority comes off the move data. The engine keeps actionPriority
 		// internal, and its answer for a move action is exactly this.
 		const info = B.moveData(a.move);
