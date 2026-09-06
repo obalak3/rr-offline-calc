@@ -401,6 +401,29 @@ function candidatesFor(ctx, fi, options) {
 			return d && d.split !== 'Status' ? d.type : null;
 		}).filter(Boolean));
 		if (!theirTypes.has(l.absorbs)) return;      // nothing here to absorb
+		// THE PIVOT HAPPENS NOW, so what matters is what the AI throws at the
+		// Pokemon that is out NOW, not whether it owns an Electric move. Run 5
+		// on s5, turn 669: Lanturn pivoted into a Vikavolt the port (rightly)
+		// said would Roost; the "absorb" bought nothing and the Roost was
+		// free. If the port's committed choice against our active is not of
+		// the absorbed type, there is nothing to absorb this turn.
+		if (opts.active !== undefined && ctx.engine.sandbox && ctx.engine.sandbox.RRAI) {
+			let throwsIt = true;
+			try {
+				const ai = opts.active;
+				const st = engine.B.createState(party.slice(ai).concat(party.slice(0, ai)),
+					foeSets.slice(fi).concat(foeSets.slice(0, fi)), {});
+				const hp = opts.ourHp && opts.ourHp[party[ai].species];
+				if (hp !== undefined) st.me.team[0].curHP = Math.max(1, Math.round(st.me.team[0].maxHP * hp));
+				if (opts.foeHp !== undefined) st.foe.team[0].curHP = Math.max(1, Math.round(st.foe.team[0].maxHP * opts.foeHp));
+				const scored = ctx.engine.sandbox.RRAI.scoreAll(st, 'foe', {checkBadMove: true, checkGoodMove: true}, {});
+				const choice = scored.length ? D.committedChoice(engine.B, scored, st) : null;
+				const md = choice && choice.type === 'move' ? engine.B.moveData(choice.move) : null;
+				throwsIt = !!(md && md.type === l.absorbs && md.split !== 'Status');
+				if (process.env.RR_DEBUG_BAIT) console.log('[absorb] AI vs ' + party[ai].species + ' chooses ' + JSON.stringify(choice) + ' -> pivot ' + (throwsIt ? 'on' : 'off'));
+			} catch (e) { throwsIt = true; }
+			if (!throwsIt) return;
+		}
 		party.forEach((p, mi) => {
 			if (p.species === l.mon) return;
 			const condA = duelCond(mi);

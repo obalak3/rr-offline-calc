@@ -21,6 +21,7 @@
  * it was only ever being called once per fight instead of once per turn.
  */
 'use strict';
+const DEATH_LAST = process.env.RR_DEATH_LAST !== '0';
 const C = require('./candidates.js');
 const P = require('./policy.js');
 const {pricePath} = require('./paths.js');
@@ -591,7 +592,7 @@ function chooseAction(ctx, state, opts) {
 	});
 	let ideas = C.candidatesFor(ctx, fi, {field,
 		foeHp: foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined,
-		ourHp, ourStatus});
+		ourHp, ourStatus, active: state.me.active});
 	// THE PLAN WE ARE ALREADY FOLLOWING IS ALWAYS ON THE TABLE. Candidates are
 	// re-derived by a heuristic search every turn, and that search is not
 	// stable under small changes in HP: measured over recent play, on 43% of
@@ -778,7 +779,7 @@ function chooseAction(ctx, state, opts) {
 		try {
 			more = C.candidatesFor(ctx, fi, {field,
 				foeHp: foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined,
-				ourHp, ourStatus, escalate: true, maxStack: 4, perKiller: 8});
+				ourHp, ourStatus, active: state.me.active, escalate: true, maxStack: 4, perKiller: 8});
 		} catch (e) { more = []; }
 		const seenJobs = new Set(ideas.map(c => JSON.stringify(c.jobs)));
 		let added = 0;
@@ -803,7 +804,20 @@ function chooseAction(ctx, state, opts) {
 		}
 		const score = item.here + ahead;
 		item.ahead = ahead;
-		if (!best || score < best.score) {
+		// A CERTAIN DEATH NOW IS NEVER BOUGHT WITH AN ESTIMATE ABOUT LATER.
+		// James, 2026-09-05: "when it decides that one pokemon must die,
+		// usually I find a way to play it without anyone dying." Run 6 on s5,
+		// turn 695: a line losing nobody (here 6.35) lost to one that buried
+		// Lilligant (here 12.56) because the rest-of-fight guess read 18 vs
+		// 9.5 -- the flat no-answer penalties of a fight not yet played. The
+		// lookahead may order lines that lose nobody among themselves and lines
+		// that lose someone among themselves; it may not trade a body for it.
+		// RR_DEATH_LAST=0 restores the plain total.
+		const worse = !best ? false
+			: (DEATH_LAST && (!!(item.illegal && item.illegal.length) !== !!(best.illegal && best.illegal.length)))
+				? !!(item.illegal && item.illegal.length)
+				: score >= best.score;
+		if (!best || !worse) {
 			best = {score, here: item.here, ahead, cand: item.cand, r: item.r,
 				illegal: item.illegal};
 		}
@@ -1064,10 +1078,11 @@ function chooseAction(ctx, state, opts) {
 	// full criterion, so the judged lines come first, in total order, and the
 	// unjudged follow by immediate cost.
 	const totalOf = it => it.here + (it.ahead === undefined ? 0 : it.ahead);
+	const buries = it => (DEATH_LAST && it.illegal && it.illegal.length) ? 1 : 0;
 	const judged = shortlist.filter(x => x.ahead !== undefined)
-		.sort((a, b) => totalOf(a) - totalOf(b));
+		.sort((a, b) => (buries(a) - buries(b)) || (totalOf(a) - totalOf(b)));
 	const unjudged = shortlist.filter(x => x.ahead === undefined)
-		.sort((a, b) => a.here - b.here);
+		.sort((a, b) => (buries(a) - buries(b)) || (a.here - b.here));
 	const ranked = judged.concat(unjudged);
 	if (best && !ranked.some(x => x.cand === best.cand)) ranked.unshift(best);
 	// WHAT WOULD STAYING HAVE COST? A switch hands the opponent a free move, so
@@ -1136,7 +1151,10 @@ function chooseAction(ctx, state, opts) {
 		if (topIdx >= 0 && stayIdx > topIdx) {
 			const top = ranked[topIdx], stayItem = ranked[stayIdx];
 			const gap = totalOf(stayItem) - totalOf(top);
-			if (gap < SWITCH_MIN_MARGIN) {
+			// Staying is never "cheaper" when staying buries somebody and
+			// leaving does not (turn 695, run 6: the stay line sacrificed
+			// Mienshao for -11 on the plain total).
+			if (gap < SWITCH_MIN_MARGIN && buries(stayItem) <= buries(top)) {
 				ranked.splice(stayIdx, 1);
 				ranked.splice(topIdx, 0, stayItem);
 				console.log('  [stayed: leaving would gain only ' + gap.toFixed(2)
