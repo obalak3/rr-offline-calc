@@ -658,9 +658,10 @@ function chooseAction(ctx, state, opts) {
 		ideas.forEach(c => console.log('[explain] idea: jobs=' + c.jobs.length
 			+ ' | ' + c.why + ' | ' + JSON.stringify(c.jobs)));
 	}
-	for (const cand of ideas) {
+	// One candidate, priced. Factored out so a second, wider pass can reuse it.
+	const priceCand = (cand) => {
 		current = cand;
-		if (!cand.jobs.length) { drop('empty jobs'); continue; }
+		if (!cand.jobs.length) { drop('empty jobs'); return null; }
 		// ANY dead leg disqualifies the candidate, not just all of them. The
 		// executor skips dead legs, so "Lanturn absorbs, then Victreebel
 		// kills" with Lanturn dead silently becomes "switch to Victreebel" --
@@ -668,10 +669,10 @@ function chooseAction(ctx, state, opts) {
 		// James watched exactly that plan win six straight turns. Its honest
 		// twin without the dead leg is generated separately and can compete
 		// under its own name.
-		if (cand.jobs.some(j => dead.includes(j.mon))) { drop('dead leg'); continue; }
+		if (cand.jobs.some(j => dead.includes(j.mon))) { drop('dead leg'); return null; }
 		let r;
 		try { r = pricePath(ctx, fi, cand.jobs, entry, {expendable, entryThreats}); }
-		catch (e) { drop('threw: '+e.message); continue; }
+		catch (e) { drop('threw: '+e.message); return null; }
 		// A POKEMON THAT PIVOTS OUT HAS NOT BEATEN US. Requiring every line to
 		// end in a kill threw away every line against Vikavolt, whose set is
 		// Volt Switch / Bug Buzz / Roost / Mud Shot: it leaves on its own, so
@@ -705,7 +706,7 @@ function chooseAction(ctx, state, opts) {
 			if (!r.turns || !r.log || !r.log.length) {
 				drop(r.outcome + (r.blockedEntries ? ' (entry blocked)' : '')
 					+ ' | ' + cand.why);
-				continue;
+				return null;
 			}
 			const spentW = r.dead.filter(n => expendable.includes(n));
 			const illegalW = r.dead.filter(n => !expendable.includes(n));
@@ -715,8 +716,8 @@ function chooseAction(ctx, state, opts) {
 				? r.state.foe.team[fi].curHP / r.state.foe.team[fi].maxHP : 1;
 			const hereW = spendW + illegalW.length * 6 + spentW.length * SPEND
 				+ 4 * r.deathRisk + TEMPO * (r.turns || 0) + 6 * leftW;
-			shortlist.push({here: hereW, cand, r, illegal: illegalW, finished: false});
-			continue;
+			return {here: hereW, cand, r, illegal: illegalW, finished: false};
+			return null;
 		}
 		// ALLOWED TO DIE IS NOT FREE TO DIE. An expendable death cost exactly
 		// zero, so the planner spent Lilligant the moment it was convenient --
@@ -755,12 +756,44 @@ function chooseAction(ctx, state, opts) {
 		let here = spend + illegal.length * 6 + spent.length * SPEND
 			+ 4 * r.deathRisk + TEMPO * (r.turns || 0);
 		if (incumbent && JSON.stringify(cand.jobs) === incumbent) here -= STICK;
-		shortlist.push({here, cand, r, illegal, finished});
-	}
+		return {here, cand, r, illegal, finished};
+	};
+	for (const cand of ideas) { const it = priceCand(cand); if (it) shortlist.push(it); }
 	// Looking ahead is the expensive part, so it is spent only on the handful of
 	// lines that could plausibly win. Pricing the immediate kill is cheap;
 	// pricing the rest of the fight is not.
 	shortlist.sort((a, b) => a.here - b.here);
+	// NOBODY HAS TO DIE UNTIL THE SEARCH HAS ACTUALLY LOOKED. James,
+	// 2026-09-05: "when it comes to a point where it decides that one pokemon
+	// must die, usually I find a way to play it without anyone dying." The
+	// first pass is a budgeted generator; when its cheapest line still buries
+	// somebody it may not, that is the moment to think harder, not to ask
+	// which Pokemon to give up. A wider pass -- deeper lever stacks, more
+	// killers per condition, more retreat points, longer relays -- is priced
+	// into the same market before anything is decided. It costs seconds, and
+	// only on the turns where the alternative is a death.
+	if (!options.noEscalate && shortlist.length && shortlist[0].illegal.length) {
+		const before = shortlist[0].illegal.join(', ');
+		let more = [];
+		try {
+			more = C.candidatesFor(ctx, fi, {field,
+				foeHp: foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined,
+				ourHp, ourStatus, escalate: true, maxStack: 4, perKiller: 8});
+		} catch (e) { more = []; }
+		const seenJobs = new Set(ideas.map(c => JSON.stringify(c.jobs)));
+		let added = 0;
+		for (const cand of more) {
+			const k = JSON.stringify(cand.jobs);
+			if (seenJobs.has(k)) continue;
+			seenJobs.add(k);
+			const it = priceCand(cand);
+			if (it) { shortlist.push(it); added++; }
+		}
+		shortlist.sort((a, b) => a.here - b.here);
+		const after = shortlist[0].illegal.length ? 'still loses ' + shortlist[0].illegal.join(', ') : 'loses nobody';
+		console.log('  [zero-death search: cheapest line lost ' + before + '; ' + added
+			+ ' wider lines priced; best now ' + after + ' -- "' + shortlist[0].cand.why + '"]');
+	}
 	const FINALISTS = options.finalists || 4;
 	shortlist.slice(0, FINALISTS).forEach(item => {
 		let ahead = 0;

@@ -287,12 +287,12 @@ function duelLines(engine, party, foeSets, mi, fi, entry, opts) {
 	}
 	if (cond.foeStatus) {
 		foe.status = cond.foeStatus;
-		if (cond.foeStatus === 'slp') foe.sleepTurns = cond.sleepTurns || 2;
+		if (cond.foeStatus === 'slp') { foe.sleepTurns = 0; foe.sleepMax = cond.sleepTurns; }
 	}
 	if (cond.foeVolatiles) Object.assign(foe.volatiles, cond.foeVolatiles);
 	// Kept as aliases because they read better in a report and in a test.
 	if (cond.slowed) foe.boosts.spe = Math.max(-6, foe.boosts.spe - (cond.slowed === true ? 1 : cond.slowed));
-	if (cond.asleep) { foe.status = 'slp'; foe.sleepTurns = cond.asleep === true ? 2 : cond.asleep; }
+	if (cond.asleep) { foe.status = 'slp'; foe.sleepTurns = 0; foe.sleepMax = cond.asleep === true ? undefined : cond.asleep; }
 	if (cond.foeChip) foe.curHP = Math.max(1, Math.round(foe.maxHP * (1 - cond.foeChip)));
 	if (cond.hpFrac !== undefined) me.curHP = Math.max(1, Math.round(me.maxHP * cond.hpFrac));
 	if (cond.ourStatus) me.status = cond.ourStatus;

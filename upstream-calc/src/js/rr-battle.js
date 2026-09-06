@@ -773,7 +773,7 @@ var RRBattle = (function () {
 			return false;
 		}
 		mon.status = status;
-		if (status === "slp") mon.sleepTurns = 2;
+		if (status === "slp") { mon.sleepTurns = 0; mon.sleepMax = undefined; }
 		if (status === "tox") mon.toxicCounter = 1;
 		return true;
 	}
@@ -1531,7 +1531,7 @@ var RRBattle = (function () {
 		case "rest":
 			self.curHP = self.maxHP;
 			self.status = "slp";
-			self.sleepTurns = effect.sleepTurns || 2;
+			self.sleepTurns = 0; self.sleepMax = effect.sleepTurns || 2;
 			return true;
 		case "hazard":
 			var current = foeSide.hazards[effect.hazard] || 0;
@@ -1714,7 +1714,7 @@ var RRBattle = (function () {
 			return true;
 		case "healBell":
 			side.team.forEach(function (mon) {
-				mon.status = null; mon.sleepTurns = 0; mon.toxicCounter = 0;
+				mon.status = null; mon.sleepTurns = 0; mon.sleepMax = undefined; mon.toxicCounter = 0;
 			});
 			return true;
 		case "rapidSpin":
@@ -1831,15 +1831,46 @@ var RRBattle = (function () {
 			}
 		}
 
-		// Sleep. Worst case for the player is waking as late as possible.
+		// Sleep lasts 1 to 3 of the sleeper's turns (the third wake-up check
+		// always succeeds), and the sleeper acts on the turn it wakes.
+		// `sleepTurns` counts the turns already lost; `sleepMax` is set when the
+		// length is known exactly (Rest: 2).
+		//
+		// 2026-09-05: the old code gave a sleeping OPPONENT exactly one lost
+		// turn in every mode, the minimum, so every "put it to sleep, then..."
+		// line was read as if Sleep Powder bought one turn. On s5 that hid the
+		// only zero-death answer to Vikavolt (Breloom outspeeds it: Spore, then
+		// Take Down while it sleeps) and the planner sacrificed four Pokemon
+		// instead. Now: planning (maxroll) reads the median, two lost turns
+		// (ctx.risks.sleep overrides); odds forks on the real wake chances;
+		// worst reads one turn for them and three for us; our own sleeper is
+		// always read as sleeping the full three unless the length is exact.
 		if (attacker.status === "slp") {
-			if (attacker.sleepTurns > 0) {
-				attacker.sleepTurns--;
-				if (attacker.sleepTurns > 0 || against(ctx, key)) return;
-				attacker.status = null;
-			} else {
-				attacker.status = null;
+			var taken = attacker.sleepTurns || 0;
+			var wake;
+			if (attacker.sleepMax !== undefined) wake = taken >= attacker.sleepMax;
+			else if (taken === 0) wake = false;
+			else if (taken >= 3) wake = true;
+			else {
+				var pWake = taken === 1 ? 1 / 3 : 1 / 2;
+				if (ctx.mode === "sample") wake = ctx.rand() < pWake;
+				else if (ctx.mode === "odds") {
+					wake = flip(ctx, [{p: 1 - pWake, value: false}, {p: pWake, value: true}],
+						key === "me" ? 0 : 1);
+				} else if (ctx.mode === "maxroll") {
+					var want = ctx.risks.sleep !== undefined ? ctx.risks.sleep : 2;
+					wake = key === "me" ? false : taken >= want;
+				} else {
+					wake = key === "me" ? false : true;
+				}
 			}
+			if (!wake) {
+				attacker.sleepTurns = taken + 1;
+				return;
+			}
+			attacker.status = null;
+			attacker.sleepTurns = 0;
+			attacker.sleepMax = undefined;
 		}
 		if (attacker.status === "par") {
 			if (ctx.mode === "maxroll") {

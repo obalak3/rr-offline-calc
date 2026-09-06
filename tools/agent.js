@@ -206,7 +206,7 @@ function planCtx(obs) {
 		// loss.
 		deep: planDeep(obs),
 		expendable: (process.env.EXPENDABLE === undefined
-			? 'Lilligant' : process.env.EXPENDABLE).split(',').filter(Boolean)
+			? '' : process.env.EXPENDABLE).split(',').filter(Boolean)
 	};
 }
 
@@ -223,6 +223,14 @@ function planCtx(obs) {
  * keeping their own idea of the position.
  */
 /** Their party decoded straight from RAM, or null if the Lua did not ship it. */
+const HP_TYPES = ['Fighting', 'Flying', 'Poison', 'Ground', 'Rock', 'Bug', 'Ghost', 'Steel',
+	'Fire', 'Water', 'Grass', 'Electric', 'Psychic', 'Ice', 'Dragon', 'Dark'];
+function hiddenPowerType(ivs) {
+	const b = k => (ivs[k] || 0) & 1;
+	const n = b('hp') + 2 * b('atk') + 4 * b('def') + 8 * b('spe') + 16 * b('spa') + 32 * b('spd');
+	return HP_TYPES[Math.floor(n * 15 / 63)];
+}
+
 function foeRosterFromRAM(obs) {
 	const RRSave = engine.sandbox && engine.sandbox.RRSave;
 	if (!RRSave || !RRSave.readRecord || !obs || !obs.foeparty) return null;
@@ -236,8 +244,15 @@ function foeRosterFromRAM(obs) {
 			mon = RRSave.readRecord(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0, true);
 		} catch (e) { mon = null; }
 		if (!mon) return null;
+		// Hidden Power's type is in the IVs and the record carries them, so the
+		// move goes in typed. Run 1 on s5 (2026-09-05): Lanturn's duel with
+		// Bellibolt was priced at a neutral 60-power hit (16%) and took Hidden
+		// Power Grass for 45 (32%); the same record says Grass. Checked against
+		// the known Surge sets: Pincurchin Ice, Bellibolt Grass, Manectric Grass.
+		const moves = (mon.moves || []).map(m => m === 'Hidden Power' && mon.ivs
+			? 'Hidden Power ' + hiddenPowerType(mon.ivs) : m);
 		out.push({species: mon.species, level: mon.level, nature: mon.nature,
-			ability: mon.ability, item: mon.item || '', moves: mon.moves, evs: mon.evs, ivs: mon.ivs});
+			ability: mon.ability, item: mon.item || '', moves: moves, evs: mon.evs, ivs: mon.ivs});
 	}
 	return out.length ? out : null;
 }
@@ -2244,13 +2259,20 @@ setInterval(() => {
 				// Taking the plan's own answer is the pre-panel behaviour
 				// exactly, and it stands so the run does not stall again next
 				// turn. The question is recorded as unanswered either way.
+				// 2026-09-05: while nobody answers, the answer James would give
+				// is the one he gives every time he is here -- nobody dies. Run 1
+				// on s5 sent an 18 HP Lanturn into a fresh Pawmot because the
+				// timeout took the plan's own sacrifice; the option that lost
+				// nobody was sitting second on the list. So the default is the
+				// cheapest option that buries nobody, and the plan's line only
+				// when every option on the table loses somebody.
+				const safe = pendingAsk.options.find(o => !o.dead.length) || pendingAsk.options[0];
 				console.log('  [' + (panelLive()
 					? 'no answer in ' + Math.round(ASK_TIMEOUT / 1000) + 's'
 					: 'panel closed with the question open')
-					+ '; playing the plan, which loses '
-					+ (deathKey(pendingAsk.options[0].dead) || 'nobody') + ']');
-				standingAnswer = {foe: pendingAsk.foe,
-					accept: deathKey(pendingAsk.options[0].dead)};
+					+ '; taking the ' + (safe.dead.length ? 'plan, which loses ' + deathKey(safe.dead)
+						: 'option that loses nobody: ' + safe.why) + ']');
+				standingAnswer = {foe: pendingAsk.foe, accept: deathKey(safe.dead)};
 				clearAsk();
 			} else {
 				// Restamp so the panel shows the live turn while it waits.

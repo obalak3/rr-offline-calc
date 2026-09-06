@@ -84,7 +84,7 @@ const ARM = (process.env.ARM || 'A').toUpperCase();
 const DICE = process.env.DICE || 'fair';
 const INCUMBENT = !process.env.NO_INCUMBENT;
 const EXPENDABLE = (process.env.EXPENDABLE === undefined
-	? 'Lilligant' : process.env.EXPENDABLE).split(',').filter(Boolean);
+	? '' : process.env.EXPENDABLE).split(',').filter(Boolean);
 
 // LEVEL=<n> scales our side to a fight's level. Only ONE trainer in the game
 // sits in this team's native band (Lt. Surge, L32-34), so without scaling the

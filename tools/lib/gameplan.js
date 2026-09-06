@@ -106,12 +106,22 @@ function entryFrom(state, opts) {
  * gameplan total and a `here` are commensurable and the two architectures can be
  * compared without a conversion nobody can check.
  */
+const AHEAD_DEATH = process.env.RR_AHEAD_DEATH !== undefined ? Number(process.env.RR_AHEAD_DEATH) : 3;
+
 function legCost(r, expendable, tempo, spendCost) {
 	const spent = r.dead.filter(n => expendable.includes(n));
 	const illegal = r.dead.filter(n => !expendable.includes(n));
 	let spend = 0;
 	for (const k in r.spend) spend += Math.max(0, r.spend[k]);
-	let c = spend + illegal.length * 6 + spent.length * spendCost
+	// 2026-09-05: a death in the PROJECTION is not a death. This estimate
+	// plays each later leg against a fixed opponent pattern with no wider
+	// search and no re-planning, and James's record is that when the planner
+	// says somebody must die later he finds a way that loses nobody. Charged at
+	// the full 6, a certain loss now and a projected loss later cost the same,
+	// so on s5 (run 1, turn 535) the planner threw an 18 HP Lanturn into a
+	// fresh Pawmot rather than keep it for a Manectric fight it might have
+	// lost. Projected deaths are charged at half (RR_AHEAD_DEATH overrides).
+	let c = spend + illegal.length * AHEAD_DEATH + spent.length * spendCost
 		+ 4 * r.deathRisk + tempo * (r.turns || 0);
 	// A leg that neither kills nor sees the target leave has not finished its
 	// job. Charged for what it left standing, the same 6-per-whole-Pokemon

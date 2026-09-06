@@ -246,6 +246,31 @@ function candidatesFor(ctx, fi, options) {
 		if (!duelMemo.has(k)) duelMemo.set(k, D.duelLines(engine, party, foeSets, mi, fiX, cond, o));
 		return duelMemo.get(k);
 	};
+	// CAN EACH LEVER MOVE TOUCH THIS POKEMON? Run 2 on s5 (2026-09-05) threw
+	// Bulldoze into Vikavolt twice for "their spe -1": Vikavolt has Levitate,
+	// so the move does nothing and the Speed drop never comes, and the plan
+	// built on it lost Diggersby. `achievable` asks the engine about status
+	// immunity only; this asks it about the lever move itself, which is how
+	// Levitate, Volt Absorb, Ground-vs-Flying and the rest all fall out of one
+	// question instead of a list. Entry abilities (Intimidate) have no move.
+	const leverUsableM = {};
+	const leversUsable = (entry) => (entry.levers || []).every(l => {
+		if (!l.move) return true;
+		const k = l.mon + '|' + l.move;
+		if (leverUsableM[k] !== undefined) return leverUsableM[k];
+		const mi = party.findIndex(q => q.species === l.mon);
+		let ok = true;
+		if (mi >= 0) {
+			try {
+				const probe = engine.B.createState(party.slice(mi).concat(party.slice(0, mi)),
+					foeSets.slice(fi).concat(foeSets.slice(0, fi)), {});
+				const r = engine.B.damageRolls(probe, 'me', l.move);
+				if (r && r.immune) ok = false;
+			} catch (e) { ok = true; }
+		}
+		leverUsableM[k] = ok;
+		return ok;
+	});
 	const duelCond = (mi, extra) => {
 		const sp = party[mi].species;
 		const c = Object.assign({}, fieldCond(opts.field, opts.foeHp), extra || {});
@@ -303,14 +328,28 @@ function candidatesFor(ctx, fi, options) {
 		let found = 0;
 		for (const entry of CONDITIONS) {
 			if (found >= (opts.perKiller || 4)) break;
-			if (!achievable(ctx, entry.cond, foe, opts.field)) continue;
+			if (!leversUsable(entry)) {
+				if (process.env.RR_DEBUG_LEVERS) console.log('[lever] vs ' + foe.species + ': ' + p.species + ' ' + E.describeEffect(entry.cond) + ': a lever move cannot touch it');
+				continue;
+			}
+			if (!achievable(ctx, entry.cond, foe, opts.field)) {
+				if (process.env.RR_DEBUG_LEVERS) console.log('[lever] vs ' + foe.species + ': ' + p.species + ' ' + E.describeEffect(entry.cond) + ': not achievable');
+				continue;
+			}
 			const condE = duelCond(mi, entry.cond);
 			if (!condE) break;
-			const line = duelLinesM(mi, fi, condE, {})
-				.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
+			const lines2 = duelLinesM(mi, fi, condE, {});
+			const line = lines2.find(l => l.outcome === 'kill' && l.deathRisk < 0.5);
+			if (process.env.RR_DEBUG_LEVERS) console.log('[lever] vs ' + foe.species + ': ' + p.species + ' ' + E.describeEffect(entry.cond) + ': '
+				+ lines2.slice(0, 3).map(l => l.outcome + ' ' + (l.moves || []).join('/') + ' death ' + Math.round(100 * l.deathRisk) + '% turns ' + l.turns).join(' | '));
 			if (!line) continue;
 			found++;
-			const prep = enablerJobs(ctx, fi, entry).filter(j => j.mon !== p.species);
+			// The killer's OWN lever stays in: "slp, then Victreebel kills" was
+			// shipping as a bare Mega Drain because Victreebel's Sleep Powder
+			// job was filtered out here, so the plan promised a sleep it never
+			// tried for (run 2 on s5, turn 576). Consecutive jobs for one
+			// Pokemon are ordinary (Lilligant: Baby-Doll Eyes | Sleep Powder).
+			const prep = enablerJobs(ctx, fi, entry);
 			push(prep.concat([{mon: p.species, moves: line.moves}]),
 				E.describeEffect(entry.cond) + ', then ' + p.species
 				+ ' kills for ' + pctOf(line.cost),
@@ -531,9 +570,12 @@ function candidatesFor(ctx, fi, options) {
 	// A HARD FIGHT IS ALLOWED MORE THOUGHT (James: "it can wait for 2 minutes
 	// if it wants"). ctx.deep is set by the live agent when the fight does not
 	// read easy; the emulator side now waits three minutes for an answer.
-	const RETREATS = process.env.RR_NO_CHIP_CHAINS ? [] : (ctx.deep ? [0.65, 0.5, 0.35] : [0.5, 0.35]);
-	const CHIP_MIN = 0.15;      // a leg must bank at least this to extend
-	const MAX_CHIP_LEGS = 3;    // contributors before the finisher
+	// opts.escalate is the zero-death second pass from replan.js: everything
+	// wider, because the alternative on that turn is a death.
+	const RETREATS = process.env.RR_NO_CHIP_CHAINS ? []
+		: (opts.escalate ? [0.75, 0.65, 0.5, 0.35, 0.2] : (ctx.deep ? [0.65, 0.5, 0.35] : [0.5, 0.35]));
+	const CHIP_MIN = opts.escalate ? 0.1 : 0.15;      // a leg must bank at least this to extend
+	const MAX_CHIP_LEGS = opts.escalate ? 4 : 3;      // contributors before the finisher
 	const BEAM = 6;
 	let frontier = [{acc: 0, legs: [], used: {}, est: 0, risk: 0}];
 	for (let depth = 0; depth <= MAX_CHIP_LEGS; depth++) {
