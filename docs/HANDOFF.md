@@ -204,6 +204,17 @@ line is one hit optimistic. Verified: the foe records' calculator stats equal th
 live battle stats exactly (Pawmot 91/61/92/54/54 Jolly, Bellibolt 51/82/44/82/70 Bold),
 so both sides' inputs are right and the gap is in the ROM's damage mechanics.
 
+Audit over ALL of today's runs (deterministic, so each row repeats): the only
+systematic shortfall is Mienshao Drain Punch -> Pawmot, 32/39/40/42 vs 52-63
+(62-81%), the second hit of each fight always the lowest (32). Scald ->
+Bellibolt is 45/41 vs 33-40 in every run (a fixed +12%, not six crits). Bullet
+Seed rows read UNDER because the range is the full multi-hit lump (2-5 hits
+vary). Shock Wave -> Pincurchin reads OVER because the record decodes its
+ability as Lightning Rod (PID slot) while the ROM's is Electric Surge (Terrain
+Extender confirms) -- the live agent uses the battle byte, the audit uses
+records. Not explained by STAB, typing, Iron Fist, stats or level; parked for
+James's in-game check.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
