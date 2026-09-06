@@ -2300,7 +2300,11 @@ setInterval(() => {
 				// nobody was sitting second on the list. So the default is the
 				// cheapest option that buries nobody, and the plan's line only
 				// when every option on the table loses somebody.
-				const safe = pendingAsk.options.find(o => !o.dead.length) || pendingAsk.options[0];
+				// ...and when every option loses somebody, the one that loses
+				// the fewest (the plan on a tie), logged so James can review it.
+				const fewest = pendingAsk.options.slice().sort((a, b) => a.dead.length - b.dead.length)[0];
+				const safe = pendingAsk.options.find(o => !o.dead.length)
+					|| (fewest && fewest.dead.length < pendingAsk.options[0].dead.length ? fewest : pendingAsk.options[0]);
 				console.log('  [' + (panelLive()
 					? 'no answer in ' + Math.round(ASK_TIMEOUT / 1000) + 's'
 					: 'panel closed with the question open')

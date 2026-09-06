@@ -180,6 +180,15 @@ NEXT PLAN (after run 9):
      logging it as a decision James should review.
   4. Coin-flip finishers (run 7 turn 742) and the Pawmot damage gap remain.
 
+Tick after run 9 (James active at the machine, no live run): Mienshao has
+REGENERATOR, so its Fake Out cycle heals 32 per switch-out -- the classic Fake
+Out pivot, and the reason its HP kept rising between entries. The chip-leg ban
+now exempts Regenerator users (candidates.js). Across turns the cycle still
+comes from re-planning + the veto, since a chip chain cannot use one Pokemon
+twice. Unattended asks where every option loses somebody now take the option
+losing the FEWEST (agent.js). Both untested live: s5 is the regression test
+for the next idle window (a changed sequence = a change to read).
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
