@@ -189,6 +189,19 @@ twice. Unattended asks where every option loses somebody now take the option
 losing the FEWEST (agent.js). Both untested live: s5 is the regression test
 for the next idle window (a changed sequence = a change to read).
 
+DAMAGE AUDIT (new tool `node tools/audit_damage.js <turns-dir>...`, runs 7+9):
+every hit of ours is inside the engine's 16-roll range EXCEPT
+  Mienshao Drain Punch -> Pawmot: 40 and 32 vs 52-63 (77% / 62%), both runs;
+  Lanturn Scald -> Bellibolt: 45 and 41 vs 33-40 (over by 3-12%), both runs.
+Fake Out -> Pawmot 22 (19-23), Bulldoze -> Manectric-Mega 40 (36-44), Rock
+Tomb -> Vikavolt 51 (46-56), Headbutt/Bullet Seed/Scald elsewhere all exact.
+So it is not stats, level or a global formula; it is something about Fighting
+damage into Pawmot (and a little extra special damage into Bellibolt). For
+James: check Mienshao Drain Punch vs Surge's Pawmot on the RR calc site / in
+game; if the site also says 52-63, the ROM's Pawmot differs from the data
+(typing, ability or item). Until then every "Mienshao kills Pawmot in N"
+line is one hit optimistic.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
