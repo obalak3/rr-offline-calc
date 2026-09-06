@@ -67,6 +67,35 @@ acceptance never overrides the veto (only a hand choice does); family 2 now
 emits both orders of a two-lever setup (sleep first, then Baby-Doll Eyes).
 Run 5 = those three.
 
+Run 5 (veto floor, timeout/veto order, both lever orders): WIN losing Breloom
+and Lilligant, 42 turns. Pawmot handled cleanly again (Fake Out breaks the
+sash, three Drain Punches, nobody lost). Vikavolt phase (turns 662-672) was
+churn: Mienshao switched in THREE times to Fake Out as a "chip leg" (98 -> 31
+HP), an absorb pivot handed Vikavolt a free Roost (turn 669), Sleep Powder
+missed once. Breloom died on a median-roll bet (fight read HARD) against
+Pincurchin; Lilligant died as a forced dodge when Lanturn sat at 2 HP after
+using Confuse Ray into a Bug Buzz. Fixed after: chip legs may not consist of
+Fake Out alone (candidates.js family 4).
+
+Scoreboard on s5, all live: run 1 (old code) WIN -1 | run 2 WHITEOUT | run 3
+WHITEOUT (same crit replayed) | run 4 (jitter) WIN -2 | run 5 WIN -2. The
+crit-free runs win; nobody has reached James's cap (nobody but Lilligant), and
+zero deaths has not happened. The Pawmot sequence is now stable; Vikavolt is
+where the deaths and the churn come from.
+
+NEXT PLAN (in order):
+  1. Run 6 on the current code; read the Vikavolt phase turn by turn.
+  2. Absorb pivots against a Pokemon with Roost/recovery: a free turn is a
+     free heal, so the pivot must be priced with the Roost (it is: the AI port
+     re-decides in the sim -- check whether the committed Volt Switch is what
+     the sim assumed at turn 668/669 and why).
+  3. A dying Pokemon's last move should serve the successor (Sleep Powder
+     over Sludge at turn 593 of run 2): let the veto's "all options die"
+     branch prefer a status move that lands before the hit.
+  4. The damage-vs-live gap around Pawmot (open measurement above).
+  5. Churn: count switches per fight in analyze_fight and add the incumbent
+     STICK only if the count stays high after 1-3.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
