@@ -164,6 +164,22 @@ identical runs prove nothing about variance. Jitter stays (harmless).
 Scoreboard s5 live: 1 old WIN-1 | 2 WIPE | 3 WIPE | 4 WIN-2 | 5 WIN-2 |
 6 WIN-4 | 7 WIN-1 | 8 WIN-0 | 9 WIN-0.
 
+NEXT PLAN (after run 9):
+  1. s5 is solved and deterministic; keep it as the REGRESSION test (a change
+     that breaks the zero-death line shows up as a different sequence). For
+     new findings a second save is needed -- James's s3 position or an earlier
+     rehearsal save. Ask him which fight; do not pick one for him.
+  2. The Vikavolt loop (run 9 turns 797-806): the market prices every line as
+     losing somebody because Bug Buzz is read at its top roll, the timeout
+     accepts, the veto rescues, Mienshao dodges in and Fake Outs. Make the
+     tactic deliberate: a "Fake Out on the turn they pivot" opener that the AI
+     port's Volt Switch prediction can price, so the plan says it instead of
+     the veto stumbling into it.
+  3. Unattended asks: when every option loses somebody the timeout takes the
+     plan; consider taking the option with the fewest/least valuable deaths and
+     logging it as a decision James should review.
+  4. Coin-flip finishers (run 7 turn 742) and the Pawmot damage gap remain.
+
 Instruments added: `RR_PROBE_DMG=1 RR_PROBE_DIFFICULTY=gen` prints every move
 of ours vs their active and their moves vs each of ours (16-roll ranges, no
 items/berries); the pricing log (RR_PROBE_LINES_MATCH) now carries `fs` (foe
