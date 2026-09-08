@@ -35,6 +35,10 @@ const UL = require('./lib/userline.js');
 const DIR = path.join(process.env.HOME, 'rr-agent');
 const STATE = path.join(DIR, 'state.json');
 const CMD = path.join(DIR, 'cmd.json');
+// The save state the actuator writes next to every state.json, for the
+// windowless oracle core (tools/lib/oracle.js). RR_ORACLE=0 switches it off.
+const SNAP = path.join(DIR, 'turn.ss');
+const ORACLE = require('./lib/oracle.js');
 // Names this agent session's append-only archive folder (see the archiver).
 const SESSION = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
 const RESULT = path.join(DIR, 'result.json');
@@ -2854,7 +2858,7 @@ setInterval(() => {
 		draws: draws(obs.rng, 64).map(v => (v >>> 16))
 	};
 
-	const slot = d.best.action.type === 'switch'
+	let slot = d.best.action.type === 'switch'
 		? d.best.action.index
 		: st.me.team[st.me.active].set.moves.indexOf(d.best.action.move);
 	// THE DISPLAY SLOT IS THE RAM SLOT. Measured, finally, the only way that
@@ -2912,6 +2916,81 @@ setInterval(() => {
 			answerTurn = nowQ.turn;
 		}
 	} catch (e) { /* an unreadable question changes nothing */ }
+	// THE ORACLE CHECK (2026-09-08). Before the answer goes out, the chosen
+	// action and its rivals are played for real on a windowless copy of this
+	// exact position. The battle RNG is restored by the state and consumed per
+	// call, so what the copy sees is what the live game will do. Two rules
+	// only, both about certainties the market can only guess at:
+	//   1. if the chosen action loses one of ours THIS turn and a rival does
+	//      not, take the rival that comes out best (kills first, then HP swing);
+	//   2. if the chosen action kills nothing and a rival kills their active
+	//      while losing nobody and costing no more HP, take the kill.
+	// Everything else stays the planner's. Nothing is shown on screen.
+	if (process.env.RR_ORACLE !== '0' && ORACLE.available()
+		&& fs.existsSync(SNAP) && Math.abs(fs.statSync(SNAP).mtimeMs - fs.statSync(STATE).mtimeMs) < 3000) {
+		try {
+			const {execFileSync} = require('child_process');
+			const runOne = a => {
+				const args = [ORACLE.ROM, SNAP, a.type === 'switch' ? 'switch' : 'move', String(a.index)];
+				let out = '';
+				try { out = execFileSync(ORACLE.BIN, args, {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); }
+				catch (e) { out = e.stdout ? String(e.stdout) : ''; }
+				const r = {action: a, before: null, after: null, error: null};
+				out.split('\n').forEach(line => {
+					line = line.trim(); if (!line) return;
+					let j; try { j = JSON.parse(line); } catch (e) { return; }
+					if (j.error) r.error = j.error; else if (j.at) r[j.at] = j;
+				});
+				return r;
+			};
+			const chosenA = d.best.action.type === 'switch'
+				? {type: 'switch', index: slot} : {type: 'move', index: slot};
+			const rivals = [];
+			const me = st.me.team[st.me.active];
+			(me.set.moves || []).forEach((mv, i) => {
+				if (me.pp && me.pp[i] === 0) return;
+				if (!(chosenA.type === 'move' && chosenA.index === i)) rivals.push({type: 'move', index: i});
+			});
+			if (!(st.me.team[st.me.active].volatiles && st.me.team[st.me.active].volatiles.trapped)) {
+				st.me.team.forEach((m, i) => {
+					if (i === st.me.active || m.fainted || m.curHP <= 0) return;
+					if (!(chosenA.type === 'switch' && chosenA.index === i)) rivals.push({type: 'switch', index: i});
+				});
+			}
+			const t0 = Date.now();
+			const chosenR = runOne(chosenA);
+			const cs = ORACLE.summarize(chosenR);
+			const name = a => a.type === 'switch'
+				? 'switch ' + (st.me.team[a.index] ? st.me.team[a.index].set.species : a.index)
+				: (me.set.moves[a.index] || ('move ' + a.index));
+			if (cs.ok) {
+				const results = rivals.map(a => ({a, s: ORACLE.summarize(runOne(a))})).filter(x => x.s.ok);
+				const value = s => s.theirDead * 1000 + (s.theirLost - s.ourLost);
+				const safe = results.filter(x => x.s.ourDead === 0).sort((x, y) => value(y.s) - value(x.s));
+				let pick = null, why = '';
+				if (cs.ourDead > 0 && safe.length) {
+					pick = safe[0]; why = 'the plan\'s ' + name(chosenA) + ' loses ' + cs.ourDead + ' of ours this turn for real';
+				} else if (cs.ourDead === 0 && cs.theirDead === 0 && safe.length && safe[0].s.theirDead > 0
+					&& safe[0].s.ourLost <= cs.ourLost) {
+					pick = safe[0]; why = name(chosenA) + ' kills nothing while a rival kills for real';
+				}
+				console.log('  [oracle ' + (Date.now() - t0) + 'ms: ' + name(chosenA) + ' -> we lose ' + cs.ourLost
+					+ ' HP' + (cs.ourDead ? ' and ' + cs.ourDead + ' Pokemon' : '') + ', they lose ' + cs.theirLost
+					+ (cs.theirDead ? ' and ' + cs.theirDead + ' Pokemon' : '') + (cs.foeSwitched ? ', they switch' : '')
+					+ (pick ? ' | TAKING ' + name(pick.a) + ' instead: ' + why + ' (they lose ' + pick.s.theirLost
+						+ (pick.s.theirDead ? ' and ' + pick.s.theirDead : '') + ', we lose ' + pick.s.ourLost + ')' : '') + ']');
+				if (pick) {
+					d.best.action = pick.a.type === 'switch'
+						? {type: 'switch', index: pick.a.index}
+						: {type: 'move', index: pick.a.index, move: me.set.moves[pick.a.index]};
+					slot = pick.a.index;
+					if (lastPlan) lastPlan.progress = null;
+				}
+			} else if (chosenR.error) {
+				console.log('  [oracle could not play ' + name(chosenA) + ': ' + chosenR.error + ']');
+			}
+		} catch (e) { console.log('  [oracle failed: ' + e.message + ']'); }
+	}
 	// INPUT JITTER (2026-09-05). From a save state the game's RNG advances
 	// per frame, so identical decisions delivered at identical frames replay
 	// identical rolls: runs 2 and 3 on s5 both saw Pawmot crit Mienshao from

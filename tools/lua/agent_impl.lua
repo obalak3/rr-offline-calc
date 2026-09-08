@@ -388,6 +388,13 @@ local function writeState(kind)
 	turn = turn + 1
 	_RR.samples = {}
 	sampleAI("menu")
+	-- THE ORACLE'S INPUT. A save state of this exact menu, written next to
+	-- state.json, so the brain can hand it to the windowless core
+	-- (tools/headless/oracle) and play each candidate forward for real.
+	-- Flags 10 = savedata + RTC, no screenshot. This is the scripting call,
+	-- which goes straight to the core and never touches the front end's
+	-- on-screen messages -- James's rule is that he must not see it.
+	pcall(function() emu:saveStateFile(DIR .. "turn.ss", 10) end)
 
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
