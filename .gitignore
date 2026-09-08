@@ -16,3 +16,5 @@ __pycache__/
 tools/headless/mgba-src/
 tools/headless/mgba-build/
 tools/headless/spike
+tools/headless/oracle
+tools/headless/findparty

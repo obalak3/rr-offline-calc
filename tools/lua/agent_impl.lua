@@ -1023,6 +1023,34 @@ function tick_inner()
 			end
 			target = found
 		end
+		-- THE SCREEN IS NOT IN RAM ORDER. The party menu draws from its own
+		-- copy of the party at 0x020158AC, and that copy's order is RAM
+		-- order with one swap per switch made so far (measured on the
+		-- headless core 2026-09-08: Lanturn active from RAM slot 2 put
+		-- Mienshao, RAM slot 0, at DISPLAY slot 2, and display slot 0 was
+		-- Lanturn itself, which the game refuses). The earlier "display
+		-- equals RAM" measurement was taken with the lead still out, the one
+		-- case where the two agree. So the cursor target is the slot of the
+		-- copy that holds the wanted record, matched by species and max HP.
+		do
+			local MENU_PARTY = 0x020158AC
+			local rb = PARTY + target * P_SIZE
+			local wSp, wMax = emu:read16(rb + 0x20), emu:read16(rb + P_MAX)
+			local disp = nil
+			for i = 0, 5 do
+				local mb = MENU_PARTY + i * P_SIZE
+				if emu:read16(mb + 0x20) == wSp and emu:read16(mb + P_MAX) == wMax then disp = i; break end
+			end
+			if not disp then
+				for i = 0, 5 do
+					if emu:read16(MENU_PARTY + i * P_SIZE + P_MAX) == wMax then disp = i; break end
+				end
+			end
+			if disp and disp ~= target then
+				if not opened then say("sw_pick: RAM slot " .. target .. " is DISPLAY slot " .. disp .. " on this screen") end
+				target = disp
+			end
+		end
 		if cur ~= target then
 			-- IT IS A TWO-COLUMN GRID AND DOWN ONLY WALKS ONE COLUMN. Logged
 			-- live, the cursor cycled 0 -> 2 -> 4 -> 7 -> 0: the left column
