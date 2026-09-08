@@ -398,7 +398,7 @@ function candidatesFor(ctx, fi, options) {
 	absorbers.forEach(l => {
 		const theirTypes = new Set((foe.moves || []).map(m => {
 			const d = ctx.engine.sandbox.RR_MOVE_EFFECTS.moves[m];
-			return d && d.split !== 'Status' ? d.type : null;
+			return d ? d.type : null;   // status moves too: Volt Absorb eats Thunder Wave
 		}).filter(Boolean));
 		if (!theirTypes.has(l.absorbs)) return;      // nothing here to absorb
 		// THE PIVOT HAPPENS NOW, so what matters is what the AI throws at the
@@ -419,7 +419,7 @@ function candidatesFor(ctx, fi, options) {
 				const scored = ctx.engine.sandbox.RRAI.scoreAll(st, 'foe', {checkBadMove: true, checkGoodMove: true}, {});
 				const choice = scored.length ? D.committedChoice(engine.B, scored, st) : null;
 				const md = choice && choice.type === 'move' ? engine.B.moveData(choice.move) : null;
-				throwsIt = !!(md && md.type === l.absorbs && md.split !== 'Status');
+				throwsIt = !!(md && md.type === l.absorbs);
 				if (process.env.RR_DEBUG_BAIT) console.log('[absorb] AI vs ' + party[ai].species + ' chooses ' + JSON.stringify(choice) + ' -> pivot ' + (throwsIt ? 'on' : 'off'));
 			} catch (e) { throwsIt = true; }
 			if (!throwsIt) return;
@@ -555,7 +555,7 @@ function candidatesFor(ctx, fi, options) {
 					const choice = scored.length ? D.committedChoice(engine.B, scored, st) : null;
 					const md = choice && choice.type === 'move' ? engine.B.moveData(choice.move) : null;
 					dbgChoice = choice;
-					takes = !!(md && md.type === l.absorbs && md.split !== 'Status');
+					takes = !!(md && md.type === l.absorbs);
 					if (process.env.RR_DEBUG_BAIT) console.log('[bait]   AI vs ' + bait.species + ' chooses ' + JSON.stringify(choice));
 				} catch (e) { takes = false; if (process.env.RR_DEBUG_BAIT) console.log('[bait] threw: ' + e.message); }
 				if (process.env.RR_DEBUG_BAIT) console.log('[bait] ' + l.mon + ' (' + l.absorbs + ') with ' + bait.species + ' out -> takes ' + takes);

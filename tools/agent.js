@@ -1508,7 +1508,7 @@ if (process.argv[2] === '--probe') {
 	// last turn's plan as the incumbent. Without it a probe judges every
 	// position as though the agent had never had a plan before -- which is
 	// exactly the thing under investigation, so it has to be reproducible.
-	let probeOpts = {};
+	let probeOpts = {alternatives: true};
 	if (process.env.RR_PROBE_PREV) {
 		try {
 			const prev = readJSONSync(process.env.RR_PROBE_PREV);
@@ -1517,6 +1517,7 @@ if (process.argv[2] === '--probe') {
 	}
 	if (process.env.RR_PROBE_STICK) probeOpts.stick = Number(process.env.RR_PROBE_STICK);
 	try { pick = R2.chooseAction(pctx, st, probeOpts); } catch (e) { console.log('chooseAction THREW: ' + e.message); }
+	if (pick && pick.baits) console.log('baits on offer: ' + pick.baits.map(b => b.why + ' [' + (b.action.type === 'switch' ? 'switch ' + b.action.index : b.action.move) + ']').join(' | '));
 	console.log('chooseAction -> ' + (pick
 		? JSON.stringify(pick.action) + '   ' + pick.path.cand.why
 			+ '\n   jobs: ' + pick.path.cand.jobs.map(j => j.mon + ':' + (j.moves || []).join('>') + (j.until ? ' until ' + JSON.stringify(j.until) : '')).join(' | ')
@@ -2455,7 +2456,7 @@ setInterval(() => {
 				// A plan is about an OPPONENT, so how far through it we are
 				// expires with that opponent, exactly as the incumbent does.
 				progress: lastPlan.foe === foeNow ? lastPlan.progress : null,
-				alternatives: panelLive(),
+				alternatives: true,   // the oracle needs the bait lines even with no panel open
 				userLine: userLine ? userLine.jobs : null});
 		if (userLine && pick) {
 			const w = pick.path ? {
@@ -2926,8 +2927,18 @@ setInterval(() => {
 	//   2. if the chosen action kills nothing and a rival kills their active
 	//      while losing nobody and costing no more HP, take the kill.
 	// Everything else stays the planner's. Nothing is shown on screen.
+	// The actuator removes the old snapshot when a new menu appears and writes
+	// the new one a second later; a fast decision gets here first, so wait
+	// up to two seconds for it. The old file can never be mistaken for the
+	// new one because it is gone before the question is even asked.
+	if (process.env.RR_ORACLE !== '0' && ORACLE.available()) {
+		const until = Date.now() + 2000;
+		while (!fs.existsSync(SNAP) && Date.now() < until) {
+			try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); } catch (e) { break; }
+		}
+	}
 	if (process.env.RR_ORACLE !== '0' && ORACLE.available()
-		&& fs.existsSync(SNAP) && Math.abs(fs.statSync(SNAP).mtimeMs - fs.statSync(STATE).mtimeMs) < 3000) {
+		&& fs.existsSync(SNAP) && Date.now() - fs.statSync(SNAP).mtimeMs < 120000) {
 		try {
 			const {execFileSync} = require('child_process');
 			const runOne = a => {
@@ -2984,6 +2995,57 @@ setInterval(() => {
 				} else if (cs.ourDead === 0 && cs.theirDead === 0 && safe.length && safe[0].s.theirDead > 0
 					&& safe[0].s.ourLost <= cs.ourLost) {
 					pick = safe[0]; why = name(chosenA) + ' kills nothing while a rival kills for real';
+				}
+				// 3. A BAIT OR ABSORB LINE IS VERIFIED ON THE REAL GAME. The market's
+				// AI model guesses what they throw at the bait (it said Muddy Water
+				// where Bellibolt really threw Thunder Wave, 2026-09-08). So when
+				// such a line is on the table and the plan chose something else,
+				// play its first two turns headless: the bait goes in, then the
+				// absorber. If the absorber comes back healthier and nobody died,
+				// the line is real and it is taken, plan and all.
+				if (process.env.RR_DEBUG_ORACLE) console.log('  [oracle debug: pick=' + (pick ? 'yes' : 'no') + ' baits=' + (plannerSaid && plannerSaid.baits ? plannerSaid.baits.length : 'none') + ' alts=' + (plannerSaid && plannerSaid.alternatives ? plannerSaid.alternatives.length : 'none') + ' ourDead=' + cs.ourDead + ']');
+				if (!pick && plannerSaid && (plannerSaid.baits || plannerSaid.alternatives) && cs.ourDead === 0) {
+					const bait = (plannerSaid.baits || []).concat(plannerSaid.alternatives || []).find(alt => alt && alt.jobs && alt.action
+						&& alt.action.type === 'switch' && /baits|absorbs/.test(alt.why || '')
+						&& !(chosenA.type === 'switch' && chosenA.index === alt.action.index));
+					if (bait) {
+						const legs = bait.jobs;
+						const baitMon = st.me.team[bait.action.index].set.species;
+						const absorber = legs.find(j => j.mon !== baitMon) || null;
+						const absIdx = absorber ? st.me.team.findIndex(m => m.set.species === absorber.mon && !m.fainted) : -1;
+						if (absIdx >= 0) {
+							const os = require('os');
+							const t1 = path.join(os.tmpdir(), 'rr-oracle-bait1-' + process.pid + '.ss');
+							const run1 = (() => {
+								const args = [ORACLE.ROM, SNAP, 'switch', String(bait.action.index), '--save', t1];
+								let out = ''; try { out = execFileSync(ORACLE.BIN, args, {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); } catch (e) { out = e.stdout ? String(e.stdout) : ''; }
+								const r = {before: null, after: null, error: null};
+								out.split('\n').forEach(line => { line = line.trim(); if (!line) return; let j; try { j = JSON.parse(line); } catch (e) { return; } if (j.error) r.error = j.error; else if (j.at) r[j.at] = j; });
+								return r;
+							})();
+							const s1 = ORACLE.summarize(run1);
+							let s2 = null, run2 = null;
+							if (s1.ok && s1.ourDead === 0 && !s1.over) {
+								const args = [ORACLE.ROM, t1, 'switch', String(absIdx)];
+								let out = ''; try { out = execFileSync(ORACLE.BIN, args, {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); } catch (e) { out = e.stdout ? String(e.stdout) : ''; }
+								run2 = {before: null, after: null, error: null};
+								out.split('\n').forEach(line => { line = line.trim(); if (!line) return; let j; try { j = JSON.parse(line); } catch (e) { return; } if (j.error) run2.error = j.error; else if (j.at) run2[j.at] = j; });
+								s2 = ORACLE.summarize(run2);
+							}
+							try { fs.unlinkSync(t1); } catch (e) { /* gone */ }
+							const absHpNow = st.me.team[absIdx].curHP;
+							const absHpAfter = run2 && run2.after ? run2.after.party[absIdx][0] : null;
+							if (s2 && s2.ok && s2.ourDead === 0 && absHpAfter !== null && absHpAfter > absHpNow) {
+								pick = {a: {type: 'switch', index: bait.action.index}, s: s1};
+								why = bait.why + ': played on the real game, ' + absorber.mon + ' comes back at '
+									+ absHpAfter + ' (from ' + absHpNow + '), nobody lost';
+								lastPlan = {foe: speciesName(obs.foe.species), jobs: legs, progress: null};
+							} else {
+								console.log('  [oracle: ' + bait.why + ' does not hold on the real game'
+									+ (s2 ? ' (' + absorber.mon + ' would be at ' + absHpAfter + ' from ' + absHpNow + (s2.ourDead ? ', someone dies' : '') + ')' : (s1.error || run1.error ? ' (' + (s1.error || run1.error) + ')' : ' (bait step lost someone)')) + ']');
+							}
+						}
+					}
 				}
 				console.log('  [oracle ' + (Date.now() - t0) + 'ms: ' + name(chosenA) + ' -> we lose ' + cs.ourLost
 					+ ' HP' + (cs.ourDead ? ' and ' + cs.ourDead + ' Pokemon' : '') + ', they lose ' + cs.theirLost

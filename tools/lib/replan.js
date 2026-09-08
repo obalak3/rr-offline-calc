@@ -22,6 +22,8 @@
  */
 'use strict';
 const DEATH_LAST = process.env.RR_DEATH_LAST !== '0';
+const POS = require('./position.js');
+const POSITION = process.env.RR_POSITION !== '0';
 const C = require('./candidates.js');
 const P = require('./policy.js');
 const {pricePath} = require('./paths.js');
@@ -660,6 +662,20 @@ function chooseAction(ctx, state, opts) {
 			+ ' | ' + c.why + ' | ' + JSON.stringify(c.jobs)));
 	}
 	// One candidate, priced. Factored out so a second, wider pass can reuse it.
+	// THE POSITION SCORE (position.js). HP is weighted by importance and a
+	// heal is credited (spend goes negative); lasting conditions on either
+	// side are measured against the Pokemon standing and paid for as a
+	// capped delta. RR_POSITION=0 restores the flat, kill-only price.
+	const posW = POSITION ? POS.importance(engine, state) : null;
+	const hpTerm = (r) => {
+		let sp = 0;
+		for (const k in r.spend) sp += POSITION ? (posW[k] || 1) * r.spend[k] : Math.max(0, r.spend[k]);
+		return sp;
+	};
+	const posTerm = (r) => {
+		if (!POSITION || !r.state) return 0;
+		try { return POS.condDelta(engine, state, r.state, posW); } catch (e) { return 0; }
+	};
 	const priceCand = (cand) => {
 		current = cand;
 		if (!cand.jobs.length) { drop('empty jobs'); return null; }
@@ -711,12 +727,11 @@ function chooseAction(ctx, state, opts) {
 			}
 			const spentW = r.dead.filter(n => expendable.includes(n));
 			const illegalW = r.dead.filter(n => !expendable.includes(n));
-			let spendW = 0;
-			for (const k in r.spend) spendW += Math.max(0, r.spend[k]);
+			const spendW = hpTerm(r);
 			const leftW = r.state && r.state.foe.team[fi]
 				? r.state.foe.team[fi].curHP / r.state.foe.team[fi].maxHP : 1;
 			const hereW = spendW + illegalW.length * 6 + spentW.length * SPEND
-				+ 4 * r.deathRisk + TEMPO * (r.turns || 0) + 6 * leftW;
+				+ 4 * r.deathRisk + TEMPO * (r.turns || 0) + 6 * leftW + posTerm(r);
 			return {here: hereW, cand, r, illegal: illegalW, finished: false};
 			return null;
 		}
@@ -732,8 +747,7 @@ function chooseAction(ctx, state, opts) {
 		// carries a real price that is simply far below a forbidden death.
 		const spent = r.dead.filter(n => expendable.includes(n));
 		const illegal = r.dead.filter(n => !expendable.includes(n));
-		let spend = 0;
-		for (const k in r.spend) spend += Math.max(0, r.spend[k]);
+		const spend = hpTerm(r);
 		// A path that kills somebody it may not is not ranked below the others,
 		// it is ranked out -- unless nothing else kills at all, in which case
 		// something has to be done and the cheapest disaster is still a choice.
@@ -755,7 +769,7 @@ function chooseAction(ctx, state, opts) {
 		// collapses again into a wipe. The metric was the cap James set --
 		// win, losing nobody but Lilligant -- not the score.
 		let here = spend + illegal.length * 6 + spent.length * SPEND
-			+ 4 * r.deathRisk + TEMPO * (r.turns || 0);
+			+ 4 * r.deathRisk + TEMPO * (r.turns || 0) + posTerm(r);
 		if (incumbent && JSON.stringify(cand.jobs) === incumbent) here -= STICK;
 		return {here, cand, r, illegal, finished};
 	};
@@ -795,7 +809,7 @@ function chooseAction(ctx, state, opts) {
 		console.log('  [zero-death search: cheapest line lost ' + before + '; ' + added
 			+ ' wider lines priced; best now ' + after + ' -- "' + shortlist[0].cand.why + '"]');
 	}
-	const FINALISTS = options.finalists || 4;
+	const FINALISTS = options.finalists || Number(process.env.RR_FINALISTS || 4);
 	shortlist.slice(0, FINALISTS).forEach(item => {
 		let ahead = 0;
 		if (LOOKAHEAD && item.r.state) {
@@ -928,13 +942,12 @@ function chooseAction(ctx, state, opts) {
 			catch (e) { continue; }
 			const spent2 = r.dead.filter(n => expendable.includes(n));
 			const illegal2 = r.dead.filter(n => !expendable.includes(n));
-			let spend2 = 0;
-			for (const k in r.spend) spend2 += Math.max(0, r.spend[k]);
+			const spend2 = hpTerm(r);
 			// How much of it is still standing at the end -- the progress this
 			// line actually made, in the same units as everything else.
 			const left = r.state && r.state.foe.team[fi]
 				? r.state.foe.team[fi].curHP / r.state.foe.team[fi].maxHP : 1;
-			const here2 = spend2 + illegal2.length * 6 + spent2.length * SPEND
+			const here2 = posTerm(r) + spend2 + illegal2.length * 6 + spent2.length * SPEND
 				+ 4 * r.deathRisk + TEMPO * (r.turns || 0) + 6 * left;
 			shortlist.push({here: here2, cand, r, illegal: illegal2, finished: false});
 		}
@@ -1117,15 +1130,26 @@ function chooseAction(ctx, state, opts) {
 	// costs now and later, and who it expects to bury. Built only on request:
 	// it costs a planAction per line, and turns nobody is watching should not
 	// pay for it.
-	const alternatives = [];
+	const alternatives = [], baits = [];
 	if (options.alternatives) {
+		// THE BAIT AND ABSORB LINES, SEPARATELY. They rank low on paper because
+		// the market's AI model guesses what they throw at the bait; the agent
+		// verifies them on the real game (oracle), so it needs to see them
+		// even when they are nowhere near the top six.
+		for (const item of ranked) {
+			if (baits.length >= 3) break;
+			const a = firstAction(item);
+			if (!a || a.type !== 'switch' || !/baits|absorbs/.test(item.cand.why || '')) continue;
+			if (item.illegal && item.illegal.length) continue;
+			baits.push({action: a, why: item.cand.why, jobs: item.cand.jobs, here: item.here});
+		}
 		for (const item of ranked) {
 			if (alternatives.length >= 6) break;
 			const a = firstAction(item);
 			if (!a) continue;
 			alternatives.push({action: a, why: item.cand.why, here: item.here,
 				ahead: item.ahead === undefined ? null : item.ahead,
-				total: totalOf(item),
+				total: totalOf(item), jobs: item.cand.jobs,
 				dead: (item.r && item.r.dead) || [],
 				deathRisk: item.r ? item.r.deathRisk : null});
 		}
@@ -1187,7 +1211,7 @@ function chooseAction(ctx, state, opts) {
 			: {score: item.here + (item.ahead || 0), here: item.here,
 				ahead: item.ahead === undefined ? null : item.ahead,
 				cand: item.cand, r: item.r, illegal: item.illegal};
-		return {action, path, stay, alternatives, userLine,
+		return {action, path, stay, alternatives, baits, userLine,
 			// Hand back to the caller, which owns it across turns. Null when
 			// RR_CARRY_PROGRESS is off, and then nothing has changed at all.
 			progress: commitProgress(item),
