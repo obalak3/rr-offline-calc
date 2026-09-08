@@ -13,3 +13,6 @@ data/*.ods
 .checkpoints/
 __pycache__/
 *.pyc
+tools/headless/mgba-src/
+tools/headless/mgba-build/
+tools/headless/spike
