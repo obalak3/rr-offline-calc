@@ -391,10 +391,9 @@ local function writeState(kind)
 	-- THE ORACLE'S INPUT. A save state of this exact menu, written next to
 	-- state.json, so the brain can hand it to the windowless core
 	-- (tools/headless/oracle) and play each candidate forward for real.
-	-- Flags 10 = savedata + RTC, no screenshot. This is the scripting call,
-	-- which goes straight to the core and never touches the front end's
-	-- on-screen messages -- James's rule is that he must not see it.
-	pcall(function() emu:saveStateFile(DIR .. "turn.ss", 10) end)
+	-- Taken a second INTO the menu (see the await phase); the old one is
+	-- removed here so the brain never reads a snapshot of the wrong turn.
+	os.remove(DIR .. "turn.ss")
 
 	local f = io.open(DIR .. "state.json", "w")
 	f:write(string.format(
@@ -851,6 +850,13 @@ function tick_inner()
 
 	if phase == "await" then
 		timer = timer + 1
+		-- THE ORACLE'S INPUT: a save state of this menu for the windowless
+		-- core (tools/headless/oracle), written one second in so the menu
+		-- has settled. Flags 10 = savedata + RTC, no screenshot. The
+		-- scripting call goes straight to the core and never touches the
+		-- front end's on-screen messages: James's rule is that he must not
+		-- see it happen. Answers faster than a second get no oracle check.
+		if timer == 60 then pcall(function() emu:saveStateFile(DIR .. "turn.ss", 10) end) end
 		if timer % 15 ~= 0 then return end
 		want = readCommand()
 		if want then

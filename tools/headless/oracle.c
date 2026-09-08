@@ -43,6 +43,7 @@
 #define AI_ACTION     0x0200005B
 #define AI_TARGET     0x02000091
 #define RNG           0x020386D0
+#define MENU_PARTY    0x020158AC
 #define KEY_A 1
 #define KEY_B 2
 #define KEY_RIGHT 16
@@ -92,14 +93,60 @@ static void dump(const char* label, int frame) {
 	printf(",\"ai\":[%u,%u],\"rng\":\"%08x\"}\n", r8(AI_ACTION), r8(AI_TARGET), r32(RNG));
 }
 
+// The same JSON the actuator writes to state.json, so a position the oracle
+// reaches can be handed straight to the brain (tools/agent.js --probe, or a
+// dry run) with no other reader involved.
+#define O_LV 0x2A
+#define O_AB 0x20
+#define O_ITEM 0x2E
+#define O_MOVES 0x0C
+#define O_PP 0x24
+#define O_ST2 0x50
+#define O_STATS 0x02
+#define P_STATUS 0x50
+#define P_LEVEL 0x54
+static void battler_json(uint32_t base) {
+	printf("{\"species\":%u,\"level\":%u,\"hp\":%u,\"maxhp\":%u,\"ability\":%u,\"item\":%u,\"status\":%u,\"status2\":%u,\"moves\":[",
+		r16(base + O_SP), r8(base + O_LV), r16(base + O_HP), r16(base + O_MAX), r8(base + O_AB), r16(base + O_ITEM),
+		r32(base + O_ST1), r32(base + O_ST2));
+	for (int i = 0; i < 4; i++) printf("%s%u", i ? "," : "", r16(base + O_MOVES + i * 2));
+	printf("],\"pp\":[");
+	for (int i = 0; i < 4; i++) printf("%s%u", i ? "," : "", r8(base + O_PP + i));
+	printf("],\"stages\":[");
+	for (int i = 0; i < 8; i++) printf("%s%u", i ? "," : "", r8(base + O_STAGES + i));
+	printf("],\"stats\":[");
+	for (int i = 0; i < 5; i++) printf("%s%u", i ? "," : "", r16(base + O_STATS + i * 2));
+	printf("]}");
+}
+static void rows_json(uint32_t base) {
+	for (int i = 0; i < 6; i++) {
+		uint32_t b = base + i * P_SIZE;
+		printf("%s{\"slot\":%d,\"level\":%u,\"hp\":%u,\"maxhp\":%u,\"status\":%u,\"raw\":\"", i ? "," : "", i,
+			r8(b + P_LEVEL), r16(b + P_HP), r16(b + P_MAX), r32(b + P_STATUS));
+		for (int k = 0; k < P_SIZE; k++) printf("%02x", r8(b + k));
+		printf("\"}");
+	}
+}
+static void obs_json(void) {
+	const char* scr = screen();
+	printf("{\"at\":\"obs\",\"turn\":0,\"kind\":\"%s\",\"screen\":\"%s\",\"rng\":%u,\"btype\":%u,\"b2sp\":%u,\"b3sp\":%u,"
+		"\"ai_action\":%u,\"ai_target\":%u,\"terrainTurns\":%u,\"me\":",
+		!strcmp(scr, "party") ? "forced" : "decision", scr, r32(RNG), r32(0x02022B4C),
+		r16(MON + 2 * MON_SIZE + O_SP), r16(MON + 3 * MON_SIZE + O_SP),
+		r8(AI_ACTION), r8(AI_TARGET), r8(0x020179BC));
+	battler_json(MON); printf(",\"foe\":"); battler_json(MON + MON_SIZE);
+	printf(",\"party\":["); rows_json(PARTY); printf("],\"foeparty\":["); rows_json(FOE_PARTY); printf("]}\n");
+}
+
 static void step(uint32_t keys) { core->setKeys(core, keys); core->runFrame(core); }
 
 int main(int argc, char** argv) {
 	if (argc < 4) { fprintf(stderr, "usage: oracle <rom> <state> move|switch|peek [n] [--save out] [--frames N]\n"); return 2; }
-	const char* saveOut = NULL; int maxFrames = 6000;
+	const char* saveOut = NULL; int maxFrames = 6000; int linger = 60;
 	for (int i = 4; i < argc; i++) {
 		if (!strcmp(argv[i], "--save") && i + 1 < argc) saveOut = argv[++i];
 		else if (!strcmp(argv[i], "--frames") && i + 1 < argc) maxFrames = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--linger") && i + 1 < argc) linger = atoi(argv[++i]);
 	}
 	mLogSetDefaultLogger(&LOGGER);
 	core = mCoreFind(argv[1]);
@@ -119,15 +166,30 @@ int main(int argc, char** argv) {
 	const char* what = argv[3];
 	int slot = argc > 4 && argv[4][0] != '-' ? atoi(argv[4]) : 0;
 	dump("before", 0);
-	if (!strcmp(what, "peek")) return 0;
+	if (!strcmp(what, "peek")) { obs_json(); return 0; }
 	int wantSwitch = !strcmp(what, "switch");
+	int wantWait = !strcmp(what, "wait");
+	// THE PARTY SCREEN HAS ITS OWN ORDER. The menu builds a copy of the party
+	// at MENU_PARTY in the order it displays (measured 2026-09-08: it is RAM
+	// order with one swap per switch made so far, so it drifts from RAM as
+	// the fight goes on). The caller names RAM slots; once the party screen
+	// is open, the wanted Pokemon is found in that copy by max HP and the
+	// cursor walks to THAT slot. Selecting the active is refused by the game.
+	int wantMax = 0, wantHp = 0, target = -1;
+	if (wantSwitch) {
+		wantMax = r16(PARTY + slot * P_SIZE + P_MAX); wantHp = r16(PARTY + slot * P_SIZE + P_HP);
+		if (wantMax == r16(MON + O_MAX) && wantHp == r16(MON + O_HP)) { printf("{\"error\":\"that Pokemon is already out\"}\n"); return 3; }
+	}
 	// phases: 0 open menu, 1 pick move / pick party slot, 2 settle, 3 done
 	int phase = 0, timer = 0, sinceLeft = 0, pressedA = 0;
+	const char* lastScr = ""; int dbg = getenv("ORACLE_DEBUG") != NULL;
 	for (int frame = 1; frame <= maxFrames; frame++) {
 		const char* scr = screen();
+		if (dbg && strcmp(scr, lastScr)) { fprintf(stderr, "f%d phase%d screen=%s ctrl=%08x id=%u acur=%u mcur=%u pidx=%u\n", frame, phase, scr, r32(CTRL_ME), r8(SCREEN_ID), r8(ACTION_CURSOR), r8(MOVE_CURSOR), r8(PARTY_IDX)); lastScr = scr; }
 		uint32_t keys = 0;
 		timer++;
-		if (phase == 0) {
+		if (wantWait) { if (frame >= 3000) { phase = 3; } }
+		else if (phase == 0) {
 			if (!wantSwitch && !strcmp(scr, "moves")) { phase = 1; timer = 0; }
 			else if (wantSwitch && (!strcmp(scr, "party") || !strcmp(scr, "party_submenu"))) { phase = 1; timer = 0; }
 			else if (!strcmp(scr, "action")) {
@@ -144,6 +206,15 @@ int main(int argc, char** argv) {
 				// actuator does (the party grid is two columns, Cancel is 7),
 				// then A opens the submenu and A again takes SHIFT.
 				int cur = r8(PARTY_IDX);
+				if (target < 0) {
+					for (int i = 0; i < 6 && target < 0; i++)
+						if (r16(MENU_PARTY + i * P_SIZE + P_MAX) == wantMax && r16(MENU_PARTY + i * P_SIZE + P_HP) == wantHp) target = i;
+					for (int i = 0; i < 6 && target < 0; i++)
+						if (r16(MENU_PARTY + i * P_SIZE + P_MAX) == wantMax) target = i;
+					if (target < 0) { printf("{\"error\":\"wanted Pokemon (max HP %d) not on the party screen\"}\n", wantMax); return 3; }
+					if (dbg) fprintf(stderr, "party screen: RAM slot %d (max %d) is display slot %d\n", slot, wantMax, target);
+					slot = target;
+				}
 				if (!pressedA && cur != slot && !strcmp(scr, "party")) {
 					int stepi = timer % 20;
 					uint32_t key = KEY_DOWN;
@@ -170,7 +241,7 @@ int main(int argc, char** argv) {
 			// menu (or a forced party pick, or out of battle) and has stayed
 			// there for a few frames after at least a second of animation.
 			int ours = !strcmp(scr, "action") || !strcmp(scr, "party") || !strcmp(scr, "nobattle");
-			if (timer > 60 && ours) { sinceLeft++; if (sinceLeft >= 10) { phase = 3; } }
+			if (timer > 60 && ours) { sinceLeft++; if (sinceLeft >= 10 + linger) { phase = 3; } }
 			else sinceLeft = 0;
 			if (timer == 1) dump("committed", frame);
 			// A dialogue box waiting for A (e.g. "It's super effective!" does
@@ -184,6 +255,7 @@ int main(int argc, char** argv) {
 		}
 		if (phase == 3) {
 			dump("after", frame);
+			obs_json();
 			if (saveOut) {
 				struct VFile* out = VFileOpen(saveOut, O_RDWR | O_CREAT | O_TRUNC);
 				if (out) { mCoreSaveStateNamed(core, out, SAVESTATE_RTC); out->close(out); }

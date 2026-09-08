@@ -2964,7 +2964,18 @@ setInterval(() => {
 				? 'switch ' + (st.me.team[a.index] ? st.me.team[a.index].set.species : a.index)
 				: (me.set.moves[a.index] || ('move ' + a.index));
 			if (cs.ok) {
-				const results = rivals.map(a => ({a, s: ORACLE.summarize(runOne(a))})).filter(x => x.s.ok);
+				const raw = rivals.map(a => ({a, r: runOne(a)}));
+				const results = raw.map(x => ({a: x.a, s: ORACLE.summarize(x.r)})).filter(x => x.s.ok);
+				// GUARD: if every action ends in the identical position the
+				// input is not reaching the game (a snapshot of the wrong
+				// screen, or a broken press path); such a result says nothing
+				// and is thrown away rather than trusted.
+				const sig = r => r && r.after ? [r.after.frame, r.after.me.species, r.after.me.hp, r.after.foe.species, r.after.foe.hp].join('/') : null;
+				const sigs = new Set([sig(chosenR)].concat(raw.map(x => sig(x.r))).filter(Boolean));
+				if (raw.length >= 2 && sigs.size === 1) {
+					console.log('  [oracle ' + (Date.now() - t0) + 'ms: every action ends identically -- stale snapshot, ignored]');
+					throw new Error('stale snapshot');
+				}
 				const value = s => s.theirDead * 1000 + (s.theirLost - s.ourLost);
 				const safe = results.filter(x => x.s.ourDead === 0).sort((x, y) => value(y.s) - value(x.s));
 				let pick = null, why = '';
