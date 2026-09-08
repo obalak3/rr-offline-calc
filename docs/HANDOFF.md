@@ -1,5 +1,45 @@
 # Handoff -- 2026-09-01 (final for this session)
 
+## UPDATE 2026-09-08: THE GAME AS ITS OWN ORACLE (James approved: legal if invisible)
+
+James's rule: anything that never shows on his screen is fair; no rewind in
+the window he watches, no second window. So: a WINDOWLESS mGBA core.
+
+- `tools/headless/`: mGBA 0.10.5 core built from source with ffmpeg off
+  (Homebrew's is linked against an ffmpeg that is gone; brew cannot build
+  from source here -- old Command Line Tools). Build: clone into mgba-src,
+  cmake into mgba-build with `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`, PNG
+  pinned to /opt/homebrew/opt/libpng (Mono's ancient png.h otherwise wins and
+  save states fail to load), system zlib. Then `./build.sh` -> `oracle`.
+- `oracle <rom> <state> move N | switch RAMSLOT | peek [--save out.ss]`:
+  loads a state taken on our action menu, presses exactly what the actuator
+  would, runs until the game asks again, prints before/committed/after JSON
+  plus an `obs` line in state.json format (feed it to --probe or a dry run).
+  ~0.7 s per action. Verified against run 1: Scald 52 into Bellibolt, then
+  38 and 45 HP Grass, then Manectric-Mega with Intimidate, roll for roll.
+- `tools/lib/oracle.js` wraps it; agent.js runs the chosen action and every
+  legal rival on `~/rr-agent/turn.ss` (the actuator saves it one second into
+  the menu via emu:saveStateFile, flags 10, no on-screen message) and takes a
+  rival only if (1) the plan loses one of ours this turn for real and a rival
+  does not, or (2) the plan kills nothing while a rival kills for real at no
+  extra HP. Logged as `[oracle NNNNms: ...]`. RR_ORACLE=0 disables. Guard: if
+  every action ends identically the snapshot is judged stale and ignored.
+- FOUND ON THE WAY: the battle party MENU is not in RAM order. It draws from
+  its own copy at 0x020158AC whose order is RAM order with one swap per
+  switch made so far. The actuator walked the cursor to the RAM index, which
+  is right only while the lead is still out (the case the old "display equals
+  RAM" measurement happened to test). Fixed in agent_impl.lua sw_pick and in
+  the oracle: the target is found in that copy by species + max HP. This is
+  a real live bug fixed blind; watch the first live switches.
+- 0x02023BCE = the active's RAM party index (u16).
+- zsh trap that cost an hour: `for a in "switch 1"; ./oracle ... $a` passes
+  "switch 1" as ONE argument (zsh does not word-split); everything ran as
+  "move 0". Use `sh -c` or arrays in loops.
+
+NOT YET DONE LIVE: the actuator changes (snapshot + cursor fix) need James to
+load the script (Tools > Scripting > Load recent script) and one s5 run with
+RR_ORACLE on; then read the `[oracle ...]` lines against the plan.
+
 ## UPDATE 2026-09-05 (away-work loop, latest): s5 runs analysed, seven fixes
 
 Retrievable version before this work: tag `pre-planner-2026-09-05` (commit
