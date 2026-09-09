@@ -1,5 +1,49 @@
 # Handoff -- 2026-09-01 (final for this session)
 
+## UPDATE 2026-09-08 (evening): POSITION SCORE + ORACLE LIVE -- zero-death Surge on a NEW route
+
+James's direction: "the AI is focusing too much on killing; it should understand
+improving the situation too", with the trap that a stat move is not
+automatically an improvement (Speed drop on a slow Pokemon, Attack drop on a
+special attacker = nothing). So:
+- tools/lib/position.js: importance-weighted HP (1 + 0.5 per remaining
+  opponent a Pokemon is a clean answer to; heals now credited, they were
+  clamped to zero before) and MEASURED condition values: their Attack/Sp.Atk
+  drops and burn = damage their real moves no longer do to our living
+  Pokemon; Speed drops/paralysis = hits avoided only where turn order flips;
+  sleep = turns lost; our boosts = damage added. Capped at one Pokemon
+  (RR_POS_CAP). Wired into replan.js priceCand (hpTerm/posTerm; RR_POSITION=0
+  off). Absorbers count Electric STATUS moves (Bellibolt throws Thunder Wave
+  at Mienshao; Volt Absorb eats it).
+- The oracle (tools/headless/oracle + tools/lib/oracle.js + agent.js) is the
+  decider of last resort before every press: chosen action and every legal
+  rival are played on the hidden game; outcomes are scored with the position
+  score on the real after-state (+their HP removed, +1000 per kill, -30 x
+  importance per faint); a rival must beat the plan by RR_ORACLE_MARGIN (25).
+  The death veto's dodge is just a rival now (its unverified guess produced a
+  24-switch carousel and a whiteout earlier tonight). A plan that IS a bait
+  line is verified on its second turn; a verified heal >= 15% of the absorber
+  takes precedence over a same-turn kill unless it is their last Pokemon.
+- Actuator: snapshot via emu:saveStateBuffer written by Lua I/O
+  (saveStateFile writes 397312 zero bytes on this Mac -- the same write-only
+  VFile bug the C core hit); file-driven state load (`~/rr-agent/loadstate`
+  holds a path; no window focus needed; loading is what F5 does); party
+  cursor via the menu's own party copy.
+- RESULT (run 16, 20:32-20:38): WIN, NOBODY LOST, on a route the solved
+  sequence never took (Bellibolt, Vikavolt, Pawmot, Manectric-Mega,
+  Pincurchin). Manectric-Mega was beaten by James's dance exactly: Mienshao
+  in, Lanturn back on the Volt Switch (+66 HP, twice), Scald; Breloom's Mach
+  Punch and Bullet Seed closed. Cost: heavy churn (35-83% switches per
+  segment) and three Pokemon under 10 HP at the end. Earlier tonight the same
+  code without a working snapshot whited out twice (replaying the old
+  sequence) -- the oracle IS the difference.
+- Live procedure now: `echo <path.ss> > ~/rr-agent/loadstate` loads a state;
+  check `[oracle gate: ...]` and `[oracle NNNNms: ...]` lines per turn.
+NEXT: churn (a dodge switch that only delays should lose to the position
+score more often -- consider a per-switch tempo cost in the oracle score);
+two-turn oracle roll-outs for the top few candidates; run 8's solved route
+as the regression.
+
 ## UPDATE 2026-09-08: THE GAME AS ITS OWN ORACLE (James approved: legal if invisible)
 
 James's rule: anything that never shows on his screen is fair; no rewind in
