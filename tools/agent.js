@@ -2931,11 +2931,18 @@ setInterval(() => {
 	// the new one a second later; a fast decision gets here first, so wait
 	// up to two seconds for it. The old file can never be mistaken for the
 	// new one because it is gone before the question is even asked.
+	console.log('  [oracle gate: RR_ORACLE=' + (process.env.RR_ORACLE || 'unset') + ' available=' + ORACLE.available()
+		+ ' snapshot=' + (fs.existsSync(SNAP) ? 'present' : 'absent') + ']');
 	if (process.env.RR_ORACLE !== '0' && ORACLE.available()) {
 		const until = Date.now() + 2000;
 		while (!fs.existsSync(SNAP) && Date.now() < until) {
 			try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); } catch (e) { break; }
 		}
+	}
+	if (process.env.RR_ORACLE !== '0' && !(ORACLE.available() && fs.existsSync(SNAP)
+		&& Date.now() - fs.statSync(SNAP).mtimeMs < 120000)) {
+		console.log('  [oracle skipped: ' + (!ORACLE.available() ? 'binary or ROM missing'
+			: !fs.existsSync(SNAP) ? 'no snapshot within 2 s' : 'snapshot too old') + ']');
 	}
 	if (process.env.RR_ORACLE !== '0' && ORACLE.available()
 		&& fs.existsSync(SNAP) && Date.now() - fs.statSync(SNAP).mtimeMs < 120000) {
@@ -2954,18 +2961,34 @@ setInterval(() => {
 				});
 				return r;
 			};
-			const chosenA = d.best.action.type === 'switch'
-				? {type: 'switch', index: slot} : {type: 'move', index: slot};
-			const rivals = [];
 			const me = st.me.team[st.me.active];
+			let chosenA = d.best.action.type === 'switch'
+				? {type: 'switch', index: slot} : {type: 'move', index: slot};
+			// THE DEATH VETO IS A GUESS; THE ORACLE KNOWS. When the veto replaced
+			// the plan's action with a dodge, the plan's own action is the
+			// reference here and the dodge is just another rival: it has to
+			// beat the plan on the real game by the margin, or the plan stands.
+			// (The old veto alone produced a 24-switch carousel against Pawmot.)
+			let vetoDodge = null;
+			if (plannerSaid && plannerSaid.overridden && plannerSaid.action) {
+				const pa = plannerSaid.action;
+				const paIdx = pa.type === 'switch' ? pa.index : me.set.moves.indexOf(pa.move);
+				if (paIdx >= 0 && !(pa.type === chosenA.type && paIdx === chosenA.index)) {
+					vetoDodge = chosenA;
+					chosenA = pa.type === 'switch' ? {type: 'switch', index: paIdx} : {type: 'move', index: paIdx};
+				}
+			}
+			const rivals = [];
+			if (vetoDodge) rivals.push(vetoDodge);
+			const listed = a => rivals.some(r => r.type === a.type && r.index === a.index) || (chosenA.type === a.type && chosenA.index === a.index);
 			(me.set.moves || []).forEach((mv, i) => {
 				if (me.pp && me.pp[i] === 0) return;
-				if (!(chosenA.type === 'move' && chosenA.index === i)) rivals.push({type: 'move', index: i});
+				if (!listed({type: 'move', index: i})) rivals.push({type: 'move', index: i});
 			});
 			if (!(st.me.team[st.me.active].volatiles && st.me.team[st.me.active].volatiles.trapped)) {
 				st.me.team.forEach((m, i) => {
 					if (i === st.me.active || m.fainted || m.curHP <= 0) return;
-					if (!(chosenA.type === 'switch' && chosenA.index === i)) rivals.push({type: 'switch', index: i});
+					if (!listed({type: 'switch', index: i})) rivals.push({type: 'switch', index: i});
 				});
 			}
 			const t0 = Date.now();
@@ -2987,14 +3010,69 @@ setInterval(() => {
 					console.log('  [oracle ' + (Date.now() - t0) + 'ms: every action ends identically -- stale snapshot, ignored]');
 					throw new Error('stale snapshot');
 				}
-				const value = s => s.theirDead * 1000 + (s.theirLost - s.ourLost);
-				const safe = results.filter(x => x.s.ourDead === 0).sort((x, y) => value(y.s) - value(x.s));
+				// ONE WEIGHED COMPARISON, NOT TWO REFLEXES. The first version took
+				// any rival that dodged a death this turn; against Pawmot every plan
+				// "loses someone for real", so it grabbed a fresh switch every turn,
+				// each one paying entry damage, until the whole team had bled out
+				// (2026-09-08, 55% switch churn, whiteout). Now every outcome --
+				// the plan's and each rival's -- gets one score in HP-equivalents:
+				//   their HP removed, plus 1000 per kill,
+				//   minus our HP lost weighted by importance (position.js),
+				//   minus 30 x importance per Pokemon of ours that faints
+				//   (its remaining HP is already in the HP term, so a 1 HP
+				//   Mienshao dying is nearly free, a 90 HP Lanturn dying is not).
+				// A rival replaces the plan only if it beats it by a clear margin.
+				let posW = null;
+				try { posW = require('./lib/position.js').importance(engine, st); } catch (e) { posW = null; }
+				const wOf = i => (posW && st.me.team[i] && posW[st.me.team[i].set.species]) || 1;
+				const score = r => {
+					if (!r || !r.before || !r.after) return -Infinity;
+					let v = 0;
+					r.before.party.forEach((p, i) => {
+						const lost = Math.max(0, p[0] - r.after.party[i][0]);
+						v -= lost * wOf(i);
+						if (p[0] > 0 && r.after.party[i][0] === 0) v -= 30 * wOf(i);
+					});
+					r.before.foeparty.forEach((p, i) => {
+						v += Math.max(0, p[0] - r.after.foeparty[i][0]);
+						if (p[0] > 0 && r.after.foeparty[i][0] === 0) v += 1000;
+					});
+					return v;
+				};
+				const MARGIN = Number(process.env.RR_ORACLE_MARGIN || 25);
+				const chosenScore = score(chosenR);
+				// THE PLAN'S OWN BAIT LINE IS JUDGED ON ITS SECOND TURN, not its
+				// first: the bait switch alone always looks like a loss.
+				let planIsBait = false, baitHolds = false;
+				if (chosenA.type === 'switch' && plannerSaid && plannerSaid.path && plannerSaid.path.cand
+					&& /baits|absorbs/.test(plannerSaid.path.cand.why || '') && plannerSaid.path.cand.jobs) {
+					planIsBait = true;
+					const legs = plannerSaid.path.cand.jobs;
+					const baitMon = st.me.team[chosenA.index].set.species;
+					const absorber = legs.find(j => j.mon !== baitMon) || null;
+					const absIdx = absorber ? st.me.team.findIndex(m => m.set.species === absorber.mon && !m.fainted) : -1;
+					if (absIdx >= 0 && chosenR.after && chosenR.after.screen !== 'nobattle') {
+						const os = require('os');
+						const t1 = path.join(os.tmpdir(), 'rr-oracle-plan1-' + process.pid + '.ss');
+						let out = ''; try { out = execFileSync(ORACLE.BIN, [ORACLE.ROM, SNAP, 'switch', String(chosenA.index), '--save', t1], {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); } catch (e) { out = e.stdout ? String(e.stdout) : ''; }
+						let out2 = ''; try { out2 = execFileSync(ORACLE.BIN, [ORACLE.ROM, t1, 'switch', String(absIdx)], {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); } catch (e) { out2 = e.stdout ? String(e.stdout) : ''; }
+						try { fs.unlinkSync(t1); } catch (e) { /* gone */ }
+						const r2 = {before: null, after: null, error: null};
+						out2.split('\n').forEach(line => { line = line.trim(); if (!line) return; let j; try { j = JSON.parse(line); } catch (e) { return; } if (j.error) r2.error = j.error; else if (j.at) r2[j.at] = j; });
+						const s2 = ORACLE.summarize(r2);
+						const hpNow = st.me.team[absIdx].curHP, hpAfter = r2.after ? r2.after.party[absIdx][0] : null;
+						baitHolds = !!(s2.ok && s2.ourDead === 0 && hpAfter !== null && hpAfter > hpNow);
+						console.log('  [oracle: the plan\'s ' + plannerSaid.path.cand.why + (baitHolds ? ' HOLDS' : ' does not hold')
+							+ ' on the real game (' + absorber.mon + ' would be at ' + hpAfter + ' from ' + hpNow + ')]');
+					}
+				}
+				const scored = raw.map(x => ({a: x.a, s: ORACLE.summarize(x.r), v: score(x.r)})).filter(x => x.s.ok)
+					.sort((x, y) => y.v - x.v);
 				let pick = null, why = '';
-				if (cs.ourDead > 0 && safe.length) {
-					pick = safe[0]; why = 'the plan\'s ' + name(chosenA) + ' loses ' + cs.ourDead + ' of ours this turn for real';
-				} else if (cs.ourDead === 0 && cs.theirDead === 0 && safe.length && safe[0].s.theirDead > 0
-					&& safe[0].s.ourLost <= cs.ourLost) {
-					pick = safe[0]; why = name(chosenA) + ' kills nothing while a rival kills for real';
+				if (!baitHolds && scored.length && scored[0].v > chosenScore + MARGIN) {
+					pick = scored[0];
+					why = 'scores ' + Math.round(scored[0].v) + ' against the plan\'s ' + Math.round(chosenScore)
+						+ ' in HP-equivalents on the real game';
 				}
 				// 3. A BAIT OR ABSORB LINE IS VERIFIED ON THE REAL GAME. The market's
 				// AI model guesses what they throw at the bait (it said Muddy Water
@@ -3052,6 +3130,14 @@ setInterval(() => {
 					+ (cs.theirDead ? ' and ' + cs.theirDead + ' Pokemon' : '') + (cs.foeSwitched ? ', they switch' : '')
 					+ (pick ? ' | TAKING ' + name(pick.a) + ' instead: ' + why + ' (they lose ' + pick.s.theirLost
 						+ (pick.s.theirDead ? ' and ' + pick.s.theirDead : '') + ', we lose ' + pick.s.ourLost + ')' : '') + ']');
+				if (!pick && vetoDodge) {
+					// The plan stands: the veto's dodge did not beat it on the real game.
+					d.best.action = chosenA.type === 'switch'
+						? {type: 'switch', index: chosenA.index}
+						: {type: 'move', index: chosenA.index, move: me.set.moves[chosenA.index]};
+					slot = chosenA.index;
+					console.log('  [oracle: the veto\'s ' + name(vetoDodge) + ' does not beat the plan\'s ' + name(chosenA) + ' on the real game; playing the plan]');
+				}
 				if (pick) {
 					d.best.action = pick.a.type === 'switch'
 						? {type: 'switch', index: pick.a.index}

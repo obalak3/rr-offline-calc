@@ -551,7 +551,33 @@ local function tick_body()
 	end
 end
 
+-- A STATE LOAD BY FILE. The brain (or the operator's terminal) writes the
+-- path of a save state into ~/rr-agent/loadstate; the next tick loads it and
+-- removes the request. This replaces pressing F5 through the window system,
+-- which needs the game window in front and silently fails when another app
+-- has focus (2026-09-08). Loading a state is what F5 does, so this is no
+-- more visible than that.
+local loadCheck = 0
+local function loadRequest()
+	loadCheck = loadCheck + 1
+	if loadCheck % 30 ~= 0 then return end
+	local f = io.open(DIR .. "loadstate", "r")
+	if not f then return end
+	local file = (f:read("*a") or ""):gsub("%s+$", "")
+	f:close()
+	os.remove(DIR .. "loadstate")
+	if file == "" then return end
+	local ok = pcall(function() emu:loadStateFile(file) end)
+	pcall(say, "loadstate: " .. (ok and "loaded " or "FAILED ") .. file:match("[^/]+$"))
+	if ok then
+		os.remove(DIR .. "state.json"); os.remove(DIR .. "turn.ss"); os.remove(DIR .. "cmd.json")
+		lastSig = ""
+		phase, timer = "wait", 0
+	end
+end
+
 local function tick()
+	pcall(loadRequest)
 	local ok, err = pcall(tick_body)
 	pcall(persist)
 	if not ok then
@@ -856,7 +882,20 @@ function tick_inner()
 		-- scripting call goes straight to the core and never touches the
 		-- front end's on-screen messages: James's rule is that he must not
 		-- see it happen. Answers faster than a second get no oracle check.
-		if timer == 60 then pcall(function() emu:saveStateFile(DIR .. "turn.ss", 10) end) end
+		-- saveStateFile opens its file write-only and, on this Mac, writes
+		-- 397312 zero bytes (measured 2026-09-08; the C core does the same
+		-- unless the file is opened read-write). saveStateBuffer hands the
+		-- state back as a string, and plain Lua I/O writes it correctly. The
+		-- rename makes the file appear whole or not at all.
+		if timer == 60 then
+			pcall(function()
+				local buf = emu:saveStateBuffer(10)
+				if buf and #buf > 0 then
+					local f = io.open(DIR .. "turn.ss.tmp", "wb")
+					if f then f:write(buf); f:close(); os.rename(DIR .. "turn.ss.tmp", DIR .. "turn.ss") end
+				end
+			end)
+		end
 		if timer % 15 ~= 0 then return end
 		want = readCommand()
 		if want then
