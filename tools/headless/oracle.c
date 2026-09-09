@@ -207,11 +207,18 @@ int main(int argc, char** argv) {
 				// then A opens the submenu and A again takes SHIFT.
 				int cur = r8(PARTY_IDX);
 				if (target < 0) {
+					// The menu fills its copy a few frames after the screen opens
+					// (turn 221, 2026-09-08: read on the first frame it still held
+					// the previous fight's party and the probe failed). Give it
+					// ten frames, then keep looking for up to a second before
+					// falling back to the RAM slot.
 					for (int i = 0; i < 6 && target < 0; i++)
 						if (r16(MENU_PARTY + i * P_SIZE + P_MAX) == wantMax && r16(MENU_PARTY + i * P_SIZE + P_HP) == wantHp) target = i;
 					for (int i = 0; i < 6 && target < 0; i++)
 						if (r16(MENU_PARTY + i * P_SIZE + P_MAX) == wantMax) target = i;
-					if (target < 0) { printf("{\"error\":\"wanted Pokemon (max HP %d) not on the party screen\"}\n", wantMax); return 3; }
+					if (target < 0 && timer < 70) { step(0); continue; }
+					if (target < 0) { if (dbg) fprintf(stderr, "menu copy never showed max HP %d; using RAM slot %d\n", wantMax, slot); target = slot; }
+					else if (dbg) fprintf(stderr, "menu copy matched at party frame %d\n", timer);
 					if (dbg) fprintf(stderr, "party screen: RAM slot %d (max %d) is display slot %d\n", slot, wantMax, target);
 					slot = target;
 				}

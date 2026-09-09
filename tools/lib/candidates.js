@@ -271,6 +271,44 @@ function candidatesFor(ctx, fi, options) {
 		leverUsableM[k] = ok;
 		return ok;
 	});
+	const condMattersM = {};
+	const condMatters = (cond) => {
+		const boosts = cond.foeBoosts || null;
+		if (!boosts) return true;                      // statuses are judged elsewhere
+		const key = JSON.stringify(boosts);
+		if (condMattersM[key] !== undefined) return condMattersM[key];
+		let matters = false;
+		try {
+			const alive = party.map((p, i) => i).filter(i => !(opts.ourHp && opts.ourHp[party[i].species] !== undefined && opts.ourHp[party[i].species] <= 0));
+			for (const mi of alive) {
+				const base = engine.B.createState(party.slice(mi).concat(party.slice(0, mi)),
+					foeSets.slice(fi).concat(foeSets.slice(0, fi)), {});
+				const bent = engine.B.clone(base);
+				for (const k in boosts) bent.foe.team[0].boosts[k] = Math.max(-6, Math.min(6, (bent.foe.team[0].boosts[k] || 0) + boosts[k]));
+				const best = st => {
+					let b = 0;
+					(foe.moves || []).forEach(mv => {
+						let r = null; try { r = engine.B.damageRolls(st, 'foe', mv); } catch (e) { r = null; }
+						if (r && !r.immune && r.noCrit && r.noCrit.length) b = Math.max(b, r.noCrit[Math.floor(r.noCrit.length / 2)]);
+					});
+					return b;
+				};
+				const maxHP = base.me.team[0].maxHP || 1;
+				if ((best(base) - best(bent)) / maxHP >= 0.03) { matters = true; break; }
+				if (boosts.spe) {
+					const mine = engine.B.finalSpeed(base, 'me');
+					if (engine.B.finalSpeed(base, 'foe') >= mine && engine.B.finalSpeed(bent, 'foe') < mine) { matters = true; break; }
+				}
+				if (boosts.def || boosts.spd) {
+					// our best hit on it rises: measure the other way
+					const ours = st => { let b = 0; (party[mi].moves || []).forEach(mv => { let r = null; try { r = engine.B.damageRolls(st, 'me', mv); } catch (e) { r = null; } if (r && !r.immune && r.noCrit && r.noCrit.length) b = Math.max(b, r.noCrit[Math.floor(r.noCrit.length / 2)]); }); return b; };
+					if ((ours(bent) - ours(base)) / (base.foe.team[0].maxHP || 1) >= 0.03) { matters = true; break; }
+				}
+			}
+		} catch (e) { matters = true; }
+		condMattersM[key] = matters;
+		return matters;
+	};
 	const duelCond = (mi, extra) => {
 		const sp = party[mi].species;
 		const c = Object.assign({}, fieldCond(opts.field, opts.foeHp), extra || {});
@@ -328,6 +366,16 @@ function candidatesFor(ctx, fi, options) {
 		let found = 0;
 		for (const entry of CONDITIONS) {
 			if (found >= (opts.perKiller || 4)) break;
+			// A STAT MOVE THAT CHANGES NOTHING IS NOT OFFERED. James, 2026-09-08,
+			// after Growl into Mega Venusaur: "lowering the physical damage of a
+			// special attacker is just null." The condition is imposed on a
+			// probe and MEASURED against our living Pokemon: if their best hit
+			// on each of ours barely moves and no turn order flips, the lever
+			// is skipped here, before any duel is priced.
+			if (!condMatters(entry.cond)) {
+				if (process.env.RR_DEBUG_LEVERS) console.log('[lever] vs ' + foe.species + ': ' + E.describeEffect(entry.cond) + ': changes nothing measurable');
+				continue;
+			}
 			if (!leversUsable(entry)) {
 				if (process.env.RR_DEBUG_LEVERS) console.log('[lever] vs ' + foe.species + ': ' + p.species + ' ' + E.describeEffect(entry.cond) + ': a lever move cannot touch it');
 				continue;

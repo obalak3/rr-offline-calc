@@ -39,6 +39,23 @@ special attacker = nothing). So:
   sequence) -- the oracle IS the difference.
 - Live procedure now: `echo <path.ss> > ~/rr-agent/loadstate` loads a state;
   check `[oracle gate: ...]` and `[oracle NNNNms: ...]` lines per turn.
+James's two flags from the Rillaboom/Venusaur fight (2026-09-08, won with no
+deaths but "these will cost us later"):
+- Turn 221, Accelgor vs Rillaboom: switched to Kilowattrel instead of Bug
+  Buzz. The switch-needs-a-reason rule judged on here+ahead and the rest-of-
+  fight guess tipped it (its own log said "NEEDLESS?"). Now judged on the
+  IMMEDIATE price as well (min of both gaps). The oracle could not check the
+  switch because it read the party menu's copy on its first frame, when it
+  still held the previous fight's party; it now retries every frame for up to
+  a second and falls back to the RAM slot. Verified offline: 221 -> Bug Buzz.
+- Turn 229, Growl into Mega Venusaur (special attacker): the position score
+  priced the drop at ~0 but the lever line was still generated and a Growl
+  turn costs only tempo. candidates.js condMatters(): a stat condition is
+  MEASURED against our living Pokemon (their best hit before/after, order
+  flips, our best hit for Def/SpD drops) and skipped when nothing moves >= 3%.
+  Verified offline: "their atk -1 vs Venusaur-Mega: changes nothing
+  measurable", Growl gone from the market.
+
 NEXT: churn (a dodge switch that only delays should lose to the position
 score more often -- consider a per-switch tempo cost in the oracle score);
 two-turn oracle roll-outs for the top few candidates; run 8's solved route

@@ -1174,7 +1174,12 @@ function chooseAction(ctx, state, opts) {
 		}
 		if (topIdx >= 0 && stayIdx > topIdx) {
 			const top = ranked[topIdx], stayItem = ranked[stayIdx];
-			const gap = totalOf(stayItem) - totalOf(top);
+			// JUDGED ON THE IMMEDIATE PRICE. The rest-of-fight term is a guess
+			// (mostly flat no-answer penalties) and it was what tipped turn 221
+			// (2026-09-08) into a switch its own log marked "NEEDLESS?": staying
+			// in with Bug Buzz was cheaper now, the guess said otherwise. A
+			// switch has to earn itself on what happens now.
+			const gap = Math.min(totalOf(stayItem) - totalOf(top), stayItem.here - top.here);
 			// Staying is never "cheaper" when staying buries somebody and
 			// leaving does not (turn 695, run 6: the stay line sacrificed
 			// Mienshao for -11 on the plain total).
