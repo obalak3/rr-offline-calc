@@ -3025,14 +3025,25 @@ setInterval(() => {
 				let posW = null;
 				try { posW = require('./lib/position.js').importance(engine, st); } catch (e) { posW = null; }
 				const wOf = i => (posW && st.me.team[i] && posW[st.me.team[i].set.species]) || 1;
+				// The outcome is scored with the POSITION SCORE (position.js) on the
+				// real after-state: importance-weighted HP plus the measured worth
+				// of every lasting condition (their sleep, drops, burns; our
+				// boosts), in HP-equivalents (one full Pokemon = 100), plus their
+				// HP removed and 1000 per kill, minus 30 x importance per Pokemon
+				// of ours that fainted. A Sleep Powder that lands is now worth what
+				// the sleep is worth, not zero.
+				const POSm = require('./lib/position.js');
 				const score = r => {
 					if (!r || !r.before || !r.after) return -Infinity;
 					let v = 0;
-					r.before.party.forEach((p, i) => {
-						const lost = Math.max(0, p[0] - r.after.party[i][0]);
-						v -= lost * wOf(i);
-						if (p[0] > 0 && r.after.party[i][0] === 0) v -= 30 * wOf(i);
-					});
+					let pos = null;
+					try { if (r.obs) pos = POSm.evaluate(engine, buildState(r.obs), {importance: posW}); } catch (e) { pos = null; }
+					if (pos) {
+						v += 100 * (pos.hp + pos.cond);
+					} else {
+						r.before.party.forEach((p, i) => { v -= Math.max(0, p[0] - r.after.party[i][0]) * wOf(i); });
+					}
+					r.before.party.forEach((p, i) => { if (p[0] > 0 && r.after.party[i][0] === 0) v -= 30 * wOf(i); });
 					r.before.foeparty.forEach((p, i) => {
 						v += Math.max(0, p[0] - r.after.foeparty[i][0]);
 						if (p[0] > 0 && r.after.foeparty[i][0] === 0) v += 1000;
@@ -3082,7 +3093,9 @@ setInterval(() => {
 				// absorber. If the absorber comes back healthier and nobody died,
 				// the line is real and it is taken, plan and all.
 				if (process.env.RR_DEBUG_ORACLE) console.log('  [oracle debug: pick=' + (pick ? 'yes' : 'no') + ' baits=' + (plannerSaid && plannerSaid.baits ? plannerSaid.baits.length : 'none') + ' alts=' + (plannerSaid && plannerSaid.alternatives ? plannerSaid.alternatives.length : 'none') + ' ourDead=' + cs.ourDead + ']');
-				if (!pick && plannerSaid && (plannerSaid.baits || plannerSaid.alternatives) && cs.ourDead === 0) {
+				const theirAlive = st.foe.team.filter(m => !m.fainted && m.curHP > 0).length;
+				const heldPick = pick, heldWhy = why;
+				if (!baitHolds && theirAlive > 1 && plannerSaid && (plannerSaid.baits || plannerSaid.alternatives) && cs.ourDead === 0) {
 					const bait = (plannerSaid.baits || []).concat(plannerSaid.alternatives || []).find(alt => alt && alt.jobs && alt.action
 						&& alt.action.type === 'switch' && /baits|absorbs/.test(alt.why || '')
 						&& !(chosenA.type === 'switch' && chosenA.index === alt.action.index));
@@ -3113,12 +3126,16 @@ setInterval(() => {
 							try { fs.unlinkSync(t1); } catch (e) { /* gone */ }
 							const absHpNow = st.me.team[absIdx].curHP;
 							const absHpAfter = run2 && run2.after ? run2.after.party[absIdx][0] : null;
-							if (s2 && s2.ok && s2.ourDead === 0 && absHpAfter !== null && absHpAfter > absHpNow) {
+							const absMax = st.me.team[absIdx].maxHP || 1;
+							if (s2 && s2.ok && s2.ourDead === 0 && absHpAfter !== null && absHpAfter - absHpNow >= 0.15 * absMax) {
+								// James, 2026-09-08: heal the answer to their next Pokemon
+								// before taking a kill that will still be there next turn.
 								pick = {a: {type: 'switch', index: bait.action.index}, s: s1};
 								why = bait.why + ': played on the real game, ' + absorber.mon + ' comes back at '
 									+ absHpAfter + ' (from ' + absHpNow + '), nobody lost';
 								lastPlan = {foe: speciesName(obs.foe.species), jobs: legs, progress: null};
 							} else {
+								pick = heldPick; why = heldWhy;
 								console.log('  [oracle: ' + bait.why + ' does not hold on the real game'
 									+ (s2 ? ' (' + absorber.mon + ' would be at ' + absHpAfter + ' from ' + absHpNow + (s2.ourDead ? ', someone dies' : '') + ')' : (s1.error || run1.error ? ' (' + (s1.error || run1.error) + ')' : ' (bait step lost someone)')) + ']');
 							}
