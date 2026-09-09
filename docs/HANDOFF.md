@@ -54,7 +54,11 @@ deaths but "these will cost us later"):
   MEASURED against our living Pokemon (their best hit before/after, order
   flips, our best hit for Def/SpD drops) and skipped when nothing moves >= 3%.
   Verified offline: "their atk -1 vs Venusaur-Mega: changes nothing
-  measurable", Growl gone from the market.
+  measurable", Growl gone from the market. REGRESSION TEST: `node tools/test_growl.js`
+  replays the archived position (tests/fixtures/growl_vs_mega_venusaur*.json)
+  and fails if any Attack-drop line is offered or Growl is chosen. It caught a
+  hole on its first run: a PAIRED condition (Sp.Def -1 + Attack -1) passed on
+  its real half and opened with Growl; every part must now matter on its own.
 
 NEXT: churn (a dodge switch that only delays should lose to the position
 score more often -- consider a per-switch tempo cost in the oracle score);

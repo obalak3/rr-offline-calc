@@ -275,6 +275,13 @@ function candidatesFor(ctx, fi, options) {
 	const condMatters = (cond) => {
 		const boosts = cond.foeBoosts || null;
 		if (!boosts) return true;                      // statuses are judged elsewhere
+		// A COMBINED CONDITION MUST JUSTIFY EVERY PART. "their Sp.Def -1, their
+		// Attack -1" passed on the Sp.Def half and the plan opened with Growl
+		// anyway (regression test_growl.js, 2026-09-08).
+		const keys = Object.keys(boosts).filter(k => boosts[k]);
+		if (keys.length > 1) {
+			return keys.every(k => { const one = {}; one[k] = boosts[k]; return condMatters({foeBoosts: one}); });
+		}
 		const key = JSON.stringify(boosts);
 		if (condMattersM[key] !== undefined) return condMattersM[key];
 		let matters = false;
