@@ -165,6 +165,15 @@ Brendan, Cerulean Cave Giovanni with Lance) give one slot to an NPC we do not
 control. James's instruction: when doubles otherwise looks finished, REMIND
 HIM that these were never covered.
 
+0. **The core and the actuator resolve the party menu separately** and
+   disagreed on 2026-09-10 turn 22 (Giovanni's Honchkrow): the hidden core
+   scored "switch Granbull: lose 50" for a switch that did not bring
+   Granbull, and Granbull was sent into a crit Drill Peck. The GUARD is in
+   (fe573fe: a switch probe is believed only if the arrival's max HP matches;
+   mismatches are logged "ARRIVED AS" and thrown away). The FIX is not: both
+   halves should share ONE rule for which menu position holds a Pokemon
+   (oracle.c and agent_impl.lua sw_pick). Watch the log for ARRIVED AS lines;
+   each one is a turn the oracle could not check a switch.
 1. Switch churn (35-83% per segment in run 16): a dodge switch that only
    delays still scores too well on one turn. Candidates: a tempo cost in the
    oracle score for a turn that removes no HP from them; two-turn oracle
