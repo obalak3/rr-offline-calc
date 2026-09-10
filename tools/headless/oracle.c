@@ -175,9 +175,9 @@ int main(int argc, char** argv) {
 	// the fight goes on). The caller names RAM slots; once the party screen
 	// is open, the wanted Pokemon is found in that copy by max HP and the
 	// cursor walks to THAT slot. Selecting the active is refused by the game.
-	int wantMax = 0, wantHp = 0, target = -1;
+	int wantMax = 0, wantHp = 0, target = -1; uint16_t wantSp = 0; int partyAt = -1;
 	if (wantSwitch) {
-		wantMax = r16(PARTY + slot * P_SIZE + P_MAX); wantHp = r16(PARTY + slot * P_SIZE + P_HP);
+		wantMax = r16(PARTY + slot * P_SIZE + P_MAX); wantHp = r16(PARTY + slot * P_SIZE + P_HP); wantSp = r16(PARTY + slot * P_SIZE + 0x20);
 		if (wantMax == r16(MON + O_MAX) && wantHp == r16(MON + O_HP)) { printf("{\"error\":\"that Pokemon is already out\"}\n"); return 3; }
 	}
 	// phases: 0 open menu, 1 pick move / pick party slot, 2 settle, 3 done
@@ -207,18 +207,40 @@ int main(int argc, char** argv) {
 				// then A opens the submenu and A again takes SHIFT.
 				int cur = r8(PARTY_IDX);
 				if (target < 0) {
-					// The menu fills its copy a few frames after the screen opens
-					// (turn 221, 2026-09-08: read on the first frame it still held
-					// the previous fight's party and the probe failed). Give it
-					// ten frames, then keep looking for up to a second before
-					// falling back to the RAM slot.
-					for (int i = 0; i < 6 && target < 0; i++)
-						if (r16(MENU_PARTY + i * P_SIZE + P_MAX) == wantMax && r16(MENU_PARTY + i * P_SIZE + P_HP) == wantHp) target = i;
-					for (int i = 0; i < 6 && target < 0; i++)
-						if (r16(MENU_PARTY + i * P_SIZE + P_MAX) == wantMax) target = i;
-					if (target < 0 && timer < 70) { step(0); continue; }
-					if (target < 0) { if (dbg) fprintf(stderr, "menu copy never showed max HP %d; using RAM slot %d\n", wantMax, slot); target = slot; }
-					else if (dbg) fprintf(stderr, "menu copy matched at party frame %d\n", timer);
+					// ONE RULE, THE ACTUATOR'S (2026-09-10). Measured on the turn-57
+					// snapshot vs Giovanni: the "menu copy" at 0x020158AC held a fill
+					// pattern (0x1111), and gPlayerParty ITSELF is reordered while the
+					// party screen is open -- the cursor index selects gPlayerParty[d]
+					// as it reads at that moment, not as it read on the action menu.
+					// So the wanted Pokemon is identified BEFORE the menu opens (species
+					// and max HP from the pre-menu order, above) and located in the
+					// live party once the screen has settled, which is what
+					// agent_impl.lua sw_pick does ("slot N is stale, X max HP is
+					// really in slot M") and why it was right on every switch the
+					// old rule here got wrong. Fifty frames after the screen opens,
+					// like the actuator; the Pokemon already out is never a candidate.
+					if (partyAt < 0) partyAt = timer;
+					if (timer - partyAt < 50) { step(0); continue; }
+					uint16_t actSp = r16(MON + O_SP), actHp = r16(MON + O_HP);
+					for (int i = 0; i < 6 && target < 0; i++) {
+						uint32_t b = PARTY + i * P_SIZE;
+						if (r16(b + P_HP) == 0) continue;
+						if (r16(b + 0x20) == actSp && r16(b + P_HP) == actHp) continue;
+						if (r16(b + 0x20) == wantSp && r16(b + P_MAX) == wantMax) target = i;
+					}
+					for (int i = 0; i < 6 && target < 0; i++) {
+						uint32_t b = PARTY + i * P_SIZE;
+						if (r16(b + P_HP) == 0) continue;
+						if (r16(b + 0x20) == actSp && r16(b + P_HP) == actHp) continue;
+						if (r16(b + P_MAX) == wantMax) target = i;
+					}
+					if (target < 0 && timer - partyAt < 110) { step(0); continue; }
+					if (dbg) {
+						fprintf(stderr, "live party @f%d:", timer - partyAt);
+						for (int i = 0; i < 6; i++) fprintf(stderr, " %d:%u/%u/%u", i, r16(PARTY + i * P_SIZE + 0x20), r16(PARTY + i * P_SIZE + P_HP), r16(PARTY + i * P_SIZE + P_MAX));
+						fprintf(stderr, "\nwant species %u max %d -> display %d (cursor now %d)\n", wantSp, wantMax, target, cur);
+					}
+					if (target < 0) { printf("{\"error\":\"wanted Pokemon (species %u, max HP %d) not in the party as displayed\"}\n", wantSp, wantMax); return 3; }
 					if (dbg) fprintf(stderr, "party screen: RAM slot %d (max %d) is display slot %d\n", slot, wantMax, target);
 					slot = target;
 				}

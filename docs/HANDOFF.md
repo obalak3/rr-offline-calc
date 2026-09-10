@@ -165,15 +165,35 @@ Brendan, Cerulean Cave Giovanni with Lance) give one slot to an NPC we do not
 control. James's instruction: when doubles otherwise looks finished, REMIND
 HIM that these were never covered.
 
-0. **The core and the actuator resolve the party menu separately** and
-   disagreed on 2026-09-10 turn 22 (Giovanni's Honchkrow): the hidden core
-   scored "switch Granbull: lose 50" for a switch that did not bring
-   Granbull, and Granbull was sent into a crit Drill Peck. The GUARD is in
-   (fe573fe: a switch probe is believed only if the arrival's max HP matches;
-   mismatches are logged "ARRIVED AS" and thrown away). The FIX is not: both
-   halves should share ONE rule for which menu position holds a Pokemon
-   (oracle.c and agent_impl.lua sw_pick). Watch the log for ARRIVED AS lines;
-   each one is a turn the oracle could not check a switch.
+0. FIXED 2026-09-10 evening (Giovanni fights, Lanturn and Granbull lost to
+   Honchkrow). Four changes, all live:
+   - **Party menu, one rule.** Measured on the turn-57 snapshot: the "menu
+     copy" at 0x020158AC holds a fill pattern, and gPlayerParty ITSELF is
+     reordered while the party screen is open (cursor index d picks the party
+     as it reads at that moment). The core now identifies the wanted Pokemon
+     by species + max HP BEFORE the menu opens and finds it in the live party
+     50 frames after the screen settles, exactly as `sw_pick` does. Verified
+     on all five bench slots; a fainted target is refused. The arrival guard
+     (`ARRIVED AS` lines) stays as the tripwire.
+   - **Crit-aware damage reads.** position.js `expectedMid`: the middle roll
+     weighed by the calculator's real crit rate (Super Luck, Scope Lens,
+     high-crit moves); a crit ignores Attack drops, so Intimidate on
+     Honchkrow is now worth half on Drill Peck and nothing on Night Slash.
+     The lever gate (candidates.js condMatters) reads the same number. The
+     death read takes the crit band when their active's best move crits at
+     >= RR_CRIT_PRONE (0.5) -- log says "their active crits N% of the time".
+     James's "ignore crits" rule stands for ordinary rates.
+   - **Two turns on the real game when the turn is hard** (someone lost on
+     the plan or a rival, best rival is a dodge, or the fight reads HARD):
+     the plan and the top RR_ORACLE_DEPTH_K (3) rivals are replayed with
+     `--save`, every move of whoever then stands is played from the saved
+     state, and each candidate is judged on its best two-turn total
+     (position after two turns + both turns' events). `[oracle depth 2 ...]`
+     line. RR_ORACLE_DEPTH=1 turns it off. A dodge that only defers now shows
+     its second turn (turns 50-53: Greninja + Water Shuriken was the line).
+     UNTESTED LIVE at the time of writing; ~12 s extra on hard turns, serial.
+   - Oracle before/after party rows are paired by MAX HP, not index, and so
+     is importance (the party swaps slots on a switch in this ROM).
 1. Switch churn (35-83% per segment in run 16): a dodge switch that only
    delays still scores too well on one turn. Candidates: a tempo cost in the
    oracle score for a turn that removes no HP from them; two-turn oracle
@@ -248,7 +268,8 @@ RR_DEBUG_OPENER, RR_DEBUG_BEST, RR_DEBUG_ORACLE.
 Planner knobs: RR_POSITION, RR_POS_IMPORTANCE (0.5), RR_POS_CAP (1),
 RR_DEATH_LAST, RR_AHEAD_DEATH (3), RR_SWITCH_MARGIN (0.5), RR_FINALISTS (4),
 RR_CARRY_PROGRESS, RR_FOE_ROLL, RR_CAREFUL, RR_CRIT_RISK, RR_ENTRY_MODEL.
-Agent knobs: RR_ORACLE (0 = off), RR_ORACLE_MARGIN (25), RR_ASK_TIMEOUT,
+Agent knobs: RR_ORACLE (0 = off), RR_ORACLE_MARGIN (25), RR_ORACLE_DEPTH (2),
+RR_ORACLE_DEPTH_K (3), RR_CRIT_PRONE (0.5), RR_ASK_TIMEOUT,
 RR_JITTER_MS (900; harmless, does not change rolls), RR_WILD, RR_DOUBLES,
 EXPENDABLE (default nobody).
 

@@ -50,6 +50,24 @@ function importance(engine, st) {
 	return w;
 }
 
+/**
+ * THE MIDDLE ROLL, WEIGHED BY THE REAL CRIT RATE (James, 2026-09-10). Lanturn
+ * fell to Giovanni's Honchkrow after Intimidate was priced at full value:
+ * Super Luck plus Scope Lens makes half of its hits critical, Night Slash all
+ * of them, and a critical hit ignores the attacker's Attack drops. Reading the
+ * no-crit roll alone valued the drop as if crits never happened and read the
+ * hits at half their weight. The calculator already knows the rate per
+ * attacker and move; this is where the value model finally asks it. For an
+ * ordinary Pokemon the rate is 1/24 and nothing measurable changes.
+ */
+function expectedMid(r) {
+	const midN = r.noCrit[Math.floor(r.noCrit.length / 2)];
+	const c = Math.min(1, Math.max(0, Number(r.critChance) || 0));
+	if (!c || !r.crit || !r.crit.length) return midN;
+	const midC = r.crit[Math.floor(r.crit.length / 2)];
+	return (1 - c) * midN + c * midC;
+}
+
 /** Best damage fraction one side's Pokemon does to the other's, per move split. */
 function bestHit(engine, st, side, attackerIdx, defenderIdx) {
 	const B = engine.B;
@@ -63,7 +81,7 @@ function bestHit(engine, st, side, attackerIdx, defenderIdx) {
 		let r = null;
 		try { r = B.damageRolls(probe, side, mv); } catch (e) { r = null; }
 		if (!r || r.immune || !r.noCrit || !r.noCrit.length) return;
-		const mid = r.noCrit[Math.floor(r.noCrit.length / 2)] / Math.max(1, def.maxHP);
+		const mid = expectedMid(r) / Math.max(1, def.maxHP);
 		if (mid > best) best = mid;
 	});
 	return best;
@@ -174,4 +192,4 @@ function condDelta(engine, before, after, w) {
 	return -Math.max(-POS_CAP, Math.min(POS_CAP, d));
 }
 
-module.exports = {importance, evaluate, condDelta, bestHit, IMPORTANCE, POS_CAP};
+module.exports = {importance, evaluate, condDelta, bestHit, expectedMid, IMPORTANCE, POS_CAP};

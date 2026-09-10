@@ -20,6 +20,7 @@
  * idea that lowering Attack is worth trying.
  */
 'use strict';
+const POS = require('./position.js');
 const D = require('./duels.js');
 const E = require('./enablers.js');
 
@@ -296,7 +297,9 @@ function candidatesFor(ctx, fi, options) {
 					let b = 0;
 					(foe.moves || []).forEach(mv => {
 						let r = null; try { r = engine.B.damageRolls(st, 'foe', mv); } catch (e) { r = null; }
-						if (r && !r.immune && r.noCrit && r.noCrit.length) b = Math.max(b, r.noCrit[Math.floor(r.noCrit.length / 2)]);
+						// Weighed by the real crit rate: a drop is worth nothing on the
+						// hits that crit, and Honchkrow crits half the time (position.js).
+						if (r && !r.immune && r.noCrit && r.noCrit.length) b = Math.max(b, POS.expectedMid(r));
 					});
 					return b;
 				};

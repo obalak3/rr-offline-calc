@@ -1067,8 +1067,26 @@ function deathReadFor(st) {
 	if (process.env.RR_CAREFUL === 'off') return {risks: {roll: 'median'}, tier: null};
 	let r = null;
 	try { r = DIFFICULTY.classify(engine, st); } catch (e) { r = null; }
-	if (!r) return {risks: {roll: 'median'}, tier: null};
-	return {risks: DIFFICULTY.deathRisksFor(r.tier), tier: r.tier, worst: r.worst};
+	const risks = r ? DIFFICULTY.deathRisksFor(r.tier) : {roll: 'median'};
+	// A CRIT THAT IS A COIN FLIP IS NOT A CRIT (James, 2026-09-10). His rule
+	// that the death read ignores crits was made for the ordinary 1-in-24;
+	// Giovanni's Honchkrow carries Super Luck and a Scope Lens, so half of its
+	// hits crit and every Night Slash does, and a crit ignores the Attack drop
+	// Intimidate just bought. Lanturn was read as safe and fell. So the rate is
+	// asked of the calculator for their active's real moves against our
+	// active, and when it reaches RR_CRIT_PRONE (default 1/2) the death read
+	// takes the crit band, whatever the fight's tier. Ordinary rates change
+	// nothing.
+	let critProne = 0;
+	try {
+		const foe = st.foe.team[st.foe.active];
+		(foe && foe.set && foe.set.moves || []).forEach(mv => {
+			let d = null; try { d = B.damageRolls(st, 'foe', mv); } catch (e) { d = null; }
+			if (d && !d.immune && d.noCrit && d.noCrit.length && Number(d.critChance) > critProne) critProne = Number(d.critChance);
+		});
+	} catch (e) { critProne = 0; }
+	if (critProne >= Number(process.env.RR_CRIT_PRONE || 0.5)) risks.crit = true;
+	return {risks, tier: r ? r.tier : null, worst: r ? r.worst : undefined, critProne};
 }
 
 
@@ -1127,14 +1145,15 @@ function decide(st, obs) {
 	// same risk appetite.
 	const read = deathReadFor(st);
 	const deathRisks = read.risks;
+	deathReadFor.lastTier = read.tier;
 	// Announced when it CHANGES, not every call: decide() runs more than once
 	// on some turns and three identical lines per turn is noise.
-	const stamp = read.tier + '/' + read.worst;
+	const stamp = read.tier + '/' + read.worst + '/' + (deathRisks.crit ? 'crit' : '');
 	if (read.tier && deathReadFor.said !== stamp) {
 		deathReadFor.said = stamp;
 		console.log('  [fight reads ' + read.tier.toUpperCase()
 			+ ' (their weakest link has ' + read.worst + ' clean answers); death judged on '
-			+ (deathRisks.crit ? 'their top roll AND a crit'
+			+ (deathRisks.crit ? 'their top roll AND a crit' + (read.critProne >= 0.5 ? ' (their active crits ' + Math.round(read.critProne * 100) + '% of the time)' : '')
 				: (deathRisks.foeRoll === 'max' ? 'their top roll' : 'their median roll')) + ']');
 	}
 	for (const a of legal) {
@@ -2974,8 +2993,12 @@ setInterval(() => {
 				}
 				return r;
 			};
-			const runOne = a => {
-				const args = [ORACLE.ROM, SNAP, a.type === 'switch' ? 'switch' : 'move', String(a.index)];
+			// Play one action from a state file; optionally save the after-state
+			// (for a second turn) and verify a switch's arrival against RAM slot
+			// `arrivalIdx` (only meaningful from the live snapshot).
+			const runFrom = (stateFile, a, saveTo, arrivalIdx) => {
+				const args = [ORACLE.ROM, stateFile, a.type === 'switch' ? 'switch' : 'move', String(a.index)];
+				if (saveTo) args.push('--save', saveTo);
 				let out = '';
 				try { out = execFileSync(ORACLE.BIN, args, {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); }
 				catch (e) { out = e.stdout ? String(e.stdout) : ''; }
@@ -2985,9 +3008,10 @@ setInterval(() => {
 					let j; try { j = JSON.parse(line); } catch (e) { return; }
 					if (j.error) r.error = j.error; else if (j.at) r[j.at] = j;
 				});
-				if (a.type === 'switch') checkArrival(r, a.index);
+				if (a.type === 'switch' && arrivalIdx >= 0) checkArrival(r, arrivalIdx);
 				return r;
 			};
+			const runOne = a => runFrom(SNAP, a, null, a.type === 'switch' ? a.index : -1);
 			const me = st.me.team[st.me.active];
 			let chosenA = d.best.action.type === 'switch'
 				? {type: 'switch', index: slot} : {type: 'move', index: slot};
@@ -3060,23 +3084,39 @@ setInterval(() => {
 				// of ours that fainted. A Sleep Powder that lands is now worth what
 				// the sleep is worth, not zero.
 				const POSm = require('./lib/position.js');
-				const score = r => {
-					if (!r || !r.before || !r.after) return -Infinity;
-					let v = 0;
+				// The party SWAPS slots on a switch in this ROM (Granbull replacing
+				// Greninja put Granbull in slot 0), so before/after rows are paired
+				// by max HP, the fingerprint, never by index; and importance is
+				// looked up the same way.
+				const byMax = {}; st.me.team.forEach(m => { byMax[m.maxHP] = m.set.species; });
+				const wOfMax = m => (posW && byMax[m] && posW[byMax[m]]) || 1;
+				const pairHp = (before, after) => {
+					const used = new Set(), out = [];
+					(before || []).forEach((p, i) => {
+						let j = (after || []).findIndex((q, k) => !used.has(k) && q[1] === p[1]);
+						if (j < 0) j = i;
+						used.add(j);
+						out.push({max: p[1], hp0: p[0], hp1: after && after[j] ? after[j][0] : p[0]});
+					});
+					return out;
+				};
+				// One outcome in two parts: the position (absolute when the obs
+				// parses, else our HP lost) and the events of the turn (their HP
+				// removed, +1000 per kill, -30 x importance per Pokemon of ours
+				// that fainted). Two turns chain as position-after-two plus both
+				// turns' events.
+				const parts = r => {
+					if (!r || !r.before || !r.after) return null;
 					let pos = null;
 					try { if (r.obs) pos = POSm.evaluate(engine, buildState(r.obs), {importance: posW}); } catch (e) { pos = null; }
-					if (pos) {
-						v += 100 * (pos.hp + pos.cond);
-					} else {
-						r.before.party.forEach((p, i) => { v -= Math.max(0, p[0] - r.after.party[i][0]) * wOf(i); });
-					}
-					r.before.party.forEach((p, i) => { if (p[0] > 0 && r.after.party[i][0] === 0) v -= 30 * wOf(i); });
-					r.before.foeparty.forEach((p, i) => {
-						v += Math.max(0, p[0] - r.after.foeparty[i][0]);
-						if (p[0] > 0 && r.after.foeparty[i][0] === 0) v += 1000;
-					});
-					return v;
+					let ev = 0;
+					pairHp(r.before.party, r.after.party).forEach(x => { if (x.hp0 > 0 && x.hp1 === 0) ev -= 30 * wOfMax(x.max); });
+					pairHp(r.before.foeparty, r.after.foeparty).forEach(x => { ev += Math.max(0, x.hp0 - x.hp1); if (x.hp0 > 0 && x.hp1 === 0) ev += 1000; });
+					let hp = pos ? 100 * (pos.hp + pos.cond) : null;
+					if (hp === null) { hp = 0; pairHp(r.before.party, r.after.party).forEach(x => { hp -= Math.max(0, x.hp0 - x.hp1) * wOfMax(x.max); }); }
+					return {pos: hp, ev, abs: !!pos};
 				};
+				const score = r => { const p = parts(r); return p ? p.pos + p.ev : -Infinity; };
 				const MARGIN = Number(process.env.RR_ORACLE_MARGIN || 25);
 				const chosenScore = score(chosenR);
 				// THE PLAN'S OWN BAIT LINE IS JUDGED ON ITS SECOND TURN, not its
@@ -3112,6 +3152,63 @@ setInterval(() => {
 					pick = scored[0];
 					why = 'scores ' + Math.round(scored[0].v) + ' against the plan\'s ' + Math.round(chosenScore)
 						+ ' in HP-equivalents on the real game';
+				}
+				// DEPTH TWO ON HARD TURNS (James, 2026-09-10: "we need multiple turn
+				// look ahead too, especially if the position is a hard one").
+				// Lanturn fell to a 51-HP Honchkrow after four dodges in a row:
+				// each switch lost less HP THIS turn than attacking, so each was
+				// taken, each paid its entry hit, and the fourth had nowhere to go.
+				// Greninja-Ash, untouched and faster, kills it with Water Shuriken
+				// before Sucker Punch: a two-turn line. So when the turn is hard
+				// (someone is lost on the plan or a rival, the best rival is a dodge,
+				// or the fight reads HARD) the plan and the top rivals are played one
+				// turn further on the hidden game: the after-state is saved, every
+				// move of whoever is then standing is played from it, and each
+				// candidate is judged on its best two-turn total. A dodge that leads
+				// nowhere now shows its second turn. RR_ORACLE_DEPTH=1 turns this
+				// off; RR_ORACLE_DEPTH_K (3) is how many rivals go deep.
+				const DEPTH = Number(process.env.RR_ORACLE_DEPTH || 2);
+				const hardTurn = cs.ourDead > 0 || scored.some(x => x.s.ourDead > 0)
+					|| (pick && pick.a.type === 'switch') || deathReadFor.lastTier === 'hard';
+				if (DEPTH >= 2 && !baitHolds && hardTurn && chosenR.after && chosenR.after.screen !== 'nobattle') {
+					const t2 = Date.now();
+					const K = Number(process.env.RR_ORACLE_DEPTH_K || 3);
+					const os = require('os');
+					const seen = {};
+					const cands = [{a: chosenA, v: chosenScore, plan: true}]
+						.concat(scored.slice(0, K).map(x => ({a: x.a, v: x.v})))
+						.filter(c => { const k = c.a.type + ':' + c.a.index; if (seen[k] || !isFinite(c.v)) return false; seen[k] = true; return true; });
+					const stateFile = path.join(os.tmpdir(), 'rr-oracle-d2-' + process.pid + '.ss');
+					const judged = cands.map(c => {
+						const r1 = runFrom(SNAP, c.a, stateFile, c.a.type === 'switch' ? c.a.index : -1);
+						const p1 = parts(r1);
+						if (!p1) return {c, total: c.v, reply: null, note: r1.error || 'no result'};
+						let best = {total: p1.pos + p1.ev, reply: null};
+						if (r1.after && r1.after.screen === 'action' && r1.after.me) {
+							const moves = r1.after.me.moves || [], pp = r1.after.me.pp || [];
+							moves.forEach((mv, i) => {
+								if (!mv || (pp[i] !== undefined && pp[i] <= 0)) return;
+								const r2 = runFrom(stateFile, {type: 'move', index: i}, null, -1);
+								const p2 = parts(r2);
+								if (!p2) return;
+								const total = (p2.abs ? p2.pos : p1.pos + p2.pos) + p1.ev + p2.ev;
+								if (total > best.total) best = {total, reply: moveName(mv) || ('move ' + i)};
+							});
+						} else if (r1.after && r1.after.screen === 'party') best.reply = 'forced pick';
+						return {c, total: best.total, reply: best.reply, note: null};
+					});
+					try { fs.unlinkSync(stateFile); } catch (e) { /* gone */ }
+					const planJ = judged.find(j => j.c.plan);
+					const bestJ = judged.slice().sort((x, y) => y.total - x.total)[0];
+					const line = judged.map(j => name(j.c.a) + (j.reply ? ' then ' + j.reply : '') + ' = ' + Math.round(j.total) + (j.note ? ' (' + j.note + ')' : '')).join(' | ');
+					if (planJ && bestJ && !bestJ.c.plan && bestJ.total > planJ.total + MARGIN) {
+						pick = scored.find(x => x.a.type === bestJ.c.a.type && x.a.index === bestJ.c.a.index) || pick;
+						why = 'two turns on the real game: ' + Math.round(bestJ.total) + ' against the plan\'s ' + Math.round(planJ.total)
+							+ (bestJ.reply ? ', then ' + bestJ.reply : '');
+					} else if (planJ) {
+						pick = null; why = '';
+					}
+					console.log('  [oracle depth 2, ' + (Date.now() - t2) + 'ms: ' + line + ' -> ' + (pick ? name(pick.a) : 'the plan') + ']');
 				}
 				// 3. A BAIT OR ABSORB LINE IS VERIFIED ON THE REAL GAME. The market's
 				// AI model guesses what they throw at the bait (it said Muddy Water
