@@ -46,8 +46,9 @@ Toxtricity, Volt Absorb or Static on Kilowattrel.
    instruction, in his words: "if we ever get to a point where we think we
    have finished double battles remind me it."
 3. **Zero faints is the target**, same bar as singles.
-4. **About 10 seconds of thinking per turn.** Rank every joint action cheaply,
-   then play the best 16 on the hidden game for real.
+4. **About 10 seconds of thinking per turn.** His words: "if you are doing
+   the best 16 per turn then the first option is good enough". The budget is
+   his; HOW the turn is decided inside it is the open question below.
 
 ## Where the agent stands today
 
@@ -84,54 +85,107 @@ fire (`RRCritKO.targetsHit`, `analyseFocusFire`, `fieldForMove`).
 name used by the calculator's own move objects. Feeding dex records straight
 into that helper makes every spread move read as single-target, silently.
 
-## The approach: the real game is the evaluator
+## What is settled about the approach
 
-**Do not port the engine and the AI to doubles.** Five separate measurements
-in this project say more search loses and that the value model is the
-bottleneck (depth sweep, RR_DEEP_SCAN, gameplan beam, arm C, arm D). A
-doubles engine plus doubles AI targeting is the largest speculative build
-available here, and it would produce a worse opponent model than the one the
-hidden core gives us for free. The oracle is what actually won run 16.
+**The real game is the evaluator of the immediate turn.** The oracle plays a
+joint action on the windowless core and reports the truth, which absorbs
+everything an engine would have to be taught: Neutralizing Gas switching off
+Intimidate and Volt Absorb, Dry Skin healing off an Aqua Tail, Sniper crits,
+the AI's real target choice. **The engine and the AI port are not being
+ported to 2v2.** Not because "more search loses" (that measurement was about
+the planner's own lookahead with an optimistic model), but because the oracle
+makes an engine unnecessary for the turn in front of us, and any deeper look
+is cheaper as real rollouts than as a model.
 
-So: enumerate joint actions, let the engine's damage numbers narrow them, and
-play the survivors on the real game.
+**The doubles brain is a separate, small path.** The singles brain is three
+thousand lines that assume one Pokemon a side; threading two actives through
+it would break singles and not produce doubles. Shared and reused: party and
+foe decoding (`teamsFor`, `speciesName`), the position score, the oracle
+wrapper, the actuator, the panel. Nothing else.
 
-Arithmetic. Each of our two actives has about 4 moves times up to 2 targets
-plus up to 4 switches, so 8 to 12 actions each, and 64 to 144 joint actions.
-At 0.7 s a probe that is one to two minutes a turn played straight. Ranking
-first on damage numbers and playing only the best 16, in parallel, fits the
-10-second budget.
+**Arithmetic.** Each of our two actives has about 4 moves times up to 2
+targets plus up to 4 switches, 8 to 12 actions each, 64 to 144 joint actions
+minus conflicts (both cannot switch to the same Pokemon). Singles probes cost
+0.7 s; a doubles turn has two decisions, target picks and four animations, so
+expect 1 to 2 s. **The live oracle path is SERIAL today** (`rivals.map(a =>
+runOne(a))` with execFileSync); parallel probing does not exist yet. This Mac
+has 8 cores, 4 fast, shared with the emulator James is watching. Sixteen
+probes at 1.5 s four at a time is about 6 s. The 10-second budget is
+UNMEASURED until stage 3 measures it.
 
-## Stages, each with its own acceptance test
+## The decision layer: OPEN, James's call
 
-**Stage 1 -- map the doubles screens.** Measurement only, nothing presses.
-Needed: the controller pointer value for target selection, the target cursor
-address, the order the two prompts arrive in, what B does on the second
-prompt, the forced-switch flow when two faint at once, and confirmation that
-battler 2 is ours-right and 3 is theirs-right. James's rule applies in full:
-nothing presses a button before the screen is known.
-*Accept when* the hidden core plays a complete doubles turn twice from one
-save state and gets the same answer both times.
+This is the part the first draft decided alone ("rank every joint action on
+damage, play the best 16") and it was wrong in two ways. The ranker IS the
+value model in disguise: the 16 that hit hardest never include a switch, an
+Electroweb, a Nuzzle or an Intimidate pivot, which rebuilds the "too focused
+on killing" complaint of 2026-09-08 by design. And it sees one turn: against
+these guards the danger is in turn two (Dark Void's sleep, Talonflame's
+Tailwind, Neutralizing Gas standing), and a one-turn read cannot see that no
+safe pair of moves is left next turn.
 
-**Stage 2 -- see the whole field.** The actuator ships all four battlers and
-says which slot is being asked; the observation and `teamsFor` build a 2v2
-position.
-*Accept when* the printed position matches a screenshot of the same turn,
-Pokemon for Pokemon, HP for HP. Still nothing presses.
+The options, with what each can and cannot see. To be chosen WITH James.
 
-**Stage 3 -- the doubles oracle.** One call plays a joint action (two actions
-plus their targets) on the windowless core and reports the real after-state.
-*Accept when* two identical calls agree, and a hand-checked line matches what
-the same line does live.
+**A. One turn, real, with a safety read.** Build the 16 as a portfolio (both
+hit one target; split; each switch with the partner's best hit; each speed or
+status move with an attack; the hardest hits fill the rest), play them for
+real, score the after-states, then ask the calculator's focus-fire math
+whether their two attackers can remove one of ours before it moves next turn,
+and refuse those. Sees: this turn exactly, next turn's worst case roughly.
+Cannot see: a two-turn idea (drop their speed now so both of ours move first
+from now on, then focus fire).
 
-**Stage 4 -- advisor.** Rank every joint action on damage, play the best 16 on
-the oracle, score the real after-states with the position score, print the
-recommendation while James plays.
-*Accept when* he judges the recommendations turn by turn on a saved guard
-fight, the same way Surge was judged.
+**B. Two turns, real.** As A, then for the best few joint actions save the
+after-state and play a handful of our replies for real. Sees turn two with
+the AI's real answers, including what it does after Tailwind or Dark Void.
+Costs roughly twice the probes. Still no idea longer than two turns.
 
-**Stage 5 -- let it press.** Only after stage 4 reads right, per fight, with
-the same stand-down switch that exists today.
+**C. Lines, priced by playing them.** Plans the way James and the singles
+agent think: "Electroweb and Overdrive this turn, then both onto Aerodactyl,
+Gyarados in when Hypno drops" -- short sequences of joint actions with
+conditions, generated from doubles families (focus fire, spread, speed
+control first, Intimidate cycling, switch to absorb) and from James's typed
+panel lines. Each line is priced by PLAYING it on the hidden core: a
+three-turn line costs three probes, not a tree, because from a save state the
+fight is deterministic given our actions. Sixteen lines of three turns is
+about 48 probes, 15 to 20 s at four in parallel. The one-turn check of A stays
+as the safety net before every press. Sees: the fight the way a person plans
+it, verified on the real game. Cannot see: branches (a line is one path; if
+the AI does something the line did not assume, it is re-priced next turn --
+the singles plan-and-repair loop).
+
+**D. Port the engine and the AI to 2v2 and reuse the singles planner.** The
+most lookahead and the most risk: a 2831-line one-active engine, a
+one-defender AI port, months of work, and an opponent model worse than the
+hidden core's. Listed for completeness.
+
+Whatever is chosen, the fallback when the oracle is unavailable (no snapshot,
+timeout) must be stated in code, because in doubles there is no planner
+underneath to fall back on. Options: the portfolio's calculator pick, or ask
+James at the panel.
+
+## Risks the first draft missed
+
+- **No snapshot is written while the agent stands down.** The save-state
+  write lives in the `await` phase; under hands-off the script returns before
+  it. In a doubles fight today the agent stands down, so stage 1 has no state
+  to measure from. Either James presses a save-state key at the first doubles
+  action menu, or one small script change snapshots while hands-off. This is
+  the first blocker.
+- **Partner battles need active detection.** If the doubles path ever presses
+  in Silph Co it will believe it controls a Pokemon it does not. Rule: in a
+  partner fight the Pokemon in our right slot is not in our party. One
+  comparison; must be in the code before stage 5, plus the dataset's "WITH
+  PARTNER" string as the second reading.
+- **The 0.75 spread modifier is verified against the calculator, not the
+  ROM.** Stage 3's first hand-checked line measures it.
+- **The position score is singles-shaped.** Importance comes from a 1v1 duel
+  table; speed conditions are read against one opponent. Usable as a first
+  cut (HP-weighted sum, kills, faints), to be adapted once the decision layer
+  is chosen.
+- **The 16 are the agent's whole field of view.** Whatever is not in the set
+  the oracle plays is never checked. The composition of that set matters more
+  than its size.
 
 ## Doubles knowledge the position score will need
 
