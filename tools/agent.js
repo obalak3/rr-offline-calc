@@ -2948,6 +2948,32 @@ setInterval(() => {
 		&& fs.existsSync(SNAP) && Date.now() - fs.statSync(SNAP).mtimeMs < 120000) {
 		try {
 			const {execFileSync} = require('child_process');
+			// WHO ACTUALLY CAME IN (2026-09-10). Turn 22 vs Giovanni's Honchkrow:
+			// the hidden core reported "switch Granbull: we lose 50" when a crit
+			// Drill Peck into Granbull is 180-216, a KO from full; 50 fits a
+			// Flying-resist such as Lanturn. The core and the actuator each work
+			// out which party-menu position holds a Pokemon, and they disagreed,
+			// so a result was scored under the wrong name and Granbull was sent
+			// into the hit. A switch probe is only believed if the Pokemon on the
+			// field afterwards is the one that was asked for (max HP is the
+			// fingerprint: it survives form changes, species ids do not).
+			const checkArrival = (r, index) => {
+				if (!r || !r.after || !r.after.me) return r;
+				const want = st.me.team[index];
+				const wantMax = want && want.maxHP;
+				if (!want || !wantMax) return r;
+				const got = speciesName(r.after.me.species) + ' ' + r.after.me.hp + '/' + r.after.me.maxhp;
+				if (Number(r.after.me.maxhp) !== Number(wantMax)) {
+					r.arrived = got;
+					r.error = 'asked for ' + want.set.species + ' (' + wantMax + ' max HP) but ' + got + ' came in';
+					r.after = null;
+					console.log('  [oracle: switch ' + want.set.species + ' ARRIVED AS ' + got
+						+ ' on the hidden game -- the core and the actuator disagree about the party menu; probe thrown away]');
+				} else {
+					r.arrived = want.set.species;
+				}
+				return r;
+			};
 			const runOne = a => {
 				const args = [ORACLE.ROM, SNAP, a.type === 'switch' ? 'switch' : 'move', String(a.index)];
 				let out = '';
@@ -2959,6 +2985,7 @@ setInterval(() => {
 					let j; try { j = JSON.parse(line); } catch (e) { return; }
 					if (j.error) r.error = j.error; else if (j.at) r[j.at] = j;
 				});
+				if (a.type === 'switch') checkArrival(r, a.index);
 				return r;
 			};
 			const me = st.me.team[st.me.active];
@@ -3070,6 +3097,7 @@ setInterval(() => {
 						try { fs.unlinkSync(t1); } catch (e) { /* gone */ }
 						const r2 = {before: null, after: null, error: null};
 						out2.split('\n').forEach(line => { line = line.trim(); if (!line) return; let j; try { j = JSON.parse(line); } catch (e) { return; } if (j.error) r2.error = j.error; else if (j.at) r2[j.at] = j; });
+						checkArrival(r2, absIdx);
 						const s2 = ORACLE.summarize(r2);
 						const hpNow = st.me.team[absIdx].curHP, hpAfter = r2.after ? r2.after.party[absIdx][0] : null;
 						baitHolds = !!(s2.ok && s2.ourDead === 0 && hpAfter !== null && hpAfter > hpNow);
@@ -3114,6 +3142,7 @@ setInterval(() => {
 								out.split('\n').forEach(line => { line = line.trim(); if (!line) return; let j; try { j = JSON.parse(line); } catch (e) { return; } if (j.error) r.error = j.error; else if (j.at) r[j.at] = j; });
 								return r;
 							})();
+							checkArrival(run1, bait.action.index);
 							const s1 = ORACLE.summarize(run1);
 							let s2 = null, run2 = null;
 							if (s1.ok && s1.ourDead === 0 && !s1.over) {
@@ -3121,6 +3150,7 @@ setInterval(() => {
 								let out = ''; try { out = execFileSync(ORACLE.BIN, args, {timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); } catch (e) { out = e.stdout ? String(e.stdout) : ''; }
 								run2 = {before: null, after: null, error: null};
 								out.split('\n').forEach(line => { line = line.trim(); if (!line) return; let j; try { j = JSON.parse(line); } catch (e) { return; } if (j.error) run2.error = j.error; else if (j.at) run2[j.at] = j; });
+								checkArrival(run2, absIdx);
 								s2 = ORACLE.summarize(run2);
 							}
 							try { fs.unlinkSync(t1); } catch (e) { /* gone */ }
@@ -3142,10 +3172,15 @@ setInterval(() => {
 						}
 					}
 				}
-				console.log('  [oracle ' + (Date.now() - t0) + 'ms: ' + name(chosenA) + ' -> we lose ' + cs.ourLost
+				const arrivedOf = a => {
+					if (a.type !== 'switch') return '';
+					const x = (a.type === chosenA.type && a.index === chosenA.index) ? {r: chosenR} : raw.find(y => y.a.type === a.type && y.a.index === a.index);
+					return x && x.r && x.r.arrived ? ' (arrived: ' + x.r.arrived + ')' : '';
+				};
+				console.log('  [oracle ' + (Date.now() - t0) + 'ms: ' + name(chosenA) + arrivedOf(chosenA) + ' -> we lose ' + cs.ourLost
 					+ ' HP' + (cs.ourDead ? ' and ' + cs.ourDead + ' Pokemon' : '') + ', they lose ' + cs.theirLost
 					+ (cs.theirDead ? ' and ' + cs.theirDead + ' Pokemon' : '') + (cs.foeSwitched ? ', they switch' : '')
-					+ (pick ? ' | TAKING ' + name(pick.a) + ' instead: ' + why + ' (they lose ' + pick.s.theirLost
+					+ (pick ? ' | TAKING ' + name(pick.a) + arrivedOf(pick.a) + ' instead: ' + why + ' (they lose ' + pick.s.theirLost
 						+ (pick.s.theirDead ? ' and ' + pick.s.theirDead : '') + ', we lose ' + pick.s.ourLost + ')' : '') + ']');
 				if (!pick && vetoDodge) {
 					// The plan stands: the veto's dodge did not beat it on the real game.
