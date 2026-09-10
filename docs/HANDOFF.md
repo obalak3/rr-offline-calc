@@ -1,4 +1,4 @@
-# Handoff -- current as of 2026-09-10 (head e7f4398, branch battle-solver = main)
+# Handoff -- current as of 2026-09-10 (branch battle-solver = main). Next phase: DOUBLES, see docs/PLAN-DOUBLES.md
 
 Everything before 2026-09-05 is in docs/HANDOFF-HISTORY.md, verbatim. This file
 is the whole current picture. Read docs/ASSUMPTIONS.md for engine assumptions.
@@ -154,6 +154,17 @@ reseeds the RNG; F5 and `loadstate` do not.
 
 ## 7. Open items, in order
 
+**THE NEXT PHASE IS DOUBLES.** James beat Erika on 2026-09-08 and the next
+three battles in the game are double battles (Game Corner guard, then the two
+Rocket Hideout guards, cap 47, four Pokemon each). Plan, decisions, staging
+and acceptance tests: `docs/PLAN-DOUBLES.md`. Nothing in the agent plays
+doubles today; it stands down and hands the fight to James.
+
+**MARKED NOT DONE ON PURPOSE:** partner battles (Silph Co Ariana & Archer with
+Brendan, Cerulean Cave Giovanni with Lance) give one slot to an NPC we do not
+control. James's instruction: when doubles otherwise looks finished, REMIND
+HIM that these were never covered.
+
 1. Switch churn (35-83% per segment in run 16): a dodge switch that only
    delays still scores too well on one turn. Candidates: a tempo cost in the
    oracle score for a turn that removes no HP from them; two-turn oracle
@@ -161,13 +172,60 @@ reseeds the RNG; F5 and `loadstate` do not.
 2. Turn 221 (Accelgor vs Rillaboom, switch instead of Bug Buzz): fixed by the
    immediate-price switch rule; James said it "can be discussed" -- a value
    question, not to be changed further without him.
-3. Damage gap: Mienshao's Drain Punch into Pawmot lands at 62-81% of the
-   engine's range every run (both sides' stats verified equal to live; Fake
-   Out, Scald, Bug Buzz, Rock Tomb match). James to check in game / on the
-   RR calc site. Every "Mienshao kills Pawmot in N" is one hit optimistic.
+3. Damage gap, JAMES'S TO SETTLE: Mienshao's Drain Punch into Pawmot lands at
+   62-81% of the engine's range every run (both sides' stats verified equal to
+   live; Fake Out, Scald, Bug Buzz, Rock Tomb match). He checks it in game or
+   on the RR calc site. Every "Mienshao kills Pawmot in N" is one hit
+   optimistic until he does.
 4. Their damage is not audited (audit_damage covers our hits only).
-5. A second rehearsal fight to test on, James's choice.
-6. Unmodelled: Parental Bond; AI flags constant for all trainers.
+5. Unmodelled: Parental Bond; mega evolution; Manectric's double Intimidate;
+   AI flags constant for every trainer.
+
+### 7b. Gameplay questions put to James and never answered
+
+Re-raise these; they are his calls, not ours (docs/ASSUMPTIONS.md "Open").
+
+- **Status moves price as sacrifices.** `until: {foeStatus:'brn'}` cannot be
+  satisfied by a deterministic pricer, so "Scald until it burns, then close"
+  plays Lanturn 139 -> 63 -> 2 -> gone and the market correctly rejects a plan
+  that was never meant to end that way. Recommended: report status as a
+  probability the way faint risk already is. Interim guard either way: an
+  unsatisfiable `until` should fail the leg, not grind the Pokemon down.
+- **RR_CARRY_PROGRESS is still off by default.** Multi-move legs replay move 0
+  forever live and use-count handovers never fire, so a typed panel line of
+  two or more legs only ever runs its first leg. This is a correctness bug
+  behind a flag, not a preference.
+- **The priced opponent never voluntarily switches.**
+
+### 7c. Live-stack findings, 2026-09-10 (measured, not yet fixed)
+
+Found while reading the stack for the doubles plan. None is urgent, all three
+are cheap, and none should be touched while James's emulator is live.
+
+- **The two halves are out of step right now.** The brain has been up since
+  Sep 8 23:01 and has answered no turn since; `state.json` and `turn.ss` are
+  from Sep 8 22:41; mGBA and the script were relaunched Sep 10 10:58.
+- **results.tsv can gain a row no fight produced.** The recorder fires once per
+  session on `nobattle`; loading a save state taken just after a battle shows
+  six zeroes on their side and a healthy party on ours, and it records a WIN.
+  One such row exists: 1789052357 (Sep 10 10:59:17), WIN, 6 alive, save "?",
+  seed "none". The log line above it reads "0 fought so far", which is exactly
+  the guard that would prevent it. **Do not count that row.**
+- **A command is accepted on turn number alone** (`if id ~= turn then return
+  nil end`). `_RR.turn` survives a hot reload but restarts at 0 on a fresh
+  mGBA, so a stale `cmd.json` can be replayed if the counter reaches the same
+  number while the brain is down. One holding turn 242 is on disk now.
+- Cosmetic: `sw_pick` logs its stale-slot line every frame, roughly 40
+  identical lines per switch, which buries real events in agent.log.
+- Closed: the sw_pick party-menu fix is no longer untested. It ran live and
+  resolved the stale slot correctly.
+
+### 7d. Verified green, 2026-09-10
+
+`node tools/test_plan.js` 0 failures | `node tools/test_growl.js` passes (12
+lines offered, 0 attack-drop, gate fired 371x) | `node tools/audit_mechanics.js`
+0 gaps | `node tools/test_doubles.js` (the calculator page) passes. Working
+tree clean, nothing unpushed.
 
 ## 8. Instruments and flags
 
