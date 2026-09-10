@@ -113,7 +113,7 @@ has 8 cores, 4 fast, shared with the emulator James is watching. Sixteen
 probes at 1.5 s four at a time is about 6 s. The 10-second budget is
 UNMEASURED until stage 3 measures it.
 
-## The decision layer: OPEN, James's call
+## The decision layer: DECIDED with James, 2026-09-10
 
 This is the part the first draft decided alone ("rank every joint action on
 damage, play the best 16") and it was wrong in two ways. The ranker IS the
@@ -124,7 +124,19 @@ these guards the danger is in turn two (Dark Void's sleep, Talonflame's
 Tailwind, Neutralizing Gas standing), and a one-turn read cannot see that no
 safe pair of moves is left next turn.
 
-The options, with what each can and cannot see. To be chosen WITH James.
+**Chosen: C with A as the floor.** Short lines with conditions, priced by
+PLAYING them on the hidden core; the one-turn real check (A) runs before every
+press as the safety net, with the next-turn removal read on the chosen
+after-state. **Lines come from the agent's own doubles idioms first** (focus
+fire, spread first, speed control first, Intimidate cycling, absorb switches);
+James's words: "We can start off by letting the agent play. If it is making
+mistakes I can mark it and we can fix it." Same loop as singles: he flags a
+turn, we reproduce it from the archived snapshot, fix, replay the save. Typed
+panel lines remain available and are priced the same way. Time: normal turns
+must fit his ~10 s; the extra probes of longer lines are spent only when the
+one-turn read finds no safe pair of moves.
+
+The options as they were weighed, kept for the record:
 
 **A. One turn, real, with a safety read.** Build the 16 as a portfolio (both
 hit one target; split; each switch with the partner's best hit; each speed or
