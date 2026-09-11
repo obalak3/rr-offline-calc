@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('fs'),path=require('path'),cp=require('child_process');
-const ROOT='/Users/omerbalak/rr-agent/turns';
+const ROOT=require('os').homedir()+'/rr-agent/turns';
 const pairs=[];
 for(const d of fs.readdirSync(ROOT).filter(x=>/^2026-08-29-0[45]/.test(x)).sort()){
   const dir=path.join(ROOT,d);

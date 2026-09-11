@@ -64,7 +64,7 @@ A self-playing battle agent for James's Pokemon Radical Red rehearsal run:
     # panel
     node tools/control.js
     # load a state without touching any window
-    echo /Users/omerbalak/RadicalRed-mGBA/RadicalRed.ss5 > ~/rr-agent/loadstate
+    echo ~/RadicalRed-mGBA/RadicalRed.ss5 > ~/rr-agent/loadstate
     # unattended runs: RR_ASK_TIMEOUT=20 (panel wait, default 300 s)
 
 Health: `stat -f %Sm ~/rr-agent/heartbeat` must be recent (the Lua died

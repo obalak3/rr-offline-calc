@@ -1,8 +1,8 @@
 'use strict';
 const fs=require('fs'),path=require('path'),cp=require('child_process');
-const dirs=fs.readdirSync('/Users/omerbalak/rr-agent/turns').filter(d=>/^2026-08-29-0[45]/.test(d)).sort();
+const dirs=fs.readdirSync(require('os').homedir()+'/rr-agent/turns').filter(d=>/^2026-08-29-0[45]/.test(d)).sort();
 const sw=[];
-dirs.forEach(d=>{const full='/Users/omerbalak/rr-agent/turns/'+d;
+dirs.forEach(d=>{const full=require('os').homedir()+'/rr-agent/turns/'+d;
   fs.readdirSync(full).filter(f=>/^turn\d+\.json$/.test(f)).sort().forEach(f=>{
     try{const r=JSON.parse(fs.readFileSync(path.join(full,f),'utf8'));
       if(r.obs && r.obs.kind!=='forced' && /^switch/.test(r.played||'')) sw.push(path.join(full,f));}catch(e){}

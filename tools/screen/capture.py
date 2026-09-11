@@ -45,7 +45,7 @@ import window as winmod
 GBA_W, GBA_H = 240, 160
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CALIB_PATH = os.path.join(REPO, ".checkpoints", "screen-calib.json")
-SCRATCH = "/private/tmp/claude-501/-Users-omerbalak/screen"
+SCRATCH = os.environ.get("RR_SCREEN_SCRATCH", os.path.expanduser("~/rr-agent/screen"))
 os.makedirs(SCRATCH, exist_ok=True)
 FRAME_PATH = os.path.join(SCRATCH, "frame.png")
 

@@ -23,7 +23,7 @@ const vm = require('vm');
 const H = require('./lib/harness');
 
 const root = H.root;
-const OLD_EXACT = '/private/tmp/claude-501/-Users-omerbalak/d8614c36-e7a6-4af3-8130-7ee688416c0f/scratchpad/rr-exact.js.bak';
+const OLD_EXACT = process.env.RR_OLD_EXACT || 'rr-exact.js.bak';
 
 /** loadEngine, but with rr-exact.js swapped for an arbitrary file. */
 function loadWith(exactPath) {

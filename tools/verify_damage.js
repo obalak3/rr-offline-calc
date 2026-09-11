@@ -37,7 +37,7 @@ const battle = H.earlyBattles(engine, {maxLevel: 40})
 const foeSets = H.foeSets(battle);
 
 const tracePath = process.argv[2] ||
-	'/private/tmp/claude-501/-Users-omerbalak/screen/run7_trace.json';
+	require('os').homedir()+'/rr-agent/screen/run7_trace.json';
 const data = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
 // Only transitions we can be sure are ONE turn. If the foe's bar went UP
 // between two readings, something fainted and was replaced, so several turns

@@ -108,3 +108,17 @@ Pokémon and all related names are trademarks of Nintendo, Creatures Inc., and
 GAME FREAK Inc. Pokémon Radical Red is an unofficial fan-made ROM hack. This
 project is a non-commercial fan tool, is not affiliated with or endorsed by any
 of the above, and ships no game assets or ROM data.
+
+---
+
+## 6. mGBA
+
+The live agent runs inside [mGBA](https://mgba.io) through its Lua scripting
+API, and `tools/headless/oracle.c` links against `libmgba` (mGBA 0.10.5) to run
+a windowless core. mGBA is licensed under the Mozilla Public License 2.0. It is
+not vendored here: `tools/headless/build.sh` expects a local build of the mGBA
+source tree, which stays outside this repository, and the compiled `oracle`
+binary is ignored by git.
+
+No ROM, save file, or save state is part of this repository. The agent needs
+the user's own legally obtained copy of the game.
