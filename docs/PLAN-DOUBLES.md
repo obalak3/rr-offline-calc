@@ -1,8 +1,8 @@
 # Double battles -- the agent's plan (opened 2026-09-10)
 
-Not to be confused with `DOUBLES-SPEC.md` at the repo root, which is the
-CALCULATOR page's 2v2 mode and is finished. This document is about the live
-agent learning to play a double battle.
+Not to be confused with the CALCULATOR page's 2v2 mode (`docs/CALCULATOR.md`),
+which is finished. This document is about the live agent learning to play a
+double battle.
 
 ## Why now
 

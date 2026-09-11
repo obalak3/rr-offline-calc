@@ -31,7 +31,7 @@ off unless the arm names them.
 | **A** | control: current live behaviour |
 | **B** | `RR_NOANSWER_FLOOR=1 RR_CARRY_PROGRESS=1` -- the two correct-but-unproven fixes together, in case they only pay in combination |
 | **C** | commitment only: the current single-foe planner, but following its plan until a divergence test fires instead of re-planning every turn |
-| **D** | the whole-fight gameplan, plan-and-repair (James's design, also `docs/PLAN-LINE-PLANNER.md`) |
+| **D** | the whole-fight gameplan, plan-and-repair (James's design; the original plan note is in git history) |
 | **E** | D with the top TWO predicted replacements priced instead of one |
 
 **C exists to decompose D.** D combines two ingredients: commitment to a plan,
@@ -56,7 +56,7 @@ From archived live positions, D must:
 
 **AMENDED 2026-09-01, after the gate had already fired, on James's ruling.** The
 criterion originally read "not spend Victreebel on Pincurchin", taken from
-`docs/PLAN-LINE-PLANNER.md` where the motivating disaster is Victreebel being
+the original line-planner note (git history), where the motivating disaster is Victreebel being
 spent sweeping Pincurchin and Pawmot then beating the whole team. The first
 gameplan built tripped it: it opens Victreebel on Pincurchin, and answers Pawmot
 with Lilligant's Baby-Doll Eyes instead.

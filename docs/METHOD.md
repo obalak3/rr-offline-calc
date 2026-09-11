@@ -79,7 +79,7 @@ design and tie design; there is one distribution and one expectation over it.
 > process rather than a game, and MCTS is the right tool for it
 
 **The project reached the correct conclusion, measured it once, and walked
-away.** `docs/STATE.md` records the verdict: "lost on singles (56% against 60%)
+away.** The record of the time (since removed from the repo, in git history) reads: "lost on singles (56% against 60%)
 and is kept only because doubles has 576 action-pairs per turn". It is loaded by
 the harness, covered by tests, and wired into nothing.
 

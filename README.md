@@ -1,7 +1,7 @@
 # rr-offline-calc
 
-A self-playing battle agent for Pokémon Radical Red, and the offline damage
-calculator it grew out of.
+A self-playing Nuzlocke battle agent for Pokémon Radical Red. (The name is
+from the offline damage calculator it grew out of, which is still here.)
 
 The agent plays the game's trainer battles inside a real emulator, from what
 the game's own memory says, under Nuzlocke rules: the goal is not to win but to
@@ -138,63 +138,19 @@ measurement was written down at the time.
 - `docs/VALIDATION-LOG.md`, `docs/BATTERY-RESULTS.md`, `docs/BATTERY-PREREG.md`
   the measurements, pre-registered where they could be.
 - `docs/HANDOFF-HISTORY.md` the previous handoffs, verbatim.
+- `docs/CALCULATOR.md` the calculator, the project's first half.
 
 ---
 
 ## The calculator
 
-Where the project started: a fully offline Radical Red damage calculator with
-every trainer battle pre-loaded and KO chances that account for critical hits.
-It works from `file://` with no server and no network, which was the point.
-
-Built on the [Radical Red damage calculator][calc] (MIT), vendored under
-`upstream-calc/` with the upstream code left intact so the additions stay a
-reviewable diff.
-
-[calc]: https://github.com/RadicalRedShowdown/calc
-
-**What it adds.** All 167 trainer battles across the game's nine sections, 792
-Pokémon with real levels, natures, abilities, items, moves and EVs, one click
-to load. Crit-aware KO chances that blend each hit's true critical probability
-(move ratios, Super Luck, Scope Lens, Focus Energy, Merciless, Battle Armor).
-Doubles inside the same page: two more panels, spread damage, focus fire,
-2v1 handled. A saved team, importable straight from the game's battery save
-(natures solved from stored stats, PC boxes included, drag the `.sav` onto the
-panel). A Story Order view grouped by level cap, with your level following the
-cap. Speed order for the whole enemy team with what it would take to outrun
-them. Automatic field effects from the sheet's battle notes. The full Pokédex
-offline. A black theme.
-
-**How the data is checked.** The roster is cross-checked against an
-independent extraction of the same ROM (the community Radical Red Pokédex):
-1200 dex entries, every species present, base stats identical. The sheet
-prints each trainer Pokémon's Speed, and the extractor solves for the IV that
-reproduces it, which validates level, nature and EVs for 184 of 196 checkable
-entries exactly; the 12 that do not are documented (Ditto, a level-250 joke
-boss, a special-cased Marowak, and so on). All 792 trainer Pokémon are loaded
-through the real page in a headless DOM and read back. With the crit rate set
-to zero the crit-aware KO engine reproduces the upstream calculator's exact
-numbers across 219 matchups.
-
-```bash
-npm install && npm run build          # -> upstream-calc/dist/index.html, open it directly
-node tools/test_page.js               # panel behaviour
-node tools/test_doubles.js            # the doubles page
-node tools/test_offline.js            # the file:// guarantee
-node tools/test_load_all.js           # all 792 Pokémon, ~5 min
-node tools/test_critko.js             # the crit engine
-node tools/verify_roster.js           # roster vs the independent Pokédex
-```
-
-Refreshing the trainer data (`python3 tools/fetch_sheet.py` then
-`python3 tools/extract_trainers.py`) and the Pokédex (`node tools/build_dex.js`)
-need network; nothing else does.
-
-**Known limits.** Crit-aware KO chances do not fold in hazards or residual
-damage (the stock KO line, which does, is shown alongside). Inverse battles
-and banned types are listed as not applied rather than silently ignored.
-Hidden abilities cannot be read from a save; boxed Pokémon come in without an
-exact nature. The high-crit move list is maintained by hand in `rr-critko.js`.
+Where the project started, and the one part anyone can use without the
+emulator setup: an offline Radical Red damage calculator with every trainer
+battle pre-loaded, crit-aware KO chances, doubles, save-file import, and the
+Pokédex, working from `file://` with no network. It is finished and it is not
+the focus any more. `docs/CALCULATOR.md` has the features, the data checks and
+how to build it (`npm install && npm run build`, then open
+`upstream-calc/dist/index.html`).
 
 ---
 
