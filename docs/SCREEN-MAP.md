@@ -184,6 +184,27 @@ screen (`doracle <state> - s<slot>`): Toxtricity, Gyarados, Granbull and
 Skeledirge each arrived in the fainted slot with the right max HP, and asking
 for the fainted Pokemon itself is refused rather than guessed at.
 
+## Side conditions: the Tailwind timer, found 2026-09-15
+
+    0x020179C8    a side timer Tailwind drives: 0 with none up, then 3, 2, 1
+
+James asked whether Tailwind was handled. Found by the same diff method as the
+cursors: play three turns from the right guard's opening with both of ours
+switching out so Talonflame gets free turns, dump EWRAM and IWRAM after each,
+and keep the bytes that fall by exactly one per turn from 4 or less. Two
+survived; this one reads 0 in the opening state where no Tailwind can be up
+yet, and Tailwind is the only four-turn side move Talonflame carries.
+
+It sits twelve bytes after `0x020179BC`, the terrain timer the oracle already
+ships, so the field and side timers are one block and the rest of it can be
+read off the same way when something needs it.
+
+**NOT YET SEPARATED: which SIDE it belongs to.** Every reading so far came from
+THEIR Tailwind, and no Pokemon on the tested teams has the move, so the
+player-side slot has never been seen non-zero. Do not assume this byte means
+"their Tailwind" until a state exists where we set one, or until poking it and
+watching which side's turn order changes settles it.
+
 ## Still not mapped
 
 - Whether both slots ask at once when two of ours faint on the same turn.

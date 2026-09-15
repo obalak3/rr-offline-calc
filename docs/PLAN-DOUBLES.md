@@ -359,6 +359,36 @@ moment. The regression test pins the turn-3
 position itself: the clean U-turn line must win even though the trading line
 scores higher on the total.
 
+### SIDE CONDITIONS ARE INVISIBLE TO THE SCORE (James, 2026-09-15)
+
+He asked whether Tailwind was set correctly. Two different answers, and the
+distinction matters:
+
+- **The hidden game plays it correctly**, because it IS the game. Any turn
+  probed with a Tailwind standing resolves with the real speed order, so the
+  agent feels the consequence in every outcome it reads.
+- **The score cannot see it.** `doubles-position.js` carries HP, status and
+  stat stages across from the battle struct and nothing else, so a Tailwind,
+  a Reflect, a Light Screen, a Trick Room or a hazard layer prices at exactly
+  ZERO. The agent will therefore not fear letting them set one up; it only
+  discovers the cost one turn later, when the probes for the next turn come
+  back worse.
+
+The engine itself models Tailwind properly (`side.screens.tailwind`, doubling
+Speed in `finalSpeed`), so the missing piece is only the reading, and that is
+now found: `0x020179C8` (docs/SCREEN-MAP.md). Ownership of the byte is not yet
+separated between the two sides.
+
+The right way to price it is the one position.js already uses for Speed drops:
+count the hits we now take first that we would not otherwise, measured by
+flipping `screens.tailwind` on the built position and asking which turn orders
+change. Nothing needs inventing.
+
+In the three guard fights this has cost nothing so far, because the recommended
+line removes Talonflame on turn one before it moves. That is luck rather than
+judgement, and it would not survive a fight where their setter is harder to
+remove.
+
 Still not priced: a Substitute standing in front of them, and hazards. Neither
 appears in the three guard fights (checked against their movesets), so they are
 recorded rather than urgent.
