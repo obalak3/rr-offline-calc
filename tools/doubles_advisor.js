@@ -64,6 +64,39 @@ function partyRows(obs) {
  * which of ours is the answer to what. docs/PLAN-DOUBLES.md carries that as
  * the next piece of work.
  */
+/**
+ * What the turn did to anyone's CONDITION, reported and never scored.
+ *
+ * position.js measures what a condition is worth (the damage their real moves
+ * no longer do to our living team) and James's standing rule is that constants
+ * are derived, not tuned -- so inventing "sleep = 60" here would be exactly the
+ * kind of external fitted rule he has rejected. Until the position score is
+ * taught doubles, a sleep or a Swords Dance is printed beside the line instead
+ * of being priced into it, so a line that "costs nothing" cannot quietly be one
+ * that put both of ours to sleep.
+ */
+const STATUS_BITS = [[0x07, 'asleep'], [0x08, 'poisoned'], [0x10, 'burned'], [0x20, 'frozen'], [0x40, 'paralysed'], [0x80, 'badly poisoned']];
+const STAGE_NAMES = [null, 'Attack', 'Defence', 'Speed', 'Sp.Atk', 'Sp.Def', 'accuracy', 'evasion'];
+function statusNames(word) {
+	return STATUS_BITS.filter(([bit]) => (word & bit) !== 0).map(([, n]) => n);
+}
+function conditionNotes(before, after, nameOf) {
+	const notes = [];
+	[0, 1, 2, 3].forEach(b => {
+		const s0 = before.battlers[b], s1 = after.battlers[b];
+		if (!s0 || !s1 || s0.species !== s1.species || s1.hp === 0) return;
+		const who = (b % 2 === 0 ? 'our ' : 'their ') + nameOf(b);
+		const gained = statusNames(s1.status).filter(n => !statusNames(s0.status).includes(n));
+		gained.forEach(n => notes.push(who + ' ' + n));
+		(s1.stages || []).forEach((v, i) => {
+			if (!STAGE_NAMES[i]) return;
+			const d = v - (s0.stages ? s0.stages[i] : 6);
+			if (d) notes.push(who + ' ' + STAGE_NAMES[i] + ' ' + (d > 0 ? '+' : '') + d);
+		});
+	});
+	return notes;
+}
+
 function score(sum) {
 	if (!sum || !sum.ok) return -Infinity;
 	return sum.theirLost + 1000 * sum.theirDead
@@ -158,6 +191,8 @@ async function main() {
 			+ ', ' + took + (s.ourDead ? ' and ' + s.ourDead + ' Pokemon' : '')
 			+ (s.ourHealed ? ', we heal ' + s.ourHealed : '')
 			+ (s.forced ? ', then we must send someone in' : ''));
+		const notes = conditionNotes(x.r.before, x.r.after, b => speciesName(B[b].species));
+		if (notes.length) console.log('          NOT PRICED: ' + notes.join('; '));
 	});
 	if (bad.length) {
 		console.log('\n' + bad.length + ' thrown away: ' + bad.slice(0, 3).map(x => label(x.pair) + ' (' + x.bad + ')').join('; '));

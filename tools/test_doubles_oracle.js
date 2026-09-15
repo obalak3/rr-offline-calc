@@ -103,6 +103,33 @@ async function main() {
 	const sigs = rep.map(r => r.after && (r.after.frame + '|' + r.after.battlers.map(b => b.species + ':' + b.hp).join(' ')));
 	check('three identical calls agree exactly', sigs[0] && sigs.every(x => x === sigs[0]), JSON.stringify(sigs));
 
+	// 7. A faint suspends the turn behind a message box, and the replacement is
+	//    asked on the FAINTED battler's own controller. Manufactured by aiming
+	//    Accelgor at our own Greninja, which is legal and removes it.
+	const os = require('os');
+	const faint = path.join(os.tmpdir(), 'rr-test-doubles-faint.ss');
+	const killed = await D.probe(STATE, {a0: {type: 'move', index: 1, target: 2}, a2: {type: 'move', index: 0}}, {save: faint});
+	check('a faint leaves the turn asking for a replacement',
+		killed.after && killed.after.screen === 'party' && killed.after.asking === 2,
+		killed.after && (killed.after.screen + ' asking=' + killed.after.asking));
+	check('  and the Pokemon that fainted is the one we aimed at',
+		killed.after && killed.after.battlers[2].hp === 0 && killed.after.battlers[2].species === 766);
+
+	if (fs.existsSync(faint)) {
+		const repl = await D.probeAll(faint, [2, 3, 4, 5].map(slot => ({a0: null, a2: {type: 'switch', index: slot}})));
+		repl.forEach((r, i) => {
+			const want = PARTY[i + 2];
+			const got = r.after && r.after.battlers[2];
+			check('replacement slot ' + want.slot + ' brings in ' + want.name,
+				!!got && got.species === want.species && got.maxhp === want.max,
+				got ? (got.species + ' max ' + got.maxhp) : (r.error || 'no after'));
+		});
+		const dead = await D.probe(faint, {a0: null, a2: {type: 'switch', index: 1}});
+		check('a fainted Pokemon cannot be sent in as the replacement',
+			!!dead.error && /fainted/.test(dead.error), dead.error);
+		try { fs.unlinkSync(faint); } catch (e) { /* gone */ }
+	}
+
 	console.log('\n' + failures + ' failure(s)');
 	process.exit(failures ? 1 : 0);
 }

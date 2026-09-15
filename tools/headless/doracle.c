@@ -95,6 +95,9 @@ static const char* screen_of(int b) {
 	if (c == S_BUSY) return "busy";
 	return "other";
 }
+static int known_ctrl(uint32_t c) {
+	return c == S_ACTION || c == S_MOVES || c == S_PARTY || c == S_BUSY || c == S_TARGET;
+}
 static const char* screen_any(void) {
 	if (r32(MAIN_CB) != CB_BATTLE) return "nobattle";
 	if (ctrl(0) == S_ACTION || ctrl(2) == S_ACTION) return "action";
@@ -239,7 +242,15 @@ int main(int argc, char** argv) {
 			me[i].wantMax = r16(b + P_MAX);
 			if (r16(b + P_HP) == 0) { printf("{\"error\":\"switch target has fainted\"}\n"); return 3; }
 		}
-		me[i].state = me[i].want == WANT_NONE ? ST_DONE : ST_WAIT;
+		// A state can begin on a FORCED REPLACEMENT rather than an action menu:
+		// after a faint the game asks, on the fainted battler's own controller,
+		// which is the same S_PARTY value a voluntary switch uses (measured
+		// 2026-09-14). There is no FIGHT to choose first, so start at the list.
+		if (me[i].want == WANT_SWITCH && ctrl(me[i].battler) == S_PARTY) {
+			me[i].state = ST_PARTY; me[i].partyAt = -1; me[i].since = 0;
+		} else {
+			me[i].state = me[i].want == WANT_NONE ? ST_DONE : ST_WAIT;
+		}
 	}
 
 	int frame = 0, answered = 0, settled = 0;
@@ -372,9 +383,22 @@ int main(int argc, char** argv) {
 		if (me[0].state == ST_DONE && me[1].state == ST_DONE) {
 			// Both answered. The turn is over when the game comes back to us.
 			settled++;
+			int ours = ctrl(0) == S_ACTION || ctrl(2) == S_ACTION || ctrl(0) == S_PARTY || ctrl(2) == S_PARTY;
 			if (settled > 20) {
 				if (r32(MAIN_CB) != CB_BATTLE) break;
-				if (ctrl(0) == S_ACTION || ctrl(2) == S_ACTION || ctrl(0) == S_PARTY || ctrl(2) == S_PARTY) break;
+				if (ours) break;
+			}
+			// A MESSAGE BOX HOLDS THE TURN. Measured 2026-09-14: with one of
+			// ours fainted the game sat at the busy value for 2700 frames and
+			// never offered a replacement; tapping A walked it through the
+			// message and the party screen then opened on the fainted
+			// battler's controller. The singles core has always done this.
+			if (!ours && settled > 90) {
+				int unknown = !known_ctrl(ctrl(0)) || !known_ctrl(ctrl(2));
+				// "Will you switch?" after THEIR Pokemon faints is answered no,
+				// the same way the actuator answers it.
+				if (unknown) keys = (settled % 20) < 4 ? 2 /* B */ : 0;
+				else keys = (settled % 40) < 4 ? KEY_A : 0;
 			}
 		}
 		step(keys);

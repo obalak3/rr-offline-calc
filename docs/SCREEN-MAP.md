@@ -166,10 +166,27 @@ a safe recovery key in doubles the way it is in singles.
 A pivot suspends the turn: Accelgor's U-turn resolved and the party screen
 opened on battler 0 before battler 2 had moved.
 
+## The forced switch after a faint, measured 2026-09-14
+
+**A message box holds the turn, and nothing offers a replacement until it is
+answered.** With one of ours fainted the game sat at the busy value for 2700
+frames and never moved; tapping A walked it through, and only then did the
+party screen open. The singles core has always mashed A while busy for this
+reason; the doubles one had to learn it.
+
+The replacement is asked on **the fainted battler's own controller**, at the
+same `0x08030685` a voluntary switch uses, so there is no new screen value --
+only a new question about which controller to read. There is no FIGHT step to
+choose first: the list is already open.
+
+Verified by answering it for every legal slot from a state saved at that
+screen (`doracle <state> - s<slot>`): Toxtricity, Gyarados, Granbull and
+Skeledirge each arrived in the fainted slot with the right max HP, and asking
+for the fainted Pokemon itself is refused rather than guessed at.
+
 ## Still not mapped
 
-- The forced switch after a faint: which battler's controller asks, and
-  whether both ask at once when two faint on the same turn.
+- Whether both slots ask at once when two of ours faint on the same turn.
 - Partner battles (Silph Co with Brendan, Cerulean Cave with Lance), where one
   of our two slots is an NPC's. Deliberately out of scope; see
   `docs/PLAN-DOUBLES.md`.
