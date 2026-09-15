@@ -254,7 +254,25 @@ int main(int argc, char** argv) {
 	}
 
 	int frame = 0, answered = 0, settled = 0;
+	// A frame-by-frame HP trace, so what a turn did can be separated into WHEN
+	// it happened. Entry hazards land the moment a Pokemon arrives, before
+	// anyone attacks, and a before-and-after of the whole turn cannot tell that
+	// apart from the hit it takes afterwards -- which is exactly why two
+	// attempts to pin the Spikes address were inconclusive.
+	int traceHp = getenv("ORACLE_TRACE_HP") != NULL;
+	uint16_t lastHp[4];
+	for (int b = 0; b < 4; b++) lastHp[b] = r16(MON + b * MON_SIZE + O_HP);
 	while (frame < maxFrames) {
+		if (traceHp) {
+			for (int b = 0; b < 4; b++) {
+				uint16_t h = r16(MON + b * MON_SIZE + O_HP);
+				if (h != lastHp[b]) {
+					fprintf(stderr, "f%-5d b%d species %u: %u -> %u  (%+d)\n", frame, b,
+						r16(MON + b * MON_SIZE + O_SP), lastHp[b], h, (int)h - (int)lastHp[b]);
+					lastHp[b] = h;
+				}
+			}
+		}
 		uint32_t keys = 0;
 		int acted = 0;
 		for (int i = 0; i < 2 && !acted; i++) {
