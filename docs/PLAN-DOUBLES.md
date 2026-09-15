@@ -176,6 +176,84 @@ timeout) must be stated in code, because in doubles there is no planner
 underneath to fall back on. Options: the portfolio's calculator pick, or ask
 James at the panel.
 
+## Where it stands, 2026-09-14
+
+**Stages 1 and 3 are done and stage 4 exists and has been measured.** Stage 2
+(the live actuator) and stage 5 (letting it press) are not started, so the
+agent still stands down in a double battle and James plays it.
+
+The blocker recorded on 2026-09-10 -- no snapshot is written while the agent
+stands down -- turned out not to matter: James had already saved two doubles
+action menus himself. `RadicalRed.ss7` is the GAME CORNER GUARD (Hypno and
+Aerodactyl, against Accelgor and Greninja) and `RadicalRed.ss8` is the ROCKET
+HIDE. LEFT GUARD (Weezing-Galar and Slaking, against Claydol and Hitmonlee).
+Everything below was measured on those two with nothing pressed on his screen.
+
+| stage | what | state |
+| --- | --- | --- |
+| 1 | map the doubles screens | DONE, `docs/SCREEN-MAP.md` |
+| 2 | actuator sees and answers both slots | not started |
+| 3 | the doubles oracle | DONE, `tools/headless/doracle.c` |
+| 4 | the advisor | first form done and measured |
+| 5 | let it press | not started, needs 2 |
+
+- **Stage 1** found the controller table at `0x03004FE0 + 4*battler` (the
+  second question of a turn arrives on battler 2's entry, so watching only
+  battler 0 sees a turn stop halfway), the target picker `0x090AB46D` whose
+  cursor `0x03004FF4` holds a battler index and can be WRITTEN like every other
+  cursor here, the fact that a spread move skips the picker, and the
+  per-battler cursor arrays. Tool: `tools/headless/dscan.c`. Accepted: the same
+  script twice gives the same frame count and the same HP.
+- **Stage 3** is `tools/headless/doracle.c` and `tools/lib/doubles-oracle.js`,
+  guarded by `tools/test_doubles_oracle.js` (18 checks, 0 failures: default and
+  written targets including hitting our own partner, a spread move needing no
+  target step, every switch arriving as the Pokemon asked for, a switch to
+  someone already out refused, both sides switching at once, three identical
+  calls agreeing). One full doubles turn costs about 1.1 s alone, and 0.3 to
+  0.5 s per pair inside a batch of four to eight.
+- **Stage 4** is `tools/doubles_advisor.js`. `--all` plays every legal pair and
+  is the reference; the default plays a portfolio.
+
+### The measurement that matters, and the decision it forces
+
+Both fights offer 128 legal joint actions. Playing all of them takes 46 to 51 s
+and is the ground truth. Three portfolios were measured against it:
+
+| portfolio | ss7 | ss8 |
+| --- | --- | --- |
+| 14 pairs, ranked by move power | MISSED, 1035 against 1138 | -- |
+| 24 pairs, every single action covered | MISSED, 1035 against 1138 | MISSED, 1032 against 1145 |
+| the whole attack-against-attack product | FOUND 1138 in 15 s | FOUND 1145 in 27 s |
+
+**Why the cheap ones lose, in game terms.** On ss7 the best line is Bug Buzz
+and Water Shuriken both into Aerodactyl: it dies before it moves because Water
+Shuriken has priority, and we take nothing. Ranked by power, Scald (80) beats
+Water Shuriken (15), so a line costing 193 HP is offered instead. On ss8 the
+best line is Extrasensory into Weezing-Galar while Fake Out FLINCHES Slaking,
+for nothing; ranked by power, Brick Break (75) beats Fake Out (40) and the line
+costs 90.
+
+Neither priority nor a flinch is visible to any ranking, and neither lives in
+either action alone. Both live in the PAIR. So the attack-against-attack
+product is now played in full, and only switches and status moves are
+represented by coverage.
+
+**That costs 48 to 57 pairs and 15 to 27 s a turn**, against the roughly 10 s
+James agreed to when the estimate was 16 pairs. The estimate is now known to be
+wrong, so the budget is his to re-take: more time per turn, or a portfolio that
+is known to miss lines like these two. Nothing here is fitted to one fight --
+the second measurement was taken on the fight the design was not built on, and
+it failed there first.
+
+### Known gaps in the scoring, recorded rather than papered over
+
+The advisor scores a real after-state with the singles formula: their HP
+removed, a bounty per opponent removed, our HP lost, a charge per Pokemon of
+ours that faints. It does NOT yet price their stat boosts going up, a
+Substitute standing in front of them, sleep, or which of ours answers what,
+because `position.js` is still one-against-one shaped. A line that "costs
+nothing" may have put both of ours to sleep and the score would not say so.
+
 ## Risks the first draft missed
 
 - **No snapshot is written while the agent stands down.** The save-state
