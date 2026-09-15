@@ -165,10 +165,16 @@ async function advise(statePath, opts) {
 		ally: b => B[b === 0 ? 2 : 0] && B[b === 0 ? 2 : 0].hp > 0,
 		partnerOf: b => (b === 0 ? 2 : 0)
 	};
-	const asked = before.asking === 0 || before.asking === 2 ? [0, 2].filter(b => B[b] && B[b].hp > 0) : [];
+	// A turn can also begin on a FORCED REPLACEMENT after a faint, asked on the
+	// fainted battler's own controller (docs/SCREEN-MAP.md). There is no move to
+	// choose then, only who comes in, and the partner is not asked at all.
+	const forced = before.screen === 'party';
+	const asked = forced ? [before.asking]
+		: (before.asking === 0 || before.asking === 2 ? [0, 2].filter(b => B[b] && B[b].hp > 0) : []);
 
 	say('\n' + '='.repeat(78));
-	say('OURS   ' + [0, 2].map(b => 'b' + b + ' ' + speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp).join('    '));
+	if (forced) say('FORCED REPLACEMENT: slot ' + before.asking + ' fainted, choosing who comes in');
+	say('OURS   ' + [0, 2].map(b => 'b' + b + ' ' + (B[b].maxhp ? speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp : '-')).join('    '));
 	say('THEIRS ' + [1, 3].map(b => 'b' + b + ' ' + speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp).join('    '));
 	say('BENCH  ' + party.filter(p => !onField.has(p.slot) && p.hp > 0)
 		.map(p => speciesName(p.species) + ' ' + p.hp + '/' + p.maxhp).join(', '));
@@ -178,8 +184,14 @@ async function advise(statePath, opts) {
 		name: b => speciesName(B[b].species),
 		partyName: s => speciesName(party[s].species)
 	};
-	const left = A.actionsFor(0, B[0], moveInfo, party, onField, alive, naming);
-	const right = A.actionsFor(2, B[2], moveInfo, party, onField, alive, naming);
+	const benchSwitches = () => party.filter(p => p.hp > 0 && !onField.has(p.slot)).map(p => ({
+		type: 'switch', index: p.slot, target: null,
+		label: '-> ' + speciesName(p.species), species: p.species
+	}));
+	const left = forced ? (asked[0] === 0 ? benchSwitches() : [])
+		: A.actionsFor(0, B[0], moveInfo, party, onField, alive, naming);
+	const right = forced ? (asked[0] === 2 ? benchSwitches() : [])
+		: A.actionsFor(2, B[2], moveInfo, party, onField, alive, naming);
 	const all = A.jointActions(left, right, asked);
 	say('legal joint actions: ' + all.length
 		+ '  (' + left.length + ' for ' + speciesName(B[0].species) + ', ' + right.length + ' for ' + speciesName(B[2].species) + ')');
@@ -214,7 +226,29 @@ async function advise(statePath, opts) {
 		try { cond = r.obs ? P.delta(engine, dexBundle, obs, r.obs) : null; } catch (e) { cond = null; }
 		rows.push({pair: play[i], sum, cond, v: score(sum, cond, weightOf), r});
 	});
-	const good = rows.filter(x => !x.bad).sort((a, b) => b.v - a.v);
+	// A LINE THAT LOSES NOBODY RANKS ABOVE ONE THAT DOES, whatever the score.
+	//
+	// Found by playing the Game Corner guard through this advisor turn by turn
+	// (2026-09-15). On turn 3 it removed their Granbull and lost Accelgor for
+	// it, scoring 973, while "Accelgor U-turns out, Water Shuriken chips
+	// Granbull" was right there at 133, taking 133 off them and losing nothing.
+	// The arithmetic made that inevitable: removing one of theirs is worth 1000
+	// and losing one of ours costs 130 times its importance, about 260, so the
+	// agent will always trade a Pokemon for a kill. Zero faints is the target
+	// James set for doubles, and singles already has this rule
+	// (RR_DEATH_LAST in replan.js: a certain non-expendable faint ranks last).
+	// The partition states the objective; the score still orders within it, and
+	// when every line loses someone it decides alone, exactly as before.
+	const DEATH_LAST = process.env.RR_DOUBLES_DEATH_LAST !== '0';
+	const good = rows.filter(x => !x.bad).sort((a, b) => {
+		if (DEATH_LAST) {
+			const af = a.sum.ourDead > 0, bf = b.sum.ourDead > 0;
+			if (af !== bf) return af ? 1 : -1;
+		}
+		return b.v - a.v;
+	});
+	const anyClean = good.some(x => x.sum.ourDead === 0);
+	if (DEATH_LAST && !anyClean && good.length) say('every line on offer loses one of ours; ranking on the total');
 	const bad = rows.filter(x => x.bad);
 
 	const label = p => [p.a0 ? speciesName(B[0].species) + ' ' + p.a0.label : null,
@@ -292,7 +326,7 @@ async function advise(statePath, opts) {
 	if (good.length) {
 		say('\nRECOMMENDATION: ' + label(good[0].pair));
 	}
-	return {obs, before, all, play, gaps, ranked: good, thrown: bad, secs: Number(secs), label, speciesName};
+	return {obs, before, forced, all, play, gaps, ranked: good, thrown: bad, secs: Number(secs), label, speciesName};
 }
 
 module.exports = {advise};

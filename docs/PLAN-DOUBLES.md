@@ -308,6 +308,40 @@ one, and that an Attack drop on a special attacker prices at nothing WHILE a
 Sp.Atk drop on the same Pokemon prices as a real loss. The second half matters:
 a zero proves nothing on its own.
 
+### Playing a whole fight, 2026-09-15, and the defect it found
+
+`tools/doubles_playthrough.js` takes the advisor's own recommendation, plays it
+on the hidden game, feeds the result back in and repeats, so a plan that falls
+apart on turn four shows up as a fight rather than as a turn. Opening well and
+playing well are different claims and only the first had been checked.
+
+**It immediately found a real defect.** The first run of the Game Corner guard
+won in five turns but LOST ACCELGOR on turn three: it removed their Granbull
+and paid a Pokemon for it, scoring 973, while "Accelgor U-turns out while Water
+Shuriken chips Granbull" sat at 133 having taken 133 off them and lost nobody.
+
+The arithmetic made that inevitable. Removing one of theirs is worth 1000;
+losing one of ours costs 130 times its importance, about 260. So the agent will
+ALWAYS trade a Pokemon for a kill, which is precisely backwards for the target
+James set. Singles has had the answer since 2026-09-05 (`RR_DEATH_LAST` in
+replan.js: a certain non-expendable faint ranks last) and doubles never got it.
+
+Fixed the same way: **a line that loses nobody outranks one that does, whatever
+the score**, with the score still ordering within each group and deciding alone
+when every line loses someone (`RR_DOUBLES_DEATH_LAST=0` restores the total).
+This is a statement of the objective, not a tuned constant.
+
+Both guard fights now play out won with SIX OF SIX STANDING:
+
+| fight | turns | ours standing | HP we lost | HP they lost | thinking |
+| --- | --- | --- | --- | --- | --- |
+| Game Corner guard | 5 | 6/6 | 228 | 578 | 28.6 s total |
+| Rocket Hide. left guard | 5 | 6/6 | 98 | 591 | 33.6 s total |
+
+Before the rule the first of those was 5/6. The regression test pins the turn-3
+position itself: the clean U-turn line must win even though the trading line
+scores higher on the total.
+
 Still not priced: a Substitute standing in front of them, and hazards. Neither
 appears in the three guard fights (checked against their movesets), so they are
 recorded rather than urgent.

@@ -105,6 +105,33 @@ async function main() {
 		b.ranked[0].sum.ourLost === 0 && b.ranked[0].sum.ourDead === 0,
 		'lost ' + b.ranked[0].sum.ourLost);
 
+	// ---- a certain faint ranks last --------------------------------------
+	// The Game Corner guard, three turns in: removing their Granbull while
+	// losing Accelgor scored 973, and "Accelgor U-turns out while Water
+	// Shuriken chips Granbull" scored 133 and lost nobody. Zero faints is the
+	// target, so the second has to win. Played from the same chain the
+	// playthrough takes, so the position is real rather than constructed.
+	const os = require('os');
+	const chain = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-adv-chain-'));
+	const t1 = path.join(chain, 't1.ss'), t2 = path.join(chain, 't2.ss');
+	await D.probe(SS7, {a0: {type: 'move', index: 2, target: 3}, a2: {type: 'move', index: 3, target: 3}}, {save: t1});
+	if (fs.existsSync(t1)) {
+		await D.probe(t1, {a0: {type: 'move', index: 1, target: 1}, a2: {type: 'move', index: 0, target: 1}}, {save: t2});
+	}
+	if (fs.existsSync(t2)) {
+		const c = await advise(t2, {budget: BUDGET, quiet: true});
+		const top = c.ranked[0];
+		check('a line that loses one of ours never outranks one that loses nobody',
+			top && top.sum.ourDead === 0, top ? ('top loses ' + top.sum.ourDead) : 'nothing ranked');
+		check('  and the clean line on that turn is the U-turn out',
+			top && /U-turn/.test(c.label(top.pair)), top && c.label(top.pair));
+		const withFaint = c.ranked.find(x => x.sum.ourDead > 0);
+		check('  even though a line that trades one of ours scores higher on the total',
+			!!withFaint && withFaint.v > top.v,
+			withFaint ? (Math.round(withFaint.v) + ' against ' + Math.round(top.v)) : 'no trading line was played');
+		try { fs.rmSync(chain, {recursive: true, force: true}); } catch (e) { /* gone */ }
+	}
+
 	// ---- the budget ------------------------------------------------------
 	check('both turns are decided inside James\'s time budget (10 s)',
 		a.secs <= 10 && b.secs <= 10, 'ss7 ' + a.secs + ' s, ss8 ' + b.secs + ' s');
