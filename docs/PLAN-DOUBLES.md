@@ -331,14 +331,31 @@ the score**, with the score still ordering within each group and deciding alone
 when every line loses someone (`RR_DOUBLES_DEATH_LAST=0` restores the total).
 This is a statement of the objective, not a tuned constant.
 
-Both guard fights now play out won with SIX OF SIX STANDING:
+**ALL THREE guard fights now play out won with SIX OF SIX STANDING**, each on
+the team James built for it:
 
-| fight | turns | ours standing | HP we lost | HP they lost | thinking |
-| --- | --- | --- | --- | --- | --- |
-| Game Corner guard | 5 | 6/6 | 228 | 578 | 28.6 s total |
-| Rocket Hide. left guard | 5 | 6/6 | 98 | 591 | 33.6 s total |
+| fight | his leads | turns | standing | HP we lost | HP they lost | thinking |
+| --- | --- | --- | --- | --- | --- | --- |
+| Game Corner guard (ss7) | Accelgor + Greninja | 5 | 6/6 | 228 | 578 | 28.6 s |
+| Rocket Hide. left guard (ss8) | Claydol + Hitmonlee | 5 | 6/6 | 98 | 591 | 33.6 s |
+| Rocket Hide. right guard (ss3) | Greninja + Hitmonlee | 4 | 6/6 | 109 | 558 | 26.8 s |
 
-Before the rule the first of those was 5/6. The regression test pins the turn-3
+Before the rule the first of those was 5/6.
+
+**JAMES BUILDS A TEAM PER DOUBLES FIGHT**, chosen against that opponent -- his
+words, 2026-09-15: "I change teams between every battle according to the enemy.
+I made specific teams for each double battle." The three states carry three
+different sixes and three different lead pairs, and that is deliberate, not
+drift. So a test of the agent on any of these fights is a test against HIS
+counter-team, and results do not transfer between them. The lead pair is his
+decision too: the game leads with party slots one and two.
+
+The third state was found rather than given. `RadicalRed.ss3` is saved on the
+OVERWORLD, not at a menu, so the first scan missed it; tapping A on the hidden
+core walked into the fight and showed Talonflame and Shiftry. `dscan --save`
+now produces an action-menu state from an overworld one, which is how any
+future fight can be set up without James having to save at exactly the right
+moment. The regression test pins the turn-3
 position itself: the clean U-turn line must win even though the trading line
 scores higher on the total.
 

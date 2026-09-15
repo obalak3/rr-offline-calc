@@ -47,6 +47,13 @@
 #define O_HP 0x28
 #define O_MAX 0x2C
 
+#define PARTY         0x02024284
+#define P_SIZE 100
+#define P_SPECIES 0x20
+#define P_LEVEL 0x54
+#define P_HP 0x56
+#define P_MAX 0x58
+
 #define EWRAM 0x02000000
 #define EWRAM_LEN 0x40000
 #define IWRAM 0x03000000
@@ -93,12 +100,14 @@ int main(int argc, char** argv) {
 	const char* script = "wait:120";
 	const char* dumpPath = NULL;
 	int trace = 0, info = 0;
+	const char* saveOut = NULL;
 	uint32_t watch[16]; int nwatch = 0;
 	for (int i = 3; i < argc; i++) {
 		if (!strcmp(argv[i], "--script") && i + 1 < argc) script = argv[++i];
 		else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dumpPath = argv[++i];
 		else if (!strcmp(argv[i], "--trace")) trace = 1;
 		else if (!strcmp(argv[i], "--info")) info = 1;
+		else if (!strcmp(argv[i], "--save") && i + 1 < argc) saveOut = argv[++i];
 		else if (!strcmp(argv[i], "--watch") && i + 1 < argc) {
 			char wb[256]; strncpy(wb, argv[++i], sizeof(wb) - 1); wb[sizeof(wb) - 1] = 0;
 			for (char* t = strtok(wb, ","); t && nwatch < 16; t = strtok(NULL, ",")) watch[nwatch++] = (uint32_t)strtoul(t, NULL, 16);
@@ -118,6 +127,15 @@ int main(int argc, char** argv) {
 	vf->close(vf);
 
 	if (info) {
+		// gPlayerParty is valid whether or not a battle is up, so a state saved
+		// on the overworld still says which six are being carried.
+		printf("{\"party\":[");
+		for (int i = 0; i < 6; i++) {
+			uint32_t b = PARTY + i * P_SIZE;
+			printf("%s{\"slot\":%d,\"species\":%u,\"level\":%u,\"hp\":%u,\"maxhp\":%u}", i ? "," : "", i,
+				r16(b + P_SPECIES), r8(b + P_LEVEL), r16(b + P_HP), r16(b + P_MAX));
+		}
+		printf("],\"inBattle\":%s}\n", r32(MAIN_CB) == CB_BATTLE ? "true" : "false");
 		for (int b = 0; b < 4; b++) {
 			uint32_t m = MON + b * MON_SIZE;
 			printf("{\"battler\":%d,\"species\":%u,\"hp\":%u,\"maxhp\":%u,\"moves\":[%u,%u,%u,%u],\"pp\":[%u,%u,%u,%u]}\n",
@@ -203,5 +221,9 @@ int main(int argc, char** argv) {
 		r16(MON + b * MON_SIZE + O_SP), r16(MON + b * MON_SIZE + O_HP), r16(MON + b * MON_SIZE + O_MAX));
 	printf("]}\n");
 	if (dumpPath) dump_ram(dumpPath);
+	if (saveOut) {
+		struct VFile* out = VFileOpen(saveOut, O_RDWR | O_CREAT | O_TRUNC);
+		if (out) { mCoreSaveStateNamed(core, out, 0); out->close(out); }
+	}
 	return 0;
 }
