@@ -290,9 +290,27 @@ the same name means turns lost so far, so mixing them priced a three-turn sleep
 at zero; and folding the sleep term inside the horizon multiplier counted the
 horizon twice.
 
-Still not priced: a Substitute standing in front of them, hazards, and which of
-ours is the answer to what (importance weights still come from the singles duel
-table). Those are the next value work.
+**Importance landed the same day.** `fullState` decodes BOTH parties out of the
+oracle's raw records, so `position.js`'s own answer table can be asked the
+question it was built for: how many of their remaining Pokemon can this one of
+ours remove cleanly. Nothing new was invented for doubles -- the same table,
+the same question. It is measured once per position (about 0.7 s for the 6x6)
+and reused for every probe, and the advisor now charges for WHO was lost rather
+than for how many. On ss7 that reads Gyarados 3, Granbull and Skeledirge 2.5,
+the rest 2; on ss8, Skeledirge and Gyarados 3 against Hitmonlee and Greninja
+1.5. Neither recommendation changed, which is the right outcome: the weights
+reorder what a mistake costs, not what a clean turn is worth.
+
+`tools/test_doubles_advisor.js` pins all of it (14 checks): the two
+recommendations, the coverage guarantee, the arrival guard, the time budget,
+that Dark Void's sleep costs measured HP and ranks those lines below the clean
+one, and that an Attack drop on a special attacker prices at nothing WHILE a
+Sp.Atk drop on the same Pokemon prices as a real loss. The second half matters:
+a zero proves nothing on its own.
+
+Still not priced: a Substitute standing in front of them, and hazards. Neither
+appears in the three guard fights (checked against their movesets), so they are
+recorded rather than urgent.
 
 ## Risks the first draft missed
 

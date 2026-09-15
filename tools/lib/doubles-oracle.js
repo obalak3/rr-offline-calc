@@ -112,6 +112,9 @@ function summarize(r) {
 	const theirLost = theirs.reduce((s, x) => s + Math.max(0, x.hp0 - x.hp1), 0);
 	return {
 		ok: true,
+		// The rows themselves, so a caller with importance weights can charge
+		// for WHO was lost rather than for how many.
+		ourRows: ours, theirRows: theirs,
 		ourDead: ours.filter(x => x.hp0 > 0 && x.hp1 === 0).length,
 		theirDead: theirs.filter(x => x.hp0 > 0 && x.hp1 === 0).length,
 		ourLost, theirLost,

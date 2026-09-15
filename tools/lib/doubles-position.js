@@ -122,6 +122,72 @@ function stateFrom(engine, dex, obs) {
 	return {st, mine, theirs};
 }
 
+/** One party row's raw record, decoded into a set the engine can price. */
+function setFromRecord(engine, dex, row) {
+	const RRSave = engine.sandbox && engine.sandbox.RRSave;
+	if (!RRSave || !RRSave.readRecord || !row || !row.maxhp) return null;
+	if (typeof row.raw !== 'string' || row.raw.length < 200) return null;
+	try {
+		const bytes = Buffer.from(row.raw, 'hex');
+		const mon = RRSave.readRecord(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0, true);
+		if (!mon || !mon.species) return null;
+		return {species: mon.species, level: mon.level, nature: mon.nature,
+			ability: mon.ability, item: mon.item || '', moves: mon.moves,
+			evs: mon.evs, ivs: mon.ivs};
+	} catch (e) { return null; }
+}
+
+/**
+ * The WHOLE fight as an engine position -- both parties, not just the four on
+ * the field -- so the existing answer table can say which of ours matters.
+ *
+ * importance() in position.js reads "how many of their remaining Pokemon can
+ * this one of ours remove cleanly", which is the difference between losing the
+ * Pokemon that beats their last two and losing a spare. It needs full teams,
+ * and the oracle ships both parties as raw records, so nothing new has to be
+ * invented for doubles: the same table, asked the same question.
+ */
+function fullState(engine, dex, obs) {
+	const mine = (obs.party || []).map(r => setFromRecord(engine, dex, r));
+	const theirs = (obs.foeparty || []).map(r => setFromRecord(engine, dex, r));
+	const myIdx = [], foeIdx = [];
+	const mySets = [], foeSets = [];
+	mine.forEach((s2, i) => { if (s2) { mySets.push(s2); myIdx.push(i); } });
+	theirs.forEach((s2, i) => { if (s2) { foeSets.push(s2); foeIdx.push(i); } });
+	if (!mySets.length || !foeSets.length) return null;
+	let st;
+	try { st = engine.B.createState(mySets, foeSets, {}); } catch (e) { return null; }
+	myIdx.forEach((src, i) => {
+		const row = obs.party[src], m = st.me.team[i];
+		m.curHP = row.hp; m.fainted = row.hp === 0;
+		m.status = statusOf(row.status);
+	});
+	foeIdx.forEach((src, i) => {
+		const row = obs.foeparty[src], m = st.foe.team[i];
+		m.curHP = row.hp; m.fainted = row.hp === 0;
+		m.status = statusOf(row.status);
+	});
+	// Whoever is on the field leads, so the table is asked about the real position.
+	const B = obs.battlers;
+	const findIdx = (team, sp, mx) => team.findIndex(m => m.maxHP === mx && !m.fainted);
+	if (B && B[0]) { const k = findIdx(st.me.team, B[0].species, B[0].maxhp); if (k >= 0) st.me.active = k; }
+	if (B && B[1]) { const k = findIdx(st.foe.team, B[1].species, B[1].maxhp); if (k >= 0) st.foe.active = k; }
+	return {st, myIdx, foeIdx};
+}
+
+/**
+ * Importance per species, from the same duel table singles uses: 1, plus half
+ * for every remaining opponent this Pokemon is a clean answer to. Computed
+ * ONCE per position and reused for every probe, because the 6x6 table is the
+ * expensive part. Returns null when the teams cannot be read, so the caller
+ * weights everything equally rather than guessing.
+ */
+function importanceOf(engine, dex, obs) {
+	const full = fullState(engine, dex, obs);
+	if (!full) return null;
+	try { return POS.importance(engine, full.st); } catch (e) { return null; }
+}
+
 /** A copy of the position with one Pokemon's conditions wiped, to measure against. */
 function neutral(engine, st, side, idx) {
 	const c = engine.B.clone(st);
@@ -221,4 +287,4 @@ function delta(engine, dex, beforeObs, afterObs) {
 	return {value: cb.value - ca.value, before: ca, after: cb};
 }
 
-module.exports = {setFromBattler, stateFrom, conditions, delta, statusOf, sleepLeft, boostsOf, HORIZON};
+module.exports = {setFromBattler, setFromRecord, stateFrom, fullState, importanceOf, conditions, delta, statusOf, sleepLeft, boostsOf, HORIZON};

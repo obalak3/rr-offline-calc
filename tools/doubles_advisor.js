@@ -100,11 +100,20 @@ function conditionNotes(before, after, nameOf) {
 	return notes;
 }
 
-function score(sum, cond) {
+function score(sum, cond, weight) {
 	if (!sum || !sum.ok) return -Infinity;
+	// WHO was lost, not how many. importance comes from the same duel table
+	// singles uses -- 1, plus half for each of their remaining Pokemon this one
+	// of ours can remove cleanly -- so spending the Pokemon that answers their
+	// last two costs more than spending a spare. Without it (teams unreadable)
+	// every Pokemon weighs 1 and the score is what it was before.
+	const w = m => (weight && weight(m)) || 1;
+	const lost = (sum.ourRows || []).reduce((t, r) => t + Math.max(0, r.hp0 - r.hp1) * w(r.max), 0);
+	const healed = (sum.ourRows || []).reduce((t, r) => t + Math.max(0, r.hp1 - r.hp0) * w(r.max), 0);
+	const faints = (sum.ourRows || []).filter(r => r.hp0 > 0 && r.hp1 === 0).reduce((t, r) => t + w(r.max), 0);
 	return sum.theirLost + 1000 * sum.theirDead
-		- sum.ourLost + sum.ourHealed
-		- 130 * sum.ourDead
+		- (sum.ourRows ? lost : sum.ourLost) + (sum.ourRows ? healed : sum.ourHealed)
+		- 130 * (sum.ourRows ? faints : sum.ourDead)
 		// The CHANGE in conditions across the turn, measured in HP against the
 		// same position with those conditions removed (doubles-position.js).
 		// Null means it could not be priced, and is left out rather than
@@ -187,6 +196,15 @@ async function advise(statePath, opts) {
 	const secs = ((Date.now() - t0) / 1000).toFixed(1);
 
 	const maxBySlot = {}; party.forEach(p => { maxBySlot[p.slot] = p.maxhp; });
+	// Importance is a property of the POSITION, not of a candidate, so it is
+	// measured once and reused for every probe; the 6x6 answer table is the
+	// expensive part (about 0.7 s here).
+	let weights = null;
+	try { weights = P.importanceOf(engine, dexBundle, obs); } catch (e) { weights = null; }
+	const byMax = {}; party.forEach(p => { byMax[p.maxhp] = speciesName(p.species); });
+	const weightOf = max => (weights && byMax[max] && weights[byMax[max]]) || 1;
+	if (weights) say('importance: ' + Object.entries(weights).map(([k, v]) => k + ' ' + v).join(', '));
+	else say('importance: not measured (the teams could not be read); everyone weighs the same');
 	const rows = [];
 	results.forEach((r, i) => {
 		const sum = D.summarize(r);
@@ -194,7 +212,7 @@ async function advise(statePath, opts) {
 		if (!D.arrivalOk(r, maxBySlot)) { rows.push({pair: play[i], bad: 'the wrong Pokemon came in; probe thrown away'}); return; }
 		let cond = null;
 		try { cond = r.obs ? P.delta(engine, dexBundle, obs, r.obs) : null; } catch (e) { cond = null; }
-		rows.push({pair: play[i], sum, cond, v: score(sum, cond), r});
+		rows.push({pair: play[i], sum, cond, v: score(sum, cond, weightOf), r});
 	});
 	const good = rows.filter(x => !x.bad).sort((a, b) => b.v - a.v);
 	const bad = rows.filter(x => x.bad);
@@ -259,7 +277,7 @@ async function advise(statePath, opts) {
 			rr.forEach((r2, k) => {
 				const s2 = D.summarize(r2);
 				if (!s2.ok) return;
-				const v = x.v + score(s2);
+				const v = x.v + score(s2, null, weightOf);
 				if (v > best) {
 					best = v;
 					bestLabel = [replies[k].a0 ? speciesName(nb[0].species) + ' ' + replies[k].a0.label : null,
