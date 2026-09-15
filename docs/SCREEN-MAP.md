@@ -84,3 +84,92 @@ These are all recognisable as "a screen whose pointer value I do not have", so
 the agent stops and reports rather than pressing something. They will be
 captured from live play instead of scripted, since scripting a faint on an
 archived state is more work than watching one happen.
+
+---
+
+# Double battles, measured 2026-09-14
+
+By `tools/headless/dscan.c` on two of James's own save states, both taken at a
+doubles action menu: `RadicalRed.ss7` (GAME CORNER GUARD -- Hypno and
+Aerodactyl, against Accelgor and Greninja) and `RadicalRed.ss8` (ROCKET HIDE.
+LEFT GUARD -- Weezing-Galar and Slaking). Nothing was pressed live; every line
+below is from the windowless core, and the same script twice gives the same
+frame count and the same HP.
+
+## The controller table, which is what "whose turn is it" means
+
+    0x03004FE0 + 4 * battler    that battler's controller function pointer
+
+    battler 0   ours, left      asked FIRST
+    battler 1   theirs, left
+    battler 2   ours, RIGHT     asked SECOND
+    battler 3   theirs, right
+
+`0x03004FE0` is the value the singles map calls "the PLAYER's controller" and
+`0x03004FE4` is what it calls "the opponent's": both are just entries of this
+table. In a double battle the second question of the turn arrives on
+**battler 2's** pointer, and battler 0's sits at the busy value throughout, so
+an agent that only watches `0x03004FE0` sees the turn stop halfway and waits
+forever. Same four screen values as singles (action `0x0802E439`, moves
+`0x0802EA11`, party `0x08030685`, busy `0x0802E3B5`).
+
+## The target picker, which singles does not have
+
+    0x090AB46D    controller value: CHOOSE A TARGET
+    0x03004FF4    the target cursor: a BATTLER INDEX, not a slot
+    0x090AB8B9    where B at the target picker goes. It stays there. Do not.
+
+Reached after choosing a single-target move. The cursor starts on the
+opponent across from the chooser (1 for battler 0) and the d-pad walks it
+1 -> 3 -> 2 -> 3 -> 1: either opponent, or your own partner, never yourself.
+
+**The cursor can be WRITTEN, like every other cursor here.** Verified by whose
+HP moved, one full turn each, Accelgor attacking:
+
+| target written | result |
+| --- | --- |
+| (none, default 1) | Hypno 142 -> 65 |
+| 3 | Aerodactyl 138 -> 118 |
+| 2 | our own Greninja 139 -> 66 |
+
+The same write works for battler 2's own target step (Greninja's Scald sent to
+Aerodactyl: 138 -> 1). So a doubles action is chosen exactly the way a singles
+action is -- write the cursor, press A -- and no direction is ever pressed
+blind.
+
+**A spread move skips the picker entirely.** Greninja's Icy Wind (`allFoes`)
+went from the move list straight to the turn resolving, and both opponents
+took damage. So the target step is CONDITIONAL: wait a bounded number of
+frames for `0x090AB46D`, and if it does not come, the move needed no target.
+
+## The cursors are per-battler arrays
+
+    0x02023FF8 + battler    action cursor   (0 FIGHT, 1 BAG, 2 POKEMON, 3 RUN)
+    0x02023FFC + battler    move cursor     (0..3, the 2x2 grid)
+
+Measured: with battler 2's move list open, RIGHT moved `0x02023FFE`, not
+`0x02023FFC`. The singles map's two addresses are element 0 of each array,
+which is why they worked when only battler 0 ever chose.
+
+## The shape of a turn
+
+    c0 = action   ->  write action cursor 0, A
+    c0 = moves    ->  write move cursor, A
+    c0 = 0x090AB46D (if it comes) -> write 0x03004FF4, A
+    c2 = action   ->  same three steps for battler 2
+    then the turn resolves
+
+**B at battler 2's action menu goes back to battler 0's action menu** and
+re-asks the first Pokemon (measured: c0 returns to `0x0802E439`). So B is not
+a safe recovery key in doubles the way it is in singles.
+
+A pivot suspends the turn: Accelgor's U-turn resolved and the party screen
+opened on battler 0 before battler 2 had moved.
+
+## Still not mapped
+
+- The forced switch after a faint: which battler's controller asks, and
+  whether both ask at once when two faint on the same turn.
+- Partner battles (Silph Co with Brendan, Cerulean Cave with Lance), where one
+  of our two slots is an NPC's. Deliberately out of scope; see
+  `docs/PLAN-DOUBLES.md`.
