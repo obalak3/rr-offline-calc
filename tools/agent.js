@@ -830,12 +830,64 @@ function buildState(obs) {
 	me.status = statusOf(obs.me.status); foe.status = statusOf(obs.foe.status);
 	me.toxicCounter = toxicTurns(obs.me.status); foe.toxicCounter = toxicTurns(obs.foe.status);
 	foe.volatiles.usedMoves = foeUsedMovesFor(obs);
-	// CONFUSION, from status2. Without it the model could not see confusion it
-	// had itself applied, so Confuse Ray kept looking useful and got spammed
-	// into an already-confused target.
-	const confusionOf = w => (w || 0) & 0x7;
-	if (confusionOf(obs.me.status2)) me.volatiles.confusion = confusionOf(obs.me.status2);
-	if (confusionOf(obs.foe.status2)) foe.volatiles.confusion = confusionOf(obs.foe.status2);
+	// THE VOLATILE WORD, DECODED. status2 has been shipped since the confusion
+	// work and only its lowest three bits were ever read -- and those were
+	// written to `volatiles.confusion` while the engine reads
+	// `volatiles.confused`, so THE CONFUSION READING NEVER WORKED AT ALL. Same
+	// shape as every other bug on this project: two halves that disagree.
+	//
+	// James, 2026-09-15: "this is happening again and again... why haven't you
+	// still planned for every possible move condition terrain etc". The answer
+	// is tools/audit_score_inputs.js, which enumerates what the score can see;
+	// this closes the volatile row of it for singles.
+	//
+	// Bit layout is vanilla gen 3 and SUBSTITUTE IS VERIFIED AGAINST A LIVE
+	// RECORDING: in the Giovanni fight of 2026-09-10, Orthworm used Shed Tail on
+	// turn 68 and Infernape arrived carrying 0x01000000, held it through turns
+	// 69-71 at an untouched 140/140 while we attacked it, lost the bit on turn
+	// 72 and took real damage from 73. That is the fight James reported.
+	//
+	// NOT IN THIS WORD, so still unread: Taunt, Encore, Disable (gDisableStructs)
+	// and Leech Seed (gStatuses3). Recorded in the audit rather than guessed at.
+	const V = {
+		confusion: 0x00000007, lockedIn: 0x00000C00, wrapped: 0x0000E000,
+		focusEnergy: 0x00100000, recharge: 0x00400000, substitute: 0x01000000,
+		destinyBond: 0x02000000, escapePrevention: 0x04000000,
+		cursed: 0x10000000, torment: 0x80000000
+	};
+	const VOLATILES_ON = process.env.RR_VOLATILES !== '0';
+	const applyVolatiles = (mon, word) => {
+		const w = word || 0;
+		if (!w || !VOLATILES_ON) return;
+		const conf = w & V.confusion;
+		if (conf) mon.volatiles.confused = conf;          // the engine's own name
+		if (w & V.lockedIn) mon.volatiles.lockedIn = true;
+		if ((w & V.wrapped) || (w & V.escapePrevention)) mon.volatiles.trapped = true;
+		if (w & V.focusEnergy) mon.volatiles.focusEnergy = true;
+		if (w & V.recharge) mon.volatiles.recharge = true;
+		if (w & V.destinyBond) mon.volatiles.destinyBond = true;
+		if (w & V.cursed) mon.volatiles.cursed = true;
+		if (w & V.torment) mon.volatiles.torment = true;
+		if (w & V.substitute) {
+			// The engine carries the substitute's REMAINING HP and takes damage
+			// off it. The bit says one is standing; how much is left lives in
+			// another structure that is not mapped yet, so this uses the game's
+			// own standard size, a quarter of the holder's maximum. A Shed Tail
+			// substitute is half the SETTER's maximum and is usually bigger, so
+			// this can under-read it -- the direction that makes us bolder, which
+			// is why the exact address is on the open list.
+			mon.volatiles.substitute = Math.max(1, Math.floor(mon.maxHP / 4));
+		}
+	};
+	applyVolatiles(me, obs.me.status2);
+	applyVolatiles(foe, obs.foe.status2);
+	if (process.env.RR_DEBUG_VOLATILES) {
+		const shown = m => Object.keys(m.volatiles || {}).filter(k => k !== 'usedMoves')
+			.map(k => k + '=' + JSON.stringify(m.volatiles[k])).join(', ') || 'none';
+		console.log('  [volatiles: ours status2=0x' + Number(obs.me.status2 || 0).toString(16)
+			+ ' -> ' + shown(me) + ' | theirs status2=0x' + Number(obs.foe.status2 || 0).toString(16)
+			+ ' -> ' + shown(foe) + ']');
+	}
 	for (let i = 1; i < STAT_ORDER.length; i++) {
 		me.boosts[STAT_ORDER[i]] = (obs.me.stages[i] || 6) - 6;
 		foe.boosts[STAT_ORDER[i]] = (obs.foe.stages[i] || 6) - 6;

@@ -57,10 +57,14 @@ for (const name in MOVES) {
 const SINGLES = {
 	reads: ['HP', 'status', 'stat stages', 'ability', 'item', 'moves and PP', 'real stats',
 		'terrain TURNS (clears the terrain at zero; which terrain is never read)',
-		'confusion counter (status2 bits 0-2)', 'turnsOut', 'protect chain'],
+		'turnsOut', 'protect chain',
+		'THE VOLATILE WORD, decoded 2026-09-15: confusion (the name bug is fixed), Substitute,',
+		'  trapped, locked in, Focus Energy, recharge, Destiny Bond, Curse, Torment',
+		'  -- Substitute verified against the recorded Orthworm position of 2026-09-10'],
 	missing: ['side conditions (Reflect, Light Screen, Aurora Veil, Safeguard, Tailwind)',
 		'weather', 'which terrain is up', 'trick room', 'hazards',
-		'every volatile except confusion: Substitute, Leech Seed, trapped, Taunt, Encore, Disable, Destiny Bond, infatuation, Nightmare, Curse, Torment ...']
+		'Leech Seed (gStatuses3, a different structure)',
+		'Taunt, Encore, Disable (gDisableStructs, a different structure)']
 };
 
 const SHIPPED = {
