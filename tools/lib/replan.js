@@ -592,9 +592,22 @@ function chooseAction(ctx, state, opts) {
 		ourHp[m.set.species] = m.fainted ? 0 : m.curHP / m.maxHP;
 		if (m.status && !m.fainted) ourStatus[m.set.species] = m.status;
 	});
-	let ideas = C.candidatesFor(ctx, fi, {field,
+	// The opponent's REAL condition goes to generation too, not just to pricing:
+	// its stat stages, its status and its volatiles (a Substitute standing in
+	// front of it, most of all). See candidates.js liveCond.
+	const foeLive = foeMon ? {
+		foeBoosts: foeMon.boosts,
+		foeStatus: foeMon.status,
+		foeSleep: foeMon.status === 'slp' ? (foeMon.sleepMax || undefined) : undefined,
+		foeVolatiles: foeMon.volatiles && Object.keys(foeMon.volatiles).length
+			? Object.keys(foeMon.volatiles)
+				.filter(k => k !== 'usedMoves' && k !== 'lastMove' && k !== 'moved' && k !== 'hitThisTurn')
+				.reduce((o, k) => { o[k] = foeMon.volatiles[k]; return o; }, {})
+			: undefined
+	} : {};
+	let ideas = C.candidatesFor(ctx, fi, Object.assign({field,
 		foeHp: foeMon && foeMon.maxHP ? foeMon.curHP / foeMon.maxHP : undefined,
-		ourHp, ourStatus, active: state.me.active});
+		ourHp, ourStatus, active: state.me.active}, foeLive));
 	// THE PLAN WE ARE ALREADY FOLLOWING IS ALWAYS ON THE TABLE. Candidates are
 	// re-derived by a heuristic search every turn, and that search is not
 	// stable under small changes in HP: measured over recent play, on 43% of

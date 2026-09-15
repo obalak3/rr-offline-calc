@@ -41,7 +41,62 @@ const pctOf = x => (x * 100).toFixed(0) + '%';
 function fieldCond(field, foeHp) {
 	const out = {};
 	if (field && field.terrainTurns) out.terrain = field.terrain;
+	if (field && field.weather && field.weatherTurns) out.weather = field.weather;
 	if (foeHp !== undefined && foeHp < 0.999) out.foeChip = 1 - foeHp;
+	return out;
+}
+
+/**
+ * THE POSITION AS IT ACTUALLY IS, as the baseline every candidate starts from.
+ *
+ * `duelLines` has always understood a general condition vocabulary -- foeBoosts,
+ * foeStatus, foeVolatiles, ourStatus, weather, terrain -- but it was only ever
+ * used to express HYPOTHETICALS: "I can kill Pawmot IF it is slowed". The real
+ * position was passed in as two facts, the terrain and how chipped the opponent
+ * was, and nothing else. So a candidate generated against an opponent that is
+ * already at +2 Attack, or asleep, or standing behind a Substitute, was
+ * generated as though none of that were true, and the mistake was invisible
+ * because PRICING saw the real state and only GENERATION did not.
+ *
+ * James, 2026-09-15, on being shown the audit: "fix the generation path too".
+ * Same disease as every other bug here -- two halves that disagree about the
+ * position -- and the same cure: one derivation, used by both.
+ *
+ * RR_LIVE_COND=0 restores the old two-fact baseline.
+ */
+const LIVE_COND = process.env.RR_LIVE_COND !== '0';
+function liveCond(opts) {
+	const out = fieldCond(opts.field, opts.foeHp);
+	if (!LIVE_COND) return out;
+	const b = opts.foeBoosts;
+	if (b && Object.keys(b).some(k => b[k])) out.foeBoosts = Object.assign({}, b);
+	if (opts.foeStatus) {
+		out.foeStatus = opts.foeStatus;
+		if (opts.foeStatus === 'slp' && opts.foeSleep) out.sleepTurns = opts.foeSleep;
+	}
+	const v = opts.foeVolatiles;
+	if (v && Object.keys(v).length) out.foeVolatiles = Object.assign({}, v);
+	return out;
+}
+
+/**
+ * Merge a hypothetical on top of the real position. Stat stages ADD -- an
+ * enabler that drops Attack by one against an opponent already at -1 must reach
+ * -2, not overwrite its way back to -1 -- while everything else is replaced,
+ * because "suppose it were asleep" means asleep whatever it is now.
+ */
+function withCond(base, extra) {
+	const out = Object.assign({}, base, extra || {});
+	if (base.foeBoosts && extra && extra.foeBoosts) {
+		const merged = Object.assign({}, base.foeBoosts);
+		for (const k in extra.foeBoosts) {
+			merged[k] = Math.max(-6, Math.min(6, (merged[k] || 0) + extra.foeBoosts[k]));
+		}
+		out.foeBoosts = merged;
+	}
+	if (base.foeVolatiles && extra && extra.foeVolatiles) {
+		out.foeVolatiles = Object.assign({}, base.foeVolatiles, extra.foeVolatiles);
+	}
 	return out;
 }
 
@@ -321,7 +376,7 @@ function candidatesFor(ctx, fi, options) {
 	};
 	const duelCond = (mi, extra) => {
 		const sp = party[mi].species;
-		const c = Object.assign({}, fieldCond(opts.field, opts.foeHp), extra || {});
+		const c = withCond(liveCond(opts), extra);
 		if (opts.ourHp && opts.ourHp[sp] !== undefined) {
 			if (opts.ourHp[sp] <= 0) return null;
 			c.hpFrac = opts.ourHp[sp];
@@ -674,9 +729,9 @@ function candidatesFor(ctx, fi, options) {
 	for (let depth = 0; depth <= MAX_CHIP_LEGS; depth++) {
 		const grown = [];
 		for (const node of frontier) {
-			const base = fieldCond(opts.field, opts.foeHp);
+			const base = liveCond(opts);
 			const already = base.foeChip || 0;
-			const entryCond = Object.assign({}, base,
+			const entryCond = withCond(base,
 				(node.acc + already) > 0 ? {foeChip: Math.min(0.99, node.acc + already)} : {});
 			party.forEach((p, mi) => {
 				if (node.used[mi]) return;
