@@ -153,6 +153,28 @@ console.log('  and hazards make a switch cost HP it never charges for. James rai
 console.log('  the Substitute one himself on 2026-09-10 after Orthworm\'s Shed Tail');
 console.log('  and it is still open.');
 
+console.log('\n' + '='.repeat(78));
+console.log('WHAT CANNOT BE VERIFIED FROM THE SAVE STATES WE HAVE (2026-09-15):');
+console.log('');
+console.log('  A memory address is only trustworthy once a state exists where the thing');
+console.log('  is actually happening -- that is how the Substitute bit, the terrain word');
+console.log('  and the Tailwind timer were each pinned. Checked every Pokemon in every');
+console.log('  available fight, and NOTHING produces:');
+console.log('    weather        no ability or move on either side of any saved fight sets it');
+console.log('    Misty/Psychic  no setter; both are bits of the field word already shipped');
+console.log('    Trick Room     no setter; also a bit of that word');
+console.log('    Leech Seed     no carrier');
+console.log('    Taunt/Encore/Disable   no carrier');
+console.log('  So these cannot be closed offline. They need a save state from a fight');
+console.log('  that has one, which is a thing to ask James for rather than guess at.');
+console.log('');
+console.log('  HAZARDS are producible -- Shiftry carries Ceaseless Edge in the right');
+console.log('  guard fight -- and the evidence so far is suggestive but NOT pinned: one');
+console.log('  arrival came in at exactly one eighth down, which is a Spikes layer, but');
+console.log('  the isolation tests were confounded because the opponents attack on the');
+console.log('  same turn. Settling it needs a frame-by-frame read of HP at the moment of');
+console.log('  arrival, not a before-and-after of the whole turn.');
+
 console.log('\n' + failures + ' input(s) the score cannot see.');
 console.log('Each is a turn it can misjudge without ever being told. Close them as a');
 console.log('set: read it in doracle, decode it in doubles-position, price it by');
