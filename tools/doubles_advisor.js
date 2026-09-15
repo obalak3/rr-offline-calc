@@ -23,6 +23,7 @@ const path = require('path');
 const H = require('./lib/harness.js');
 const D = require('./lib/doubles-oracle.js');
 const A = require('./lib/doubles-actions.js');
+const P = require('./lib/doubles-position.js');
 
 const args = process.argv.slice(2);
 const STATE = args.find(a => !a.startsWith('--'));
@@ -36,6 +37,7 @@ if (!fs.existsSync(STATE)) { console.error('no such state: ' + STATE); process.e
 if (!D.available()) { console.error('the hidden core or the ROM is missing; see docs/HANDOFF.md section 4'); process.exit(2); }
 
 const engine = H.loadEngine();
+const dexBundle = H.loadDex();
 const dex = engine.sandbox.RR_DEX_DATA;
 const MOVES = engine.sandbox.RR_MOVE_EFFECTS.moves;
 const speciesName = id => { const s = dex.species[id]; return s ? (s.key || s.name) : ('#' + id); };
@@ -97,11 +99,16 @@ function conditionNotes(before, after, nameOf) {
 	return notes;
 }
 
-function score(sum) {
+function score(sum, cond) {
 	if (!sum || !sum.ok) return -Infinity;
 	return sum.theirLost + 1000 * sum.theirDead
 		- sum.ourLost + sum.ourHealed
-		- 130 * sum.ourDead;
+		- 130 * sum.ourDead
+		// The CHANGE in conditions across the turn, measured in HP against the
+		// same position with those conditions removed (doubles-position.js).
+		// Null means it could not be priced, and is left out rather than
+		// counted as nothing.
+		+ (cond && cond.value ? cond.value : 0);
 }
 
 /** A cheap ordering for the portfolio's fill: damage numbers, no simulation. */
@@ -173,7 +180,9 @@ async function main() {
 		const sum = D.summarize(r);
 		if (!sum.ok) { rows.push({pair: play[i], bad: r.error || 'no result'}); return; }
 		if (!D.arrivalOk(r, maxBySlot)) { rows.push({pair: play[i], bad: 'the wrong Pokemon came in; probe thrown away'}); return; }
-		rows.push({pair: play[i], sum, v: score(sum), r});
+		let cond = null;
+		try { cond = r.obs ? P.delta(engine, dexBundle, obs, r.obs) : null; } catch (e) { cond = null; }
+		rows.push({pair: play[i], sum, cond, v: score(sum, cond), r});
 	});
 	const good = rows.filter(x => !x.bad).sort((a, b) => b.v - a.v);
 	const bad = rows.filter(x => x.bad);
@@ -192,7 +201,12 @@ async function main() {
 			+ (s.ourHealed ? ', we heal ' + s.ourHealed : '')
 			+ (s.forced ? ', then we must send someone in' : ''));
 		const notes = conditionNotes(x.r.before, x.r.after, b => speciesName(B[b].species));
-		if (notes.length) console.log('          NOT PRICED: ' + notes.join('; '));
+		if (notes.length) {
+			const priced = x.cond
+				? Math.round(x.cond.value) + ' HP, measured'
+				: 'NOT PRICED, the position could not be read';
+			console.log('          conditions: ' + notes.join('; ') + '  [' + priced + ']');
+		}
 	});
 	if (bad.length) {
 		console.log('\n' + bad.length + ' thrown away: ' + bad.slice(0, 3).map(x => label(x.pair) + ' (' + x.bad + ')').join('; '));

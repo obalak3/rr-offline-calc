@@ -259,14 +259,40 @@ ours that faints. It does NOT price their stat boosts going up, a Substitute
 standing in front of them, sleep, or which of ours answers what, because
 `position.js` is still one-against-one shaped.
 
-Rather than invent constants for those -- James's rule is that constants are
-derived, not tuned, and position.js earns a condition's value by measuring the
-damage their real moves no longer do -- every condition either side gains is
-PRINTED beside the line under `NOT PRICED:`. It earned that on its first run:
-two of the top lines on ss7 read "we lose nothing" while Hypno's Dark Void had
-put Greninja to sleep. Teaching the position score doubles is the next piece of
-value work, and it is what would let those lines be ranked rather than only
-flagged.
+### Conditions are now MEASURED, 2026-09-14 (doubles-position.js)
+
+`tools/lib/doubles-position.js` builds a real 2v2 engine position out of the
+oracle's observation -- each battler's species, level, moves, ability, item and
+its REAL stats read off the battle struct -- and prices every condition the way
+position.js does in singles, by measurement:
+
+> a condition on THEIR side is worth the damage their real moves no longer do
+> to our living Pokemon; one on OUR side is worth the damage our real moves no
+> longer do to theirs; sleep is worth the turns lost. Nothing is worth anything
+> for having a name.
+
+The advisor adds the CHANGE in that value across the turn to its score, and
+prints the terms. Two things it got right immediately on ss7:
+
+- **An Attack drop on both of ours priced at zero**, correctly: Accelgor and
+  Greninja are special attackers, so Granbull's Intimidate on arrival changes
+  nothing measurable. That is James's own rule ("lowering the physical damage
+  of a special attacker is just null") falling out of the measurement rather
+  than being written down as an exception.
+- **A three-turn sleep priced at -251 HP**, which is Greninja's own offence for
+  the turns it loses. The line that reads "they lose 138 and a Pokemon, we lose
+  17" fell from 1121 to 870 and out of the recommendation, because Dark Void
+  had put Greninja to sleep behind it.
+
+Two bugs were found and fixed on the way, both worth remembering: the struct's
+sleep counter is turns REMAINING and counts down, while position.js's field of
+the same name means turns lost so far, so mixing them priced a three-turn sleep
+at zero; and folding the sleep term inside the horizon multiplier counted the
+horizon twice.
+
+Still not priced: a Substitute standing in front of them, hazards, and which of
+ours is the answer to what (importance weights still come from the singles duel
+table). Those are the next value work.
 
 ## Risks the first draft missed
 
