@@ -18,3 +18,5 @@ tools/headless/mgba-build/
 tools/headless/spike
 tools/headless/oracle
 tools/headless/findparty
+tools/headless/doracle
+tools/headless/dscan
