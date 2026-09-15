@@ -25,16 +25,17 @@ const D = require('./lib/doubles-oracle.js');
 const A = require('./lib/doubles-actions.js');
 const P = require('./lib/doubles-position.js');
 
+const CLI = require.main === module;
 const args = process.argv.slice(2);
 const STATE = args.find(a => !a.startsWith('--'));
 const flag = n => args.includes('--' + n);
 const val = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 && args[i + 1] ? Number(args[i + 1]) : d; };
-const BUDGET = val('budget', 16);
-const DEPTH = val('depth', 1);
 
-if (!STATE) { console.error('usage: node tools/doubles_advisor.js <state.ss> [--budget N] [--all] [--depth 2]'); process.exit(2); }
-if (!fs.existsSync(STATE)) { console.error('no such state: ' + STATE); process.exit(2); }
-if (!D.available()) { console.error('the hidden core or the ROM is missing; see docs/HANDOFF.md section 4'); process.exit(2); }
+if (CLI) {
+	if (!STATE) { console.error('usage: node tools/doubles_advisor.js <state.ss> [--budget N] [--all] [--depth 2]'); process.exit(2); }
+	if (!fs.existsSync(STATE)) { console.error('no such state: ' + STATE); process.exit(2); }
+	if (!D.available()) { console.error('the hidden core or the ROM is missing; see docs/HANDOFF.md section 4'); process.exit(2); }
+}
 
 const engine = H.loadEngine();
 const dexBundle = H.loadDex();
@@ -122,11 +123,22 @@ function rankOf(pair) {
 	return one(pair.a0) + one(pair.a2);
 }
 
-async function main() {
+/**
+ * Work out the turn. Returns everything the caller needs to judge it, so a
+ * test can assert on the ranking rather than on printed text.
+ */
+async function advise(statePath, opts) {
+	opts = opts || {};
+	const BUDGET = opts.budget === undefined ? 16 : opts.budget;
+	const DEPTH = opts.depth === undefined ? 1 : opts.depth;
+	const playAll = !!opts.all;
+	const say = opts.quiet ? () => {} : console.log;
+	const STATE = statePath;
+	const flag = n => (n === 'all' ? playAll : false);
 	const peek = await D.probe(STATE, {a0: null, a2: null});
-	if (peek.error) { console.error('the core could not read that state: ' + peek.error); process.exit(1); }
+	if (peek.error) throw new Error('the core could not read that state: ' + peek.error);
 	const obs = peek.obs, before = peek.before;
-	if (!obs || !obs.doubles) { console.error('that state is not a double battle'); process.exit(1); }
+	if (!obs || !obs.doubles) throw new Error('that state is not a double battle');
 
 	const B = obs.battlers;
 	const party = partyRows(obs);
@@ -146,28 +158,28 @@ async function main() {
 	};
 	const asked = before.asking === 0 || before.asking === 2 ? [0, 2].filter(b => B[b] && B[b].hp > 0) : [];
 
-	console.log('\n' + '='.repeat(78));
-	console.log('OURS   ' + [0, 2].map(b => 'b' + b + ' ' + speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp).join('    '));
-	console.log('THEIRS ' + [1, 3].map(b => 'b' + b + ' ' + speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp).join('    '));
-	console.log('BENCH  ' + party.filter(p => !onField.has(p.slot) && p.hp > 0)
+	say('\n' + '='.repeat(78));
+	say('OURS   ' + [0, 2].map(b => 'b' + b + ' ' + speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp).join('    '));
+	say('THEIRS ' + [1, 3].map(b => 'b' + b + ' ' + speciesName(B[b].species) + ' ' + B[b].hp + '/' + B[b].maxhp).join('    '));
+	say('BENCH  ' + party.filter(p => !onField.has(p.slot) && p.hp > 0)
 		.map(p => speciesName(p.species) + ' ' + p.hp + '/' + p.maxhp).join(', '));
-	console.log('='.repeat(78));
+	say('='.repeat(78));
 
-	const opts = {
+	const naming = {
 		name: b => speciesName(B[b].species),
 		partyName: s => speciesName(party[s].species)
 	};
-	const left = A.actionsFor(0, B[0], moveInfo, party, onField, alive, opts);
-	const right = A.actionsFor(2, B[2], moveInfo, party, onField, alive, opts);
+	const left = A.actionsFor(0, B[0], moveInfo, party, onField, alive, naming);
+	const right = A.actionsFor(2, B[2], moveInfo, party, onField, alive, naming);
 	const all = A.jointActions(left, right, asked);
-	console.log('legal joint actions: ' + all.length
+	say('legal joint actions: ' + all.length
 		+ '  (' + left.length + ' for ' + speciesName(B[0].species) + ', ' + right.length + ' for ' + speciesName(B[2].species) + ')');
 
 	const play = flag('all') ? all : A.portfolio(all, rankOf, BUDGET);
 	const gaps = A.coverageGaps(all, play);
-	console.log('playing ' + play.length + ' of them on the hidden game, ' + D.CONC + ' at a time'
+	say('playing ' + play.length + ' of them on the hidden game, ' + D.CONC + ' at a time'
 		+ (flag('all') ? '' : ' (coverage first, then shapes, then the hardest hitters)'));
-	if (!flag('all')) console.log('coverage: every legal action of ours is represented'
+	if (!flag('all')) say('coverage: every legal action of ours is represented'
 		+ (gaps.length ? ' EXCEPT ' + gaps.length + ': ' + gaps.join(', ') : ''));
 
 	const t0 = Date.now();
@@ -190,13 +202,13 @@ async function main() {
 	const label = p => [p.a0 ? speciesName(B[0].species) + ' ' + p.a0.label : null,
 		p.a2 ? speciesName(B[2].species) + ' ' + p.a2.label : null].filter(Boolean).join('  +  ');
 
-	console.log('\nbest ' + Math.min(8, good.length) + ' of ' + good.length + ' played, in ' + secs + ' s:\n');
+	say('\nbest ' + Math.min(8, good.length) + ' of ' + good.length + ' played, in ' + secs + ' s:\n');
 	good.slice(0, 8).forEach((x, i) => {
 		const s = x.sum;
 		const took = s.ourLost ? 'we lose ' + s.ourLost : 'we lose nothing';
 		const dealt = s.theirLost ? 'they lose ' + s.theirLost : 'they lose nothing';
-		console.log('  ' + String(Math.round(x.v)).padStart(6) + '  ' + label(x.pair));
-		console.log('          ' + dealt + (s.theirDead ? ' and ' + s.theirDead + ' Pokemon' : '')
+		say('  ' + String(Math.round(x.v)).padStart(6) + '  ' + label(x.pair));
+		say('          ' + dealt + (s.theirDead ? ' and ' + s.theirDead + ' Pokemon' : '')
 			+ ', ' + took + (s.ourDead ? ' and ' + s.ourDead + ' Pokemon' : '')
 			+ (s.ourHealed ? ', we heal ' + s.ourHealed : '')
 			+ (s.forced ? ', then we must send someone in' : ''));
@@ -205,11 +217,11 @@ async function main() {
 			const priced = x.cond
 				? Math.round(x.cond.value) + ' HP, measured'
 				: 'NOT PRICED, the position could not be read';
-			console.log('          conditions: ' + notes.join('; ') + '  [' + priced + ']');
+			say('          conditions: ' + notes.join('; ') + '  [' + priced + ']');
 		}
 	});
 	if (bad.length) {
-		console.log('\n' + bad.length + ' thrown away: ' + bad.slice(0, 3).map(x => label(x.pair) + ' (' + x.bad + ')').join('; '));
+		say('\n' + bad.length + ' thrown away: ' + bad.slice(0, 3).map(x => label(x.pair) + ' (' + x.bad + ')').join('; '));
 	}
 
 	if (DEPTH >= 2 && good.length) {
@@ -217,14 +229,14 @@ async function main() {
 		// play the after-state forward with each of our own best replies and
 		// judge on the two-turn total.
 		const K = Math.min(3, good.length);
-		console.log('\nsecond turn, played for real, for the top ' + K + ':');
+		say('\nsecond turn, played for real, for the top ' + K + ':');
 		const os = require('os');
 		for (let i = 0; i < K; i++) {
 			const x = good[i];
 			const tmp = path.join(os.tmpdir(), 'rr-doubles-d2-' + process.pid + '-' + i + '.ss');
 			const again = await D.probe(STATE, x.pair, {save: tmp});
 			if (!again.after || again.after.screen !== 'action') {
-				console.log('  ' + label(x.pair) + ': no second decision to make (' + (again.after ? again.after.screen : 'error') + ')');
+				say('  ' + label(x.pair) + ': no second decision to make (' + (again.after ? again.after.screen : 'error') + ')');
 				try { fs.unlinkSync(tmp); } catch (e) { /* gone */ }
 				continue;
 			}
@@ -254,14 +266,20 @@ async function main() {
 						replies[k].a2 ? speciesName(nb[2].species) + ' ' + replies[k].a2.label : null].filter(Boolean).join(' + ');
 				}
 			});
-			console.log('  ' + String(Math.round(best)).padStart(6) + '  ' + label(x.pair) + '  then  ' + bestLabel);
+			say('  ' + String(Math.round(best)).padStart(6) + '  ' + label(x.pair) + '  then  ' + bestLabel);
 			try { fs.unlinkSync(tmp); } catch (e) { /* gone */ }
 		}
 	}
 
 	if (good.length) {
-		console.log('\nRECOMMENDATION: ' + label(good[0].pair));
+		say('\nRECOMMENDATION: ' + label(good[0].pair));
 	}
+	return {obs, before, all, play, gaps, ranked: good, thrown: bad, secs: Number(secs), label, speciesName};
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+module.exports = {advise};
+
+if (CLI) {
+	advise(STATE, {budget: val('budget', 16), depth: val('depth', 1), all: flag('all')})
+		.catch(e => { console.error(e.message || e); process.exit(1); });
+}
