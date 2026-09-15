@@ -44,6 +44,20 @@ local RNG           = 0x020386D0
 -- fight and blocking Sleep Powder on grounded targets, which is a path James
 -- says he has taken on file.
 local TERRAIN_TIMER = 0x020179BC
+-- THE FIELD STATUS WORD, found 2026-09-15 by diffing two save states that had
+-- different terrains up against two that had none: Erika's Rillaboom sets
+-- Grassy Terrain (ss4, 8 turns with its Terrain Extender) and Surge's
+-- Pincurchin sets Electric Terrain (ss5, 5 turns). Only the TIMER was ever
+-- read, so the planner knew how long a terrain had left and never which one it
+-- was -- it inferred the type from whoever led, which is how every Surge
+-- position carried Electric Terrain for the whole fight.
+--   bit 0x1000 = Electric Terrain      bit 0x8000 = Grassy Terrain
+-- Both measured. Misty, Psychic and Trick Room are other bits of the same word
+-- and are NOT yet identified; the whole word is shipped so they can be.
+local FIELD_STATUS  = 0x030020D0
+-- The side timer Tailwind drives (docs/SCREEN-MAP.md). Which SIDE it belongs to
+-- is not separated yet, so it is shipped raw and nothing assumes ownership.
+local TAILWIND_TIMER = 0x020179C8
 
 local S_ACTION, S_MOVES, S_PARTY, S_BUSY = 0x0802E439, 0x0802EA11, 0x08030685, 0x0802E3B5
 
@@ -400,10 +414,12 @@ local function writeState(kind)
 		'{"turn":%d,"kind":"%s","screen":"%s","rng":%d,"btype":%d,'
 		.. '"b2sp":%d,"b3sp":%d,'
 		.. '"ai_action":%d,"ai_target":%d,"terrainTurns":%d,'
+		.. '"fieldStatus":%d,"tailwindTimer":%d,'
 		.. '"me":%s,"foe":%s,"party":[%s],"foeparty":[%s]}\n',
 		turn, kind, screen(), emu:read32(RNG), emu:read32(0x02022B4C),
 		emu:read16(MON + 2 * SIZE + O_SP), emu:read16(MON + 3 * SIZE + O_SP),
 		emu:read8(AI_ACTION), emu:read8(AI_TARGET), emu:read8(TERRAIN_TIMER),
+		emu:read32(FIELD_STATUS), emu:read8(TAILWIND_TIMER),
 		battler(MON), battler(MON + SIZE), party(), foeParty()))
 	f:close()
 	os.remove(DIR .. "cmd.json")

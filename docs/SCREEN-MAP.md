@@ -184,6 +184,29 @@ screen (`doracle <state> - s<slot>`): Toxtricity, Gyarados, Granbull and
 Skeledirge each arrived in the fainted slot with the right max HP, and asking
 for the fainted Pokemon itself is refused rather than guessed at.
 
+## The field status word, found 2026-09-15
+
+    0x030020D0    gFieldStatuses, a bitfield
+                  0x1000 Electric Terrain      0x8000 Grassy Terrain
+    0x020179BC    the terrain TIMER (already shipped, already read)
+
+Found by diffing four save states: two with a terrain up and two without. The
+only byte that separated Surge from a plain fight was the timer, so the TYPE
+had to be elsewhere; searching for a 32-bit word that is zero in both
+terrain-free fights and holds different single bits in the two terrain fights
+left one candidate. Erika's Rillaboom sets Grassy Terrain and carries a Terrain
+Extender, which is why `ss4` reads 8 turns, and Surge's Pincurchin sets
+Electric Terrain for the standard 5 in `ss5`.
+
+This mattered: only the timer was ever read, so the planner knew how long a
+terrain had left and never which one it was. It inferred the type from the
+entry ability of whoever sat at roster index 0, which is how every Surge
+position carried Electric Terrain for the whole fight.
+
+**Misty Terrain, Psychic Terrain and Trick Room are other bits of this same
+word and are NOT identified.** The whole word is shipped so they can be, and an
+unrecognised terrain now clears the guess rather than keeping a wrong one.
+
 ## Side conditions: the Tailwind timer, found 2026-09-15
 
     0x020179C8    a side timer Tailwind drives: 0 with none up, then 3, 2, 1

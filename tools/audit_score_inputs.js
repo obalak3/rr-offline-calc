@@ -56,7 +56,7 @@ for (const name in MOVES) {
 // itself. Everything else below is missing from BOTH pipelines.
 const SINGLES = {
 	reads: ['HP', 'status', 'stat stages', 'ability', 'item', 'moves and PP', 'real stats',
-		'terrain TURNS (clears the terrain at zero; which terrain is never read)',
+		'terrain: BOTH the turns and WHICH ONE (field word 0x030020D0, Electric and Grassy measured)',
 		'turnsOut', 'protect chain',
 		'GENERATION now starts from the real position too (candidates.js liveCond, 2026-09-15):',
 		'  the opponent\'s stat stages, status, sleep length and volatiles, and the weather,',
@@ -65,7 +65,10 @@ const SINGLES = {
 		'  trapped, locked in, Focus Energy, recharge, Destiny Bond, Curse, Torment',
 		'  -- Substitute verified against the recorded Orthworm position of 2026-09-10'],
 	missing: ['side conditions (Reflect, Light Screen, Aurora Veil, Safeguard, Tailwind)',
-		'weather', 'which terrain is up', 'trick room', 'hazards',
+		'weather',
+		'Misty and Psychic terrain (other bits of the field word, not yet identified)',
+		'trick room (another bit of the same word, not yet identified)',
+		'hazards',
 		'Leech Seed (gStatuses3, a different structure)',
 		'Taunt, Encore, Disable (gDisableStructs, a different structure)']
 };

@@ -744,6 +744,24 @@ function buildState(obs) {
 		st.field.terrainTurns = obs.terrainTurns;
 		if (!obs.terrainTurns) st.field.terrain = null;
 	}
+	// WHICH terrain, not just how long. Reading only the timer left the type
+	// inferred from whoever led -- the entry ability of roster index 0 -- so a
+	// fight could carry the wrong terrain for its whole length while the timer
+	// looked right. The field status word says which one it actually is
+	// (0x030020D0; Electric 0x1000 and Grassy 0x8000 both measured against save
+	// states that had them up). Misty and Psychic are other bits of the same
+	// word and are not identified yet, so an unrecognised terrain clears the
+	// guess rather than keeping a wrong one.
+	if (obs.fieldStatus !== undefined && obs.terrainTurns) {
+		const FIELD = {0x1000: 'Electric', 0x8000: 'Grassy'};
+		let named = null;
+		for (const bit in FIELD) if (obs.fieldStatus & Number(bit)) named = FIELD[bit];
+		st.field.terrain = named;
+		if (!named && process.env.RR_DEBUG_FIELD) {
+			console.log('  [field: terrain is up for ' + obs.terrainTurns
+				+ ' turns but its bit is unmapped, word=0x' + Number(obs.fieldStatus).toString(16) + ']');
+		}
+	}
 
 	// HOW LONG EACH SIDE HAS BEEN OUT, which nothing was telling the engine.
 	// B.createState sets turnsOut to 0 for every member, and the live agent
