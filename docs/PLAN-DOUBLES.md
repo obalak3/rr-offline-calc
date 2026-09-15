@@ -238,21 +238,35 @@ either action alone. Both live in the PAIR. So the attack-against-attack
 product is now played in full, and only switches and status moves are
 represented by coverage.
 
-**That costs 48 to 57 pairs and 15 to 27 s a turn**, against the roughly 10 s
-James agreed to when the estimate was 16 pairs. The estimate is now known to be
-wrong, so the budget is his to re-take: more time per turn, or a portfolio that
-is known to miss lines like these two. Nothing here is fitted to one fight --
-the second measurement was taken on the fight the design was not built on, and
-it failed there first.
+**The cost is 48 to 57 pairs, and it FITS: 6.4 to 6.9 s a turn**, measured
+twice on each fight at eight probes at a time, inside the roughly 10 s James
+agreed to. It did NOT fit at first (15 and 27 s), and the difference was not
+the portfolio: probes were running to the 6000-frame cap because a message box
+holds the turn after a faint and nothing was answering it. Tapping A through
+those messages, which the singles core has always done, ends each probe at the
+next menu instead -- and makes the outcome more honest too, because the turn
+now finishes rather than being cut off mid-resolution. So there is no budget
+decision to re-take.
+
+Nothing here is fitted to one fight: the second measurement was taken on the
+fight the design was not built on, and it failed there first.
 
 ### Known gaps in the scoring, recorded rather than papered over
 
 The advisor scores a real after-state with the singles formula: their HP
 removed, a bounty per opponent removed, our HP lost, a charge per Pokemon of
-ours that faints. It does NOT yet price their stat boosts going up, a
-Substitute standing in front of them, sleep, or which of ours answers what,
-because `position.js` is still one-against-one shaped. A line that "costs
-nothing" may have put both of ours to sleep and the score would not say so.
+ours that faints. It does NOT price their stat boosts going up, a Substitute
+standing in front of them, sleep, or which of ours answers what, because
+`position.js` is still one-against-one shaped.
+
+Rather than invent constants for those -- James's rule is that constants are
+derived, not tuned, and position.js earns a condition's value by measuring the
+damage their real moves no longer do -- every condition either side gains is
+PRINTED beside the line under `NOT PRICED:`. It earned that on its first run:
+two of the top lines on ss7 read "we lose nothing" while Hypno's Dark Void had
+put Greninja to sleep. Teaching the position score doubles is the next piece of
+value work, and it is what would let those lines be ranked rather than only
+flagged.
 
 ## Risks the first draft missed
 
