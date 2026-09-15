@@ -82,11 +82,13 @@ const SHIPPED = {
 	'item': 'battler item',
 	'moves and PP': 'battler moves/pp',
 	'real stats': 'battler stats array',
-	'volatiles word': 'battler status2 -- SHIPPED BUT NEVER DECODED',
-	'terrain turns': 'obs terrainTurns -- SHIPPED BUT NEVER READ'
+	'volatiles word': 'battler status2, through the shared decoder lib/volatiles.js',
+	'terrain (turns AND which one)': 'obs terrainTurns + fieldStatus 0x030020D0',
+	'a standing Substitute, priced': 'the damage it will still absorb, measured'
 };
 const READ_BY_SCORE = [
-	'HP', 'status (slp/psn/brn/frz/par/tox)', 'sleep counter', 'stat stages', 'ability', 'item', 'moves and PP', 'real stats'
+	'HP', 'status (slp/psn/brn/frz/par/tox)', 'sleep counter', 'stat stages', 'ability', 'item', 'moves and PP', 'real stats',
+	'volatiles word', 'terrain (turns AND which one)', 'a standing Substitute, priced'
 ];
 
 // Everything the engine can track that the doubles observation does NOT carry.
@@ -98,7 +100,7 @@ const NOT_SHIPPED = {
 		cost: 'Talonflame set a Tailwind on turn 1 of the right guard fight and the turn scored as costing nothing'
 	},
 	'weather': {what: 'Rain, Sun, Sand, Hail, Snow', why: 'field state, not battler state', found: 'unmapped', cost: 'damage and speed change and the score cannot tell'},
-	'terrain': {what: 'Electric, Grassy, Misty, Psychic', why: 'field state', found: 'the TURN COUNTER is shipped as terrainTurns but which terrain is unmapped, and nothing reads either', cost: 'Grassy Terrain heals them each turn; Psychic Terrain blocks priority'},
+	'terrain, the other two': {what: 'Misty and Psychic', why: 'other bits of the field word', found: 'Electric and Grassy measured; these two have no setter in any reachable fight', cost: 'Psychic Terrain blocks priority, which decides doubles turns'},
 	'trick room': {what: 'reversed turn order for five turns', why: 'field state', found: 'unmapped', cost: 'every speed judgement inverts'},
 	'hazards': {what: 'Stealth Rock, Spikes, Toxic Spikes, Sticky Web', why: 'side state', found: 'unmapped', cost: 'a switch costs HP the score does not charge for'},
 	'volatiles': {what: 'Substitute, confusion, Leech Seed, trapped, Taunt, Encore, Disable, Destiny Bond and 23 more', why: 'the word IS shipped as status2 and nothing decodes it', found: 'shipped, undecoded', cost: 'a Substitute in front of them absorbs a hit the score counts as damage dealt'}

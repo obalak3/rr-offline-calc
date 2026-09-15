@@ -26,6 +26,7 @@
  */
 
 const POS = require('./position.js');
+const VOL = require('./volatiles.js');
 
 // How many turns of their offence a lasting condition is measured over. This
 // is position.js's own horizon, kept identical so singles and doubles agree
@@ -107,18 +108,31 @@ function stateFrom(engine, dex, obs) {
 	try { st = engine.B.createState(mySets, foeSets, {}); } catch (e) { return null; }
 	// Carry what the struct says across: HP, status and stages are the whole
 	// point of the measurement and createState starts them clean.
-	mine.forEach((b, i) => {
-		const m = st.me.team[i], src = B[b];
+	const carry = (m, src) => {
 		m.curHP = src.hp; m.status = statusOf(src.status);
 		m.sleepLeft = m.status === 'slp' ? sleepLeft(src.status) : 0;
 		m.boosts = boostsOf(src.stages);
-	});
-	theirs.forEach((b, i) => {
-		const m = st.foe.team[i], src = B[b];
-		m.curHP = src.hp; m.status = statusOf(src.status);
-		m.sleepLeft = m.status === 'slp' ? sleepLeft(src.status) : 0;
-		m.boosts = boostsOf(src.stages);
-	});
+		// The volatile word, through the one shared decoder (volatiles.js), so
+		// a Substitute standing in front of them is part of the position here
+		// exactly as it is in singles.
+		VOL.applyTo(m, src.status2);
+	};
+	mine.forEach((b, i) => carry(st.me.team[i], B[b]));
+	theirs.forEach((b, i) => carry(st.foe.team[i], B[b]));
+	// THE FIELD. Doubles shipped the terrain timer from the first day and never
+	// read it, and never received the field word at all until now. Same two
+	// measured bits as singles; an unrecognised terrain clears the guess rather
+	// than keeping whatever createState inferred from an entry ability.
+	if (obs.terrainTurns !== undefined) {
+		st.field.terrainTurns = obs.terrainTurns;
+		if (!obs.terrainTurns) st.field.terrain = null;
+	}
+	if (obs.fieldStatus !== undefined && obs.terrainTurns) {
+		const FIELD = {0x1000: 'Electric', 0x8000: 'Grassy'};
+		let named = null;
+		for (const bit in FIELD) if (obs.fieldStatus & Number(bit)) named = FIELD[bit];
+		st.field.terrain = named;
+	}
 	return {st, mine, theirs};
 }
 
@@ -263,6 +277,39 @@ function conditions(engine, built) {
 		if (Math.abs(v) > 0.5) {
 			value -= v;
 			terms.push({side: 'ours', who: st.me.team[i].set.species, hp: -Math.round(v)});
+		}
+	});
+
+	// A SUBSTITUTE STANDING IN FRONT OF THEM is a cost we have not paid yet.
+	//
+	// The turn's own damage is already in the score (a substitute that absorbed
+	// a hit shows up as "they lose nothing"), so this must not charge for that
+	// again. What it charges for is the FUTURE: a substitute still up when the
+	// turn ends will eat our next hit too, up to whatever is left of it. That is
+	// the damage it will absorb -- measurable, not a constant -- and it is
+	// exactly what James reported after Orthworm's Shed Tail, when three turns
+	// of our attacks landed on a substitute and the agent read it as dealing
+	// nothing for no reason it could name.
+	theirs.forEach((_, j) => {
+		const sub = st.foe.team[j].volatiles && st.foe.team[j].volatiles.substitute;
+		if (!sub) return;
+		let best = 0;
+		mine.forEach((__, i) => { best = Math.max(best, POS.bestHit(engine, st, 'me', i, j) * st.foe.team[j].maxHP); });
+		const absorbs = Math.min(sub, best);
+		if (absorbs > 0.5) {
+			value -= absorbs;
+			terms.push({side: 'theirs', who: st.foe.team[j].set.species + ' behind a Substitute', hp: -Math.round(absorbs)});
+		}
+	});
+	mine.forEach((_, i) => {
+		const sub = st.me.team[i].volatiles && st.me.team[i].volatiles.substitute;
+		if (!sub) return;
+		let best = 0;
+		theirs.forEach((__, j) => { best = Math.max(best, POS.bestHit(engine, st, 'foe', j, i) * st.me.team[i].maxHP); });
+		const absorbs = Math.min(sub, best);
+		if (absorbs > 0.5) {
+			value += absorbs;
+			terms.push({side: 'ours', who: st.me.team[i].set.species + ' behind a Substitute', hp: Math.round(absorbs)});
 		}
 	});
 

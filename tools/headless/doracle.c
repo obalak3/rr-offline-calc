@@ -66,6 +66,12 @@
 #define P_LEVEL 0x54
 #define P_SPECIES 0x20
 #define RNG           0x020386D0
+// The field status word and the side timer Tailwind drives, both found
+// 2026-09-15 and already shipped by the singles actuator. See
+// docs/SCREEN-MAP.md; bit 0x1000 is Electric Terrain and 0x8000 is Grassy,
+// both measured, and the rest of the word is unidentified but shipped whole.
+#define FIELD_STATUS  0x030020D0
+#define TAILWIND_TIMER 0x020179C8
 #define AI_ACTION     0x0200005B
 #define AI_TARGET     0x02000091
 #define KEY_A 1
@@ -149,9 +155,11 @@ static void dump(const char* label, int frame) {
 }
 static void obs_json(void) {
 	printf("{\"at\":\"obs\",\"turn\":0,\"kind\":\"%s\",\"screen\":\"%s\",\"doubles\":true,\"rng\":%u,\"btype\":%u,"
-		"\"ai_action\":%u,\"ai_target\":%u,\"terrainTurns\":%u,\"battlers\":[",
+		"\"ai_action\":%u,\"ai_target\":%u,\"terrainTurns\":%u,"
+		"\"fieldStatus\":%u,\"tailwindTimer\":%u,\"battlers\":[",
 		!strcmp(screen_any(), "party") ? "forced" : "decision", screen_any(),
-		r32(RNG), r32(0x02022B4C), r8(AI_ACTION), r8(AI_TARGET), r8(0x020179BC));
+		r32(RNG), r32(0x02022B4C), r8(AI_ACTION), r8(AI_TARGET), r8(0x020179BC),
+		r32(FIELD_STATUS), r8(TAILWIND_TIMER));
 	for (int b = 0; b < 4; b++) { if (b) printf(","); battler_json(MON + b * MON_SIZE); }
 	printf("],\"party\":["); rows_json(PARTY);
 	printf("],\"foeparty\":["); rows_json(FOE_PARTY); printf("]}\n");
