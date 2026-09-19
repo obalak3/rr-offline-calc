@@ -154,6 +154,15 @@ reseeds the RNG; F5 and `loadstate` do not.
 
 ## 7. Open items, in order
 
+**SEARCHING THE REAL GAME (2026-09-19): `docs/PLAN-SEARCH.md`.** The oracle
+predicts nothing, so the five old "more search loses" results do not transfer --
+they were all measured on the offline engine where depth multiplied a prediction
+error. From a save state the fight is a deterministic function of OUR actions
+alone (measured: nine press delays, identical results), which makes this
+single-agent search, and zero faints does most of the pruning. A settled shape
+now finds, in 6-7 s a turn, lines the live agent misses by a factor of nine in
+damage taken. It is a TOOL, not the agent: nothing there plays the live game.
+
 **THE NEXT PHASE IS DOUBLES.** James beat Erika on 2026-09-08 and the next
 three battles in the game are double battles (Game Corner guard, then the two
 Rocket Hideout guards, cap 47, four Pokemon each). Plan, decisions, staging
