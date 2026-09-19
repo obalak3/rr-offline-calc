@@ -59,6 +59,16 @@ const MAXTURNS = val('turns', 6);
 // can be played at once.
 const PAR = val('par', 8);
 const BEAM = val('beam', 0);              // 0 = keep every surviving node
+// NEVER PRUNE THE ROOT. The root is the decision we actually make; everything
+// below it is only there to judge it. Measured 2026-09-19 on a position where
+// Greninja sat at 23/139 against a fresh Kangaskhan: the pruned search offered
+// a switch costing 44 HP while a switch costing NOTHING existed, because the
+// switch ranker scores by the opponent's worst plausible hit and Skeledirge is
+// a Ghost that Kangaskhan's Crunch hits for double -- so it ranked badly, while
+// in the real game Kangaskhan used a Normal move Skeledirge is immune to.
+// Predicting their move is exactly what this whole approach exists to avoid;
+// at the root we can simply play them all.
+const ROOTKEEP = val('rootkeep', 0);      // 0 = every legal action at the root
 
 const ROM = process.env.RR_ROM || path.join(process.env.HOME, 'RadicalRed-mGBA', 'RadicalRed.gba');
 const BIN = path.join(__dirname, 'headless', 'oracle');
@@ -320,7 +330,7 @@ function run() {
 			line: [], acc: {ourLost: 0, theirLost: 0, ourDead: 0, theirDead: 0}, own: false}];
 		for (let d = 0; d < DEPTH && frontier.length && probes < BUDGET; d++) {
 			const jobs = [];
-			frontier.forEach(node => keepSet(node.obs, KEEP).forEach(a => jobs.push({node, a})));
+			frontier.forEach(node => keepSet(node.obs, d === 0 ? ROOTKEEP : KEEP).forEach(a => jobs.push({node, a})));
 			if (!jobs.length) break;
 			const results = await pool(jobs, PAR, async (job, i) => {
 				if (probes >= BUDGET) return null;
