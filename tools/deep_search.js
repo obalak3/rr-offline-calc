@@ -33,7 +33,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {execFileSync} = require('child_process');
+const {execFileSync, execFile} = require('child_process');
 const H = require('./lib/harness.js');
 const P = require('./lib/doubles-position.js');
 
@@ -53,6 +53,12 @@ const RESOLVE = args.includes('--resolve');       // stop a branch once it resol
 const BESTFIRST = args.includes('--bestfirst');   // follow the leading line narrowly
 const CWIDTH = val('cwidth', 2);          // how wide the continuation stays
 const MAXTURNS = val('turns', 6);
+// Every probe is an independent process and this machine has eight cores, so
+// the serial searcher was leaving almost all of them idle. The tree is
+// naturally parallel level by level: every child of every node on the frontier
+// can be played at once.
+const PAR = val('par', 8);
+const BEAM = val('beam', 0);              // 0 = keep every surviving node
 
 const ROM = process.env.RR_ROM || path.join(process.env.HOME, 'RadicalRed-mGBA', 'RadicalRed.gba');
 const BIN = path.join(__dirname, 'headless', 'oracle');
@@ -79,6 +85,38 @@ function play(state, action, saveTo) {
 	const r = {error: null};
 	out.split('\n').forEach(l => { l = l.trim(); if (!l) return; let j; try { j = JSON.parse(l); } catch (e) { return; } if (j.error) r.error = j.error; else if (j.at) r[j.at] = j; });
 	return r;
+}
+
+/** The same probe, asynchronously, so a whole level can run at once. */
+function playAsync(state, action, saveTo) {
+	probes++;
+	const a = [ROM, state, action.type === 'switch' ? 'switch' : 'move', String(action.index)];
+	if (saveTo) a.push('--save', saveTo);
+	return new Promise(resolve => {
+		execFile(BIN, a, {encoding: 'utf8', maxBuffer: 1 << 22, timeout: 25000}, (err, stdout) => {
+			const r = {error: null};
+			String(stdout || '').split('\n').forEach(l => {
+				l = l.trim(); if (!l) return;
+				let j; try { j = JSON.parse(l); } catch (e) { return; }
+				if (j.error) r.error = j.error; else if (j.at) r[j.at] = j;
+			});
+			resolve(r);
+		});
+	});
+}
+
+/** Run jobs with a fixed number in flight. */
+async function pool(jobs, width, fn) {
+	const out = new Array(jobs.length);
+	let next = 0;
+	await Promise.all(new Array(Math.min(width, jobs.length)).fill(0).map(async () => {
+		for (;;) {
+			const i = next++;
+			if (i >= jobs.length) return;
+			out[i] = await fn(jobs[i], i);
+		}
+	}));
+	return out;
 }
 
 /** What changed, in the only terms the objective cares about. */
@@ -273,6 +311,63 @@ function run() {
 		}
 	};
 
+	// LEVEL BY LEVEL, IN PARALLEL. Same tree, same pruning, same objective; the
+	// only change is that every child of every node on the frontier is played at
+	// once instead of one after another. Nothing about the search changes, so if
+	// this finds a different answer than the serial version, something is wrong.
+	const levelSearch = async () => {
+		let frontier = [{state: STATE, obs: root.obs, before: root.before,
+			line: [], acc: {ourLost: 0, theirLost: 0, ourDead: 0, theirDead: 0}, own: false}];
+		for (let d = 0; d < DEPTH && frontier.length && probes < BUDGET; d++) {
+			const jobs = [];
+			frontier.forEach(node => keepSet(node.obs, KEEP).forEach(a => jobs.push({node, a})));
+			if (!jobs.length) break;
+			const results = await pool(jobs, PAR, async (job, i) => {
+				if (probes >= BUDGET) return null;
+				const child = path.join(tmp, 'L' + d + '_' + i + '.ss');
+				const r = await playAsync(job.node.state, job.a, child);
+				return {job, r, child};
+			});
+			const nextFrontier = [];
+			for (const res of results) {
+				if (!res) continue;
+				const {job, r, child} = res;
+				if (r.error || !r.after) { try { fs.unlinkSync(child); } catch (e) {} continue; }
+				const o = outcome(job.node.before, r.after);
+				if (!o) { try { fs.unlinkSync(child); } catch (e) {} continue; }
+				const line = job.node.line.concat([job.a.label]);
+				const total = {
+					ourLost: job.node.acc.ourLost + o.ourLost, theirLost: job.node.acc.theirLost + o.theirLost,
+					ourDead: job.node.acc.ourDead + o.ourDead, theirDead: job.node.acc.theirDead + o.theirDead
+				};
+				const keepBest = c => {
+					if (!best || c.total.theirDead > best.total.theirDead
+						|| (c.total.theirDead === best.total.theirDead && c.total.ourLost < best.total.ourLost)
+						|| (c.total.theirDead === best.total.theirDead && c.total.ourLost === best.total.ourLost
+							&& c.total.theirLost > best.total.theirLost)) best = c;
+				};
+				if (total.ourDead > 0) { dead++; try { fs.unlinkSync(child); } catch (e) {} continue; }
+				if (o.theirStanding === 0) { wins++; keepBest({line, total, turns: line.length, won: true}); try { fs.unlinkSync(child); } catch (e) {} continue; }
+				keepBest({line, total, turns: line.length});
+				if (RESOLVE && o.theirDead > 0) { try { fs.unlinkSync(child); } catch (e) {} continue; }
+				if (d + 1 < DEPTH && r.obs && r.after.screen === 'action') {
+					nextFrontier.push({state: child, obs: r.obs, before: r.after, line, acc: total, own: true});
+				} else { try { fs.unlinkSync(child); } catch (e) {} }
+			}
+			// A beam keeps only the most promising nodes alive, which is the other
+			// obvious lever on cost; 0 keeps everything.
+			let survivors = nextFrontier;
+			if (BEAM && survivors.length > BEAM) {
+				survivors.sort((x, y) => (y.acc.theirLost - y.acc.ourLost) - (x.acc.theirLost - x.acc.ourLost));
+				survivors.slice(BEAM).forEach(n => { try { fs.unlinkSync(n.state); } catch (e) {} });
+				survivors = survivors.slice(0, BEAM);
+			}
+			frontier.forEach(n => { if (n.own) { try { fs.unlinkSync(n.state); } catch (e) {} } });
+			frontier = survivors;
+		}
+		frontier.forEach(n => { if (n.own) { try { fs.unlinkSync(n.state); } catch (e) {} } });
+	};
+
 	if (BESTFIRST) {
 		// Open the root wide, then follow each candidate narrowly until it
 		// resolves. Stop early the moment a line removes their Pokemon without
@@ -319,10 +414,14 @@ function run() {
 			if (good && acc.ourLost === 0) { console.log('  (stopping: the objective is met and nothing cheaper can beat it)'); break; }
 		}
 		console.log('\n  root candidates opened: ' + tried + ' of ' + roots.length);
+	} else if (PAR > 1) {
+		return levelSearch().then(report);
 	} else {
 		walk(STATE, root.obs, root.before, DEPTH, [], {ourLost: 0, theirLost: 0, ourDead: 0, theirDead: 0});
 	}
 
+	report();
+	function report() {
 	const secs = ((Date.now() - t0) / 1000).toFixed(1);
 	console.log('probes: ' + probes + '   time: ' + secs + ' s   branches cut for losing one of ours: ' + dead
 		+ (wins ? '   lines that won outright: ' + wins : ''));
@@ -335,6 +434,7 @@ function run() {
 		console.log('\nno line survived the search.');
 	}
 	try { fs.rmSync(tmp, {recursive: true, force: true}); } catch (e) {}
+	}
 }
 
 run();
