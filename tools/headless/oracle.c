@@ -143,9 +143,14 @@ static void step(uint32_t keys) { core->setKeys(core, keys); core->runFrame(core
 int main(int argc, char** argv) {
 	if (argc < 4) { fprintf(stderr, "usage: oracle <rom> <state> move|switch|peek [n] [--save out] [--frames N]\n"); return 2; }
 	const char* saveOut = NULL; int maxFrames = 6000; int linger = 60;
+	// A deliberate wait before pressing anything, to test whether the outcome
+	// depends on WHEN we press. The actuator presses when the brain answers,
+	// which varies; the oracle has always pressed on a fixed schedule.
+	int startDelay = 0;
 	for (int i = 4; i < argc; i++) {
 		if (!strcmp(argv[i], "--save") && i + 1 < argc) saveOut = argv[++i];
 		else if (!strcmp(argv[i], "--frames") && i + 1 < argc) maxFrames = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--delay") && i + 1 < argc) startDelay = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--linger") && i + 1 < argc) linger = atoi(argv[++i]);
 	}
 	mLogSetDefaultLogger(&LOGGER);
@@ -167,6 +172,10 @@ int main(int argc, char** argv) {
 	int slot = argc > 4 && argv[4][0] != '-' ? atoi(argv[4]) : 0;
 	dump("before", 0);
 	if (!strcmp(what, "peek")) { obs_json(); return 0; }
+	// Idle for a while before touching anything, so "does WHEN we press change
+	// the outcome" can be asked of the oracle's own press path rather than of a
+	// hand-written one.
+	for (int d = 0; d < startDelay; d++) step(0);
 	int wantSwitch = !strcmp(what, "switch");
 	int wantWait = !strcmp(what, "wait");
 	// THE PARTY SCREEN HAS ITS OWN ORDER. The menu builds a copy of the party
