@@ -43,6 +43,16 @@ const val = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 && args[
 const DEPTH = val('depth', 3);
 const KEEP = val('keep', 3);
 const BUDGET = val('budget', 400);
+// James's own shape, 2026-09-19: "Run the current plan for 5 turns, or until
+// either infernape dies or our pokemon dies. Then if that plan now looks bad,
+// run the second plan for a few more turns." Best-first rather than uniform:
+// the root is opened wide, each candidate is followed NARROW until something
+// actually resolves, and we only pay for the next candidate if the last one
+// disappointed.
+const RESOLVE = args.includes('--resolve');       // stop a branch once it resolves
+const BESTFIRST = args.includes('--bestfirst');   // follow the leading line narrowly
+const CWIDTH = val('cwidth', 2);          // how wide the continuation stays
+const MAXTURNS = val('turns', 6);
 
 const ROM = process.env.RR_ROM || path.join(process.env.HOME, 'RadicalRed-mGBA', 'RadicalRed.gba');
 const BIN = path.join(__dirname, 'headless', 'oracle');
@@ -221,6 +231,17 @@ function run() {
 			// THE OBJECTIVE PRUNES. A branch that spends one of ours is dead and
 			// nothing under it is worth a probe.
 			if (total.ourDead > 0) { dead++; try { fs.unlinkSync(child); } catch (e) {} continue; }
+			// RESOLVE-STOPPING, James's rule applied to every branch rather than
+			// only the leading one: once their Pokemon is removed and none of ours
+			// is spent, that branch has answered the question and nothing under it
+			// is worth a probe.
+			if (RESOLVE && o.theirDead > 0 && o.theirStanding > 0) {
+				const c = {line, total, turns: line.length};
+				if (!best || total.theirDead > best.total.theirDead
+					|| (total.theirDead === best.total.theirDead && total.ourLost < best.total.ourLost)) best = c;
+				try { fs.unlinkSync(child); } catch (e) {}
+				continue;
+			}
 			if (o.theirStanding === 0) {
 				wins++;
 				const w = {line, total, turns: line.length, won: true};
@@ -235,8 +256,13 @@ function run() {
 			const better = (x, y) => {
 				if (!y) return true;
 				if (x.total.theirDead !== y.total.theirDead) return x.total.theirDead > y.total.theirDead;
-				if (x.total.theirLost !== y.total.theirLost) return x.total.theirLost > y.total.theirLost;
-				return x.total.ourLost < y.total.ourLost;
+				// ZERO FAINTS IS THE TARGET, so once the same number of theirs is
+				// removed, the CHEAPER line wins. Ordering damage dealt above damage
+				// taken made a depth-5 search prefer a line costing 79 HP over one
+				// costing 5 for the same removal, purely because it also chipped a
+				// second Pokemon on the way.
+				if (x.total.ourLost !== y.total.ourLost) return x.total.ourLost < y.total.ourLost;
+				return x.total.theirLost > y.total.theirLost;
 			};
 			const cand = {line, total, turns: line.length};
 			if (better(cand, best)) best = cand;
@@ -247,7 +273,55 @@ function run() {
 		}
 	};
 
-	walk(STATE, root.obs, root.before, DEPTH, [], {ourLost: 0, theirLost: 0, ourDead: 0, theirDead: 0});
+	if (BESTFIRST) {
+		// Open the root wide, then follow each candidate narrowly until it
+		// resolves. Stop early the moment a line removes their Pokemon without
+		// costing us one -- that is the objective met, and nothing cheaper is
+		// going to beat it.
+		const roots = keepSet(root.obs, KEEP);
+		let tried = 0;
+		for (const a of roots) {
+			if (probes >= BUDGET) break;
+			tried++;
+			let stateFile = STATE, obs = root.obs, before = root.before;
+			const line = [], acc = {ourLost: 0, theirLost: 0, ourDead: 0, theirDead: 0};
+			let act = a, resolved = null;
+			for (let t = 0; t < MAXTURNS && probes < BUDGET; t++) {
+				const child = path.join(tmp, 'r' + probes + '.ss');
+				const r = play(stateFile, act, child);
+				if (r.error || !r.after) { resolved = 'the core could not play it'; break; }
+				const o = outcome(before, r.after);
+				line.push(act.label);
+				acc.ourLost += o.ourLost; acc.theirLost += o.theirLost;
+				acc.ourDead += o.ourDead; acc.theirDead += o.theirDead;
+				if (stateFile !== STATE) { try { fs.unlinkSync(stateFile); } catch (e) {} }
+				stateFile = child; obs = r.obs; before = r.after;
+				if (acc.ourDead > 0) { resolved = 'we lose one'; dead++; break; }
+				if (o.theirStanding === 0) { resolved = 'the fight is won'; wins++; break; }
+				if (o.theirDead > 0) { resolved = 'their Pokemon is removed'; break; }
+				if (r.after.screen !== 'action' || !r.obs) { resolved = 'no further decision'; break; }
+				// Narrow continuation, still shape-aware so a switch can appear
+				// mid-line -- which is exactly the line depth 3 found.
+				const next = keepSet(r.obs, CWIDTH);
+				if (!next.length) { resolved = 'nothing legal'; break; }
+				act = next[0];
+			}
+			try { fs.unlinkSync(stateFile); } catch (e) {}
+			const cand = {line, total: acc, turns: line.length, why: resolved};
+			const good = acc.ourDead === 0 && acc.theirDead > 0;
+			const better = !best || (good && !(best.total.ourDead === 0 && best.total.theirDead > 0))
+				|| (acc.theirDead > best.total.theirDead)
+				|| (acc.theirDead === best.total.theirDead && acc.ourDead === best.total.ourDead && acc.ourLost < best.total.ourLost);
+			if (better) best = cand;
+			console.log('  ' + String(a.label).padEnd(18) + line.join(' -> ').padEnd(46)
+				+ '  ' + resolved + '  [they -' + acc.theirLost + ', we -' + acc.ourLost + ']');
+			// Good enough: their Pokemon gone and nobody of ours spent.
+			if (good && acc.ourLost === 0) { console.log('  (stopping: the objective is met and nothing cheaper can beat it)'); break; }
+		}
+		console.log('\n  root candidates opened: ' + tried + ' of ' + roots.length);
+	} else {
+		walk(STATE, root.obs, root.before, DEPTH, [], {ourLost: 0, theirLost: 0, ourDead: 0, theirDead: 0});
+	}
 
 	const secs = ((Date.now() - t0) / 1000).toFixed(1);
 	console.log('probes: ' + probes + '   time: ' + secs + ' s   branches cut for losing one of ours: ' + dead
