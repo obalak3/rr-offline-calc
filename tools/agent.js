@@ -1089,6 +1089,7 @@ const PROTECT_MOVES = {'Protect': 1, 'Detect': 1, 'Spiky Shield': 1, 'Baneful Bu
  */
 const DIFFICULTY = require('./lib/difficulty.js');
 const VOL = require('./lib/volatiles.js');
+const DL = require('./lib/deathlast.js');
 function deathReadFor(st) {
 	if (process.env.RR_CAREFUL === 'off') return {risks: {roll: 'median'}, tier: null};
 	let r = null;
@@ -3174,10 +3175,33 @@ setInterval(() => {
 				const scored = raw.map(x => ({a: x.a, s: ORACLE.summarize(x.r), v: score(x.r)})).filter(x => x.s.ok)
 					.sort((x, y) => y.v - x.v);
 				let pick = null, why = '';
-				if (!baitHolds && scored.length && scored[0].v > chosenScore + MARGIN) {
-					pick = scored[0];
-					why = 'scores ' + Math.round(scored[0].v) + ' against the plan\'s ' + Math.round(chosenScore)
-						+ ' in HP-equivalents on the real game';
+				// A LINE THAT LOSES NOBODY OUTRANKS ONE THAT DOES, whatever the score.
+				//
+				// James, 2026-09-19, after Skeledirge was switched into a Pyro Ball at
+				// 48 HP and lost while Infernape sat at 50: "why is our planner rating
+				// skeliderge dying a 492, while the other lines with no losses a 508
+				// and 515?" Because losing one of ours is charged 30 x importance,
+				// about 60, while removing one of THEIRS pays 1000 -- and because a
+				// dying Pokemon's remaining HP is already counted in the position
+				// term, so the death itself adds almost nothing on top. Under that
+				// arithmetic a Pokemon is a bag of HP and trading one for a kill is
+				// usually correct. It is not correct for a Nuzlocke, where a Pokemon
+				// at 1 HP is still a whole Pokemon and its loss is permanent.
+				//
+				// Pricing a faint properly means knowing whether a sacrifice SAVES the
+				// run and which Pokemon to spend, which James called a much larger
+				// thing and deferred. So the rule goes above the arithmetic instead,
+				// exactly as it already does in doubles (doubles_advisor.js, added
+				// 2026-09-15 after the same failure cost Accelgor): the score still
+				// orders within each group, and decides alone when every line loses
+				// someone. RR_ORACLE_DEATH_LAST=0 restores the plain margin.
+				const DEATH_LAST = process.env.RR_ORACLE_DEATH_LAST !== '0';
+				if (!baitHolds) {
+					const chose = DL.choose(
+						{score: chosenScore, lost: cs.ourDead > 0},
+						scored.map(x => ({score: x.v, lost: x.s.ourDead > 0, ref: x})),
+						MARGIN, DEATH_LAST);
+					if (chose.pick) { pick = chose.pick.ref; why = chose.why; }
 				}
 				// DEPTH TWO ON HARD TURNS (James, 2026-09-10: "we need multiple turn
 				// look ahead too, especially if the position is a hard one").
@@ -3218,18 +3242,34 @@ setInterval(() => {
 								const p2 = parts(r2);
 								if (!p2) return;
 								const total = (p2.abs ? p2.pos : p1.pos + p2.pos) + p1.ev + p2.ev;
-								if (total > best.total) best = {total, reply: moveName(mv) || ('move ' + i)};
+								const lost2 = r2.before && r2.after
+									&& pairHp(r2.before.party, r2.after.party).some(x => x.hp0 > 0 && x.hp1 === 0);
+								if (total > best.total) best = {total, reply: moveName(mv) || ('move ' + i), lost: lost2};
 							});
 						} else if (r1.after && r1.after.screen === 'party') best.reply = 'forced pick';
-						return {c, total: best.total, reply: best.reply, note: null};
+						// Did this LINE lose one of ours, on either of its two turns?
+						// The partition above has to apply here too, or a two-turn
+						// comparison quietly reinstates the trade the one-turn rule
+						// just refused.
+						const lost1 = pairHp(r1.before.party, r1.after.party).some(x => x.hp0 > 0 && x.hp1 === 0);
+						return {c, total: best.total, reply: best.reply, note: null, lost: lost1 || best.lost};
 					});
 					try { fs.unlinkSync(stateFile); } catch (e) { /* gone */ }
 					const planJ = judged.find(j => j.c.plan);
-					const bestJ = judged.slice().sort((x, y) => y.total - x.total)[0];
-					const line = judged.map(j => name(j.c.a) + (j.reply ? ' then ' + j.reply : '') + ' = ' + Math.round(j.total) + (j.note ? ' (' + j.note + ')' : '')).join(' | ');
-					if (planJ && bestJ && !bestJ.c.plan && bestJ.total > planJ.total + MARGIN) {
+					// Same partition as the one-turn pick: clean lines first, the total
+					// only ordering within a group.
+					const bestJ = judged.slice().sort((x, y) => {
+						if (DEATH_LAST && !!x.lost !== !!y.lost) return x.lost ? 1 : -1;
+						return y.total - x.total;
+					})[0];
+					const line = judged.map(j => name(j.c.a) + (j.reply ? ' then ' + j.reply : '')
+						+ ' = ' + Math.round(j.total) + (j.lost ? ' LOSES ONE' : '') + (j.note ? ' (' + j.note + ')' : '')).join(' | ');
+					const cleanerThanPlan = DEATH_LAST && planJ && bestJ && planJ.lost && !bestJ.lost;
+					if (planJ && bestJ && !bestJ.c.plan && (cleanerThanPlan || bestJ.total > planJ.total + MARGIN)) {
 						pick = scored.find(x => x.a.type === bestJ.c.a.type && x.a.index === bestJ.c.a.index) || pick;
-						why = 'two turns on the real game: ' + Math.round(bestJ.total) + ' against the plan\'s ' + Math.round(planJ.total)
+						why = (cleanerThanPlan ? 'two turns on the real game, and it loses nobody where the plan loses one of ours: '
+							: 'two turns on the real game: ')
+							+ Math.round(bestJ.total) + ' against the plan\'s ' + Math.round(planJ.total)
 							+ (bestJ.reply ? ', then ' + bestJ.reply : '');
 					} else if (planJ) {
 						pick = null; why = '';
