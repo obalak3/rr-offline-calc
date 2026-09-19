@@ -130,21 +130,61 @@ function keepSet(obs, keep) {
 		}
 		acts.push({type: 'move', index: i, label: mv(id), dmg, kills});
 	});
-	// Switches are kept but never ranked by damage; a switch is about what it
-	// takes, not what it deals, and that is exactly what the real game reports.
+	// SWITCHES ARE RANKED BY WHAT THEY TAKE, NOT BY WHAT THEY DEAL, and they get
+	// their own budget rather than competing with moves.
+	//
+	// MEASURED 2026-09-19, and it refutes what this file said yesterday. At depth
+	// 2 pruning to the top three by damage matched the exhaustive answer on every
+	// position tried, so "prune hard in singles, it is free" looked safe. At
+	// depth 3 the exhaustive search found Scald, switch to Victreebel, Leaf
+	// Storm: the same kill for 5 HP instead of 45. The pruned search never found
+	// it, because a switch deals no damage, so ranking everything together by
+	// damage means switches are only ever tried when there are fewer than `keep`
+	// moves -- which is never. The pruner was structurally blind to an entire
+	// kind of action.
+	//
+	// Same lesson as doubles, arrived at from the other direction: prune by
+	// SHAPE, never by a single score across shapes.
+	const switches = [];
 	(obs.party || []).forEach((p, slot) => {
 		if (!p || !p.maxhp || p.hp <= 0) return;
 		const raw = Buffer.from(p.raw, 'hex');
 		const sp = raw.readUInt16LE(0x20);
 		if (sp === me.species && p.hp === me.hp) return;    // already out
-		acts.push({type: 'switch', index: slot, label: '-> ' + nm(sp), dmg: -1, kills: false});
+		// What the opponent's best move would do to this one on arrival. Cheap,
+		// and it is the question a switch is actually about.
+		let takes = Infinity;
+		try {
+			const inc = P.setFromRecord(engine, dex, p);
+			const theirs = P.setFromBattler(dex, foe);
+			if (inc && theirs) {
+				const probe = engine.B.createState([inc], [theirs], {});
+				probe.foe.team[0].curHP = foe.hp;
+				takes = 0;
+				(foe.moves || []).forEach(mid => {
+					if (!mid) return;
+					try {
+						const r = engine.B.damageRolls(probe, 'foe', mv(mid));
+						if (r && !r.immune && r.noCrit && r.noCrit.length) {
+							takes = Math.max(takes, r.noCrit[Math.floor(r.noCrit.length / 2)]);
+						}
+					} catch (e) { /* unknown move */ }
+				});
+				takes = takes / Math.max(1, p.hp);          // as a fraction of what it has
+			}
+		} catch (e) { takes = Infinity; }
+		switches.push({type: 'switch', index: slot, label: '-> ' + nm(sp), dmg: -1, kills: false, takes});
 	});
 
-	if (!keep) return acts;                                  // exhaustive reference
+	if (!keep) return acts.concat(switches);                 // exhaustive reference
 	const killers = acts.filter(a => a.kills);
 	const rest = acts.filter(a => !a.kills).sort((x, y) => y.dmg - x.dmg);
 	const out = killers.slice();
 	for (const a of rest) { if (out.length >= keep) break; out.push(a); }
+	// A separate budget for switches, cheapest arrival first, so an entire kind
+	// of action can never be ranked out of existence.
+	const swKeep = Math.max(1, Math.round(keep * (Number(process.env.RR_SWITCH_SHARE || 0.66))));
+	switches.sort((x, y) => x.takes - y.takes).slice(0, swKeep).forEach(a => out.push(a));
 	return out;
 }
 
