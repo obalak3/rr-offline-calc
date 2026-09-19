@@ -3234,8 +3234,21 @@ setInterval(() => {
 						const p1 = parts(r1);
 						if (!p1) return {c, total: c.v, reply: null, note: r1.error || 'no result'};
 						let best = {total: p1.pos + p1.ev, reply: null};
-						if (r1.after && r1.after.screen === 'action' && r1.after.me) {
-							const moves = r1.after.me.moves || [], pp = r1.after.me.pp || [];
+						// THE MOVE LIST COMES FROM THE OBS, NOT THE AFTER DUMP.
+						// The after dump carries species, HP, status and stages and
+						// nothing else, so `r1.after.me.moves` was always undefined and
+						// this loop never ran once: every candidate was scored on its
+						// FIRST turn alone, and "depth 2" has been depth 1 in disguise
+						// since it was written on 2026-09-10.
+						//
+						// That is exactly what James saw on 2026-09-19: switching
+						// Greninja in and firing Water Shuriken removes a 50 HP
+						// Infernape on the second turn, but the second turn was never
+						// looked at, so Greninja scored 478 -- last of four -- on the
+						// strength of "switch in, take a hit, deal nothing".
+						const src = (r1.obs && r1.obs.me) || r1.after.me || {};
+						if (r1.after && r1.after.screen === 'action' && (src.moves || []).length) {
+							const moves = src.moves || [], pp = src.pp || [];
 							moves.forEach((mv, i) => {
 								if (!mv || (pp[i] !== undefined && pp[i] <= 0)) return;
 								const r2 = runFrom(stateFile, {type: 'move', index: i}, null, -1);
@@ -3247,6 +3260,11 @@ setInterval(() => {
 								if (total > best.total) best = {total, reply: moveName(mv) || ('move ' + i), lost: lost2};
 							});
 						} else if (r1.after && r1.after.screen === 'party') best.reply = 'forced pick';
+						else if (r1.after && r1.after.screen === 'action') {
+							// On our menu with nothing to reply with: say so rather than
+							// quietly scoring one turn and calling it two.
+							best.reply = 'NO REPLY READ';
+						}
 						// Did this LINE lose one of ours, on either of its two turns?
 						// The partition above has to apply here too, or a two-turn
 						// comparison quietly reinstates the trade the one-turn rule
