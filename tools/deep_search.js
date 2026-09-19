@@ -39,7 +39,20 @@ const P = require('./lib/doubles-position.js');
 
 const args = process.argv.slice(2);
 const STATE = args.find(a => !a.startsWith('--'));
-const val = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 && args[i + 1] ? Number(args[i + 1]) : d; };
+const val = (n, d) => {
+	const i = args.indexOf('--' + n);
+	if (i < 0) return d;
+	const raw = args[i + 1];
+	const v = Number(raw);
+	// A bad value used to become NaN, and NaN is falsy, so `--keep <garbage>`
+	// silently ran an EXHAUSTIVE search and looked like a cheap one that agreed
+	// with everything. Refuse instead.
+	if (raw === undefined || raw.startsWith('--') || !Number.isFinite(v)) {
+		console.error('bad value for --' + n + ': ' + raw);
+		process.exit(2);
+	}
+	return v;
+};
 const DEPTH = val('depth', 3);
 const KEEP = val('keep', 3);
 const BUDGET = val('budget', 400);
@@ -368,7 +381,22 @@ function run() {
 			// obvious lever on cost; 0 keeps everything.
 			let survivors = nextFrontier;
 			if (BEAM && survivors.length > BEAM) {
-				survivors.sort((x, y) => (y.acc.theirLost - y.acc.ourLost) - (x.acc.theirLost - x.acc.ourLost));
+				// THE BEAM RANKS BY PROGRESS, NOT BY NET HP.
+				//
+				// It used to score a node as (damage dealt minus damage taken), and
+				// that systematically preferred doing nothing: a switch that deals 0
+				// and takes 0 scores zero, which beats an attack that deals 35 and
+				// takes 40. So the aggressive branches -- the only ones that ever
+				// reach a removal -- were cut first, and the search would report
+				// "nothing removed, nothing lost" as its best while an exhaustive
+				// search on the same position removed one. That was 3 of the 5
+				// disagreements in the 16-position battery, and widening the beam did
+				// not help because width was never the problem.
+				//
+				// The objective is to remove theirs without losing ours, and the
+				// faint-cut has already deleted every branch that loses one. So
+				// progress toward a removal comes first and cost is the tiebreak.
+				survivors.sort((x, y) => (y.acc.theirLost - x.acc.theirLost) || (x.acc.ourLost - y.acc.ourLost));
 				survivors.slice(BEAM).forEach(n => { try { fs.unlinkSync(n.state); } catch (e) {} });
 				survivors = survivors.slice(0, BEAM);
 			}
