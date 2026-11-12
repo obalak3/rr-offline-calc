@@ -240,6 +240,68 @@ var RRCritKO = (function () {
 	}
 
 	/**
+	 * The short form for a move row: "64% OHKO", "OHKO" when guaranteed,
+	 * "2HKO" and so on. The first KO count with at least a 1% chance is the
+	 * one reported; below that a crit chain is noise ("0.0% chance to 4HKO")
+	 * and the row says nothing. Kept short so a row stays on one line.
+	 */
+	/**
+	 * The text that follows a move row's damage range, singles and doubles
+	 * alike, so both modes say the same thing in the same order: the KO chance
+	 * first (what the row is read for), then the raised-crit flag, then the
+	 * crit ceiling as "<=64.1%" (reads "13% crit, up to 64.1%"). The long
+	 * form "up to 64.1% on a crit" lives in the tooltip: in the doubles
+	 * column it did not fit beside two target chips and wrapped under the
+	 * range.
+	 */
+	function rowExtras(r, pct) {
+		var html = "";
+		var ko = shortKO(r.chances);
+		if (ko) html += ' <span class="rr-row-ko">' + escapeText(ko) + "</span>";
+		var flag = "";
+		if (r.critChance >= 0.999) flag = "always crits";
+		else if (r.critChance > 1 / 24 + 1e-9) flag = (r.critChance * 100).toFixed(0) + "% crit";
+		if (flag) html += ' <b class="rr-crit-flag">' + flag + "</b>";
+		if (r.critChance > 0 && r.critChance < 0.999 && r.critMax > r.max) {
+			var top = pct(r.critMax, r.maxHP) + "%";
+			html += ' <span class="rr-plain" title="up to ' + top + ' on a crit">' +
+				(flag ? "" : "crit ") + "&le;" + top + "</span>";
+		}
+		return html;
+	}
+
+	function escapeText(text) {
+		return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	}
+
+	/**
+	 * Measure every move row after a render. A row whose text is still wider
+	 * than the space beside its button and target chips drops to a smaller
+	 * font; past that the CSS ellipsis trims the ceiling, which is written
+	 * last for that reason. The KO chance and the crit flag never get cut.
+	 */
+	function fitRows() {
+		if (typeof document === "undefined") return;
+		var spans = document.querySelectorAll('.move-result-subgroup > div > span[id^="resultDamage"]');
+		for (var i = 0; i < spans.length; i++) {
+			spans[i].classList.remove("rr-tight");
+			if (spans[i].scrollWidth > spans[i].clientWidth + 1) spans[i].classList.add("rr-tight");
+		}
+	}
+
+	function shortKO(chances) {
+		if (!chances || !chances.length) return "";
+		for (var n = 0; n < chances.length; n++) {
+			if (chances[n] < 0.01) continue;
+			var label = n === 0 ? "OHKO" : (n + 1) + "HKO";
+			if (chances[n] > 0.9995) return label;
+			// Never print "100%" for a chance that is not guaranteed.
+			return Math.min(99, Math.round(chances[n] * 100)) + "% " + label;
+		}
+		return "";
+	}
+
+	/**
 	 * The damage range a move actually rolls, and separately the crit ceiling.
 	 *
 	 * This used to run from the non-crit low roll to the crit high roll, which
@@ -498,6 +560,9 @@ var RRCritKO = (function () {
 		koChancesMulti: koChancesMulti,
 		outcomesFor: outcomesFor,
 		describe: describe,
+		shortKO: shortKO,
+		rowExtras: rowExtras,
+		fitRows: fitRows,
 		damageSpan: damageSpan,
 		HIGH_CRIT_MOVES: HIGH_CRIT_MOVES,
 		ALWAYS_CRIT_MOVES: ALWAYS_CRIT_MOVES,

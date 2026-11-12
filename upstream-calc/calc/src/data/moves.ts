@@ -4980,6 +4980,9 @@ const RR_PATCH: {[name: string]: DeepPartial<MoveData>} = {
 	'Low Sweep': {bp: 60, isKick: true},
   'Lumina Crash': {maxPower: 120},
 	'Luster Purge': {bp: 85, zp: 160, maxPower: 130},
+  // Magnitude rolls 10/30/50/70/90/110/150 BP at 5/10/20/30/20/10/5%; upstream
+  // leaves it at 0 (shows 0%). 71 is the expected power so the line is useful.
+  Magnitude: {bp: 71},
 	'Mega Drain': {bp: 60},
 	'Mega Kick': {isKick: true},
 	'Meteor Assault': {bp: 160, secondaries: true},

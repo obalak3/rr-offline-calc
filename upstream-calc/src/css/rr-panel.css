@@ -304,11 +304,20 @@ body.dark-theme #rr-crit {
    well only made the column narrower than the panel inside it. */
 body.rr-doubles-on .rr-stack .poke-info { float: none; clear: both; margin-bottom: 8px; }
 
-/* Four move lists wrap into 1 | 2 over 3 | 4, mirroring the panels below. */
+/* Four move lists wrap into 1 | 2 over 3 | 4, mirroring the panels below.
+   The two columns are 50% floats with no gap, and the target chips sit at the
+   right edge of a row, so without a gutter the left column's chips touch the
+   right column's move buttons. */
 body.rr-doubles-on .move-result-subgroup {
 	min-height: 8.5em;
 	margin-bottom: .5em;
+	box-sizing: border-box;
+	padding-right: 2.5em;
 }
+
+/* "Pure Power off: Neutralizing Gas" after a move-list header. */
+.rr-gas-note { font-weight: 400; color: #b4472e; }
+body.dark-theme .rr-gas-note { color: #ff7a4d; }
 
 /* Target buttons live on the move row itself. */
 .rr-aim { margin-left: .6em; white-space: nowrap; }
@@ -587,43 +596,23 @@ body.dark-theme .rr-crit-flag { color: #ff7a4d; }
 #rr-panel .rr-team-head #rr-clear-team:hover { color: var(--rr-accent); }
 #rr-panel #rr-undo-clear { margin-left: 4px; }
 
-/* ---------------------------------------------------------- battle advisor */
-
-#rr-advisor { margin-top: 8px; }
-#rr-advisor.rr-collapsed .rr-body { display: none; }
-.rr-adv-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
-.rr-adv-row label { font-size: 11px; opacity: 0.75; }
-.rr-adv-row select { max-width: 190px; }
-.rr-adv-row input[type="number"] { width: 68px; }
-.rr-adv-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
-.rr-adv-table th { text-align: left; opacity: 0.6; font-weight: normal; padding: 2px 4px; }
-.rr-adv-table td { padding: 3px 4px; border-top: 1px solid rgba(128,128,128,0.25); vertical-align: top; }
-.rr-adv-best td { background: rgba(90, 190, 120, 0.14); }
-.rr-adv-safe td { background: rgba(90, 190, 120, 0.14); }
-.rr-adv-none td { background: rgba(210, 90, 90, 0.14); }
-.rr-adv-budget td { background: rgba(200, 170, 70, 0.14); }
-.rr-adv-cost { opacity: 0.5; white-space: nowrap; }
-.rr-adv-note { font-size: 11px; margin-top: 6px; line-height: 1.45; }
-.rr-adv-caveat { opacity: 0.65; }
-.rr-adv-side { margin: 6px 0; }
-.rr-adv-sidehead { font-size: 11px; opacity: 0.7; margin-bottom: 2px; }
-.rr-adv-hint { opacity: 0.55; }
-.rr-adv-mon { display: flex; align-items: center; gap: 5px; padding: 1px 0; font-size: 11px; }
-.rr-adv-mon .rr-adv-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rr-adv-lv { opacity: 0.55; }
-.rr-adv-mon .rr-adv-hp { width: 56px; }
-.rr-adv-max { opacity: 0.55; min-width: 34px; }
-.rr-adv-mon .rr-adv-status { max-width: 104px; }
-.rr-adv-mon input[type="checkbox"]:not(:checked) ~ .rr-adv-name { opacity: 0.4; text-decoration: line-through; }
-.rr-adv-party { margin: 6px 0; }
-.rr-adv-partynames { font-size: 11px; margin: 1px 0 2px; }
-.rr-adv-link { background: none; border: 0; padding: 0 0 0 6px; font-size: 11px;
-	text-decoration: underline; cursor: pointer; color: inherit; opacity: 0.7; }
-.rr-adv-partylist { max-height: 148px; overflow-y: auto; display: flex;
-	flex-wrap: wrap; gap: 2px 8px; padding: 4px 2px; font-size: 11px;
-	border: 1px solid rgba(128,128,128,0.3); border-radius: 3px; }
-.rr-adv-pick { display: flex; align-items: center; gap: 3px; opacity: 0.55; }
-.rr-adv-pick.rr-adv-picked { opacity: 1; }
-.rr-adv-warn { border-left: 3px solid rgba(210, 150, 70, 0.85); padding-left: 7px; }
-.rr-adv-blocked .rr-adv-side, .rr-adv-blocked .rr-adv-party { opacity: 0.45; }
-.rr-adv-ko td { background: rgba(90, 190, 120, 0.16); }
+/* Per-move KO chance on a move row, singles and doubles alike. Each row is
+   one flex line that never wraps: the move button and the doubles target
+   chips keep their width, the text takes what is left. Text that still does
+   not fit first drops a font size (RRCritKO.fitRows marks it rr-tight) and
+   past that is cut with an ellipsis at its end, where the crit ceiling sits.
+   Sized against a 650px doubles column: button 143 + two long-name chips
+   ~170 leaves ~300px, which "35.9-43.0% 10% 2HKO 13% crit <=64.1%" needs at
+   12px. */
+.rr-row-ko { margin-left: .5em; font-weight: 700; white-space: nowrap; }
+.move-result-subgroup > div {
+	display: flex; align-items: baseline; flex-wrap: nowrap;
+}
+.move-result-subgroup > div > label.btn { flex: none; }
+.move-result-subgroup > div > span[id^="resultDamage"] {
+	flex: 1 1 auto; min-width: 0;
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+body.rr-doubles-on .move-result-subgroup > div > span[id^="resultDamage"] { font-size: 12px; }
+body .move-result-subgroup > div > span[id^="resultDamage"].rr-tight { font-size: 11px; }
+.move-result-subgroup > div > .rr-aim { flex: none; }

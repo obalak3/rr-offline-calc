@@ -921,6 +921,49 @@
 	 * The incoming half is the one with no home anywhere else, and is where you
 	 * find out that Giovanni's Honchkrow crits with every Night Slash.
 	 */
+	/**
+	 * The singles move rows, finished the way the doubles rows are. Upstream
+	 * writes a plain non-crit range into each resultDamage span; here each row
+	 * gets the raised-crit flag, the crit ceiling and the short KO chance from
+	 * the same analysis the crit lines use. A move that always crits (Super
+	 * Luck Honchkrow's Night Slash) cannot roll the non-crit range upstream
+	 * prints, so that range is swapped for the crit one. Anything else in the
+	 * span -- recoil text, for one -- is left alone. Doubles mode draws its own
+	 * rows and is skipped.
+	 */
+	function decorateRows() {
+		if (typeof window.RRDoubles !== "undefined" && window.RRDoubles.isActive()) return;
+		if (typeof RRCritKO === "undefined" || typeof createPokemon !== "function") return;
+		var sides = [{atk: "#p1", def: "#p2", prefix: "L", swap: false},
+			{atk: "#p2", def: "#p1", prefix: "R", swap: true}];
+		for (var k = 0; k < sides.length; k++) {
+			var defender = null;
+			try { defender = createPokemon($(sides[k].def)); } catch (e) { defender = null; }
+			if (!defender || !defender.name) continue;
+			var out = analysePair(sides[k].atk, defender, sides[k].swap);
+			if (!out) continue;
+			for (var i = 0; i < 4; i++) {
+				var r = out.rows[i] && out.rows[i].result;
+				var $span = $("#resultDamage" + sides[k].prefix + (i + 1));
+				if (!r || !$span.length) continue;
+				var text = $span.text();
+				var max = r.maxHP;
+				// Same tight "a-b%" range the doubles rows print.
+				text = text.replace(/^\s*[\d.]+ - [\d.]+%/, function (m) {
+					if (r.critChance >= 0.999) {
+						return pct(r.minTurnDamage, max) + "-" + pct(r.maxTurnDamage, max) + "%";
+					}
+					return m.replace(/\s+/g, "");
+				});
+				$span.html(esc(text) + RRCritKO.rowExtras({
+					critChance: r.critChance, critMax: r.critMaxDamage, max: r.maxTurnDamage,
+					maxHP: max, chances: r.chances
+				}, pct));
+			}
+		}
+		RRCritKO.fitRows();
+	}
+
 	function critBox() {
 		var lines = "";
 
@@ -1318,6 +1361,9 @@
 				} catch (e) { /* never let our panel break the calculator */ }
 				var out = original.apply(this, arguments);
 				try {
+					decorateRows();
+				} catch (e) { /* never let our panel break the calculator */ }
+				try {
 					if (!rendering) {
 						$("#rr-crit").html(critBox());
 						if (currentBattle) $("#rr-speed").html(speedPanel(currentBattle));
@@ -1325,6 +1371,11 @@
 				} catch (e) { /* never let our panel break the calculator */ }
 				return out;
 			};
+			// Upstream's own first calculation ran before this wrapper existed,
+			// so the rows on screen are still plain: finish them now.
+			try {
+				decorateRows();
+			} catch (e) { /* never let our panel break the calculator */ }
 		}
 	}
 

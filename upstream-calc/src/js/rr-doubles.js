@@ -419,6 +419,47 @@ var RRDoubles = (function () {
 		return "";
 	}
 
+	// ------------------------------------------------------ Neutralizing Gas
+
+	/* What the gas cannot switch off (the game's own list), plus an Ability
+	   Shield holder, checked separately. */
+	var GAS_PROOF = ["Neutralizing Gas", "As One", "Battle Bond", "Comatose",
+		"Commander", "Disguise", "Gulp Missile", "Ice Face", "Multitype",
+		"Poison Puppeteer", "Power Construct", "RKS System", "Schooling",
+		"Shields Down", "Stance Change", "Tera Shell", "Tera Shift",
+		"Teraform Zero", "Zen Mode", "Zero to Hero"];
+
+	/** The panels on the field right now: two in singles, four in doubles. */
+	function fieldPanels() {
+		return active ? ALL : ["p1", "p2"];
+	}
+
+	/**
+	 * The ability Neutralizing Gas switches off on this panel's Pokemon, or
+	 * "" when nothing on the field has the gas or this ability is proof
+	 * against it. Read from the dropdowns, which are left as they are.
+	 */
+	function gasOff(panelId) {
+		var panels = fieldPanels();
+		var gas = false;
+		for (var i = 0; i < panels.length; i++) {
+			if (panels[i] !== panelId &&
+				$("#" + panels[i] + " .ability").val() === "Neutralizing Gas") gas = true;
+		}
+		if (!gas) return "";
+		var ability = $("#" + panelId + " .ability").val() || "";
+		if (!ability || GAS_PROOF.indexOf(ability) >= 0) return "";
+		if ($("#" + panelId + " .item").val() === "Ability Shield") return "";
+		return ability;
+	}
+
+	/** The header note for a panel whose ability the gas switched off. */
+	function gasNote(panelId) {
+		var off = gasOff(panelId);
+		return off ? ' <span class="rr-gas-note">' + esc(off) +
+			" off: Neutralizing Gas</span>" : "";
+	}
+
 	function board() {
 		var state = {mon: {}, living: {mine: 0, theirs: 0}};
 		var i;
@@ -497,7 +538,7 @@ var RRDoubles = (function () {
 		// same way the target buttons are.
 		$("#resultHeader" + prefix).text(
 			(attacker ? targetName(state, panelId) : "Pokémon " + SLOT_LABEL[panelId]) +
-			"'s Moves (click a target to use it)");
+			"'s Moves (click a target to use it)").append(gasNote(panelId));
 
 		// Damage depends on each row's own target, so rows are computed against
 		// their own defender rather than one shared opponent.
@@ -524,26 +565,21 @@ var RRDoubles = (function () {
 			if (!shot || shot.dead || !defender) {
 				damageEl.html("0 - 0%");
 			} else {
-				// An elevated crit rate is worth seeing on the row itself: it is
-				// how you notice that a Super Luck holder with Scope Lens crits
-				// every single Night Slash.
-				var crit = "";
-				if (shot.critChance >= 0.999) {
-					crit = ' <b class="rr-crit-flag">always crits</b>';
-				} else if (shot.critChance > 1 / 24 + 1e-9) {
-					crit = ' <b class="rr-crit-flag">' +
-						(shot.critChance * 100).toFixed(0) + '% crit</b>';
-				}
-				// The crit ceiling goes after the range, never inside it: a
-				// range that spans two crit states is one no move can roll.
-				var ceiling = "";
-				if (shot.critChance > 0 && shot.critMax > shot.max) {
-					ceiling = ' <span class="rr-plain">up to ' +
-						pct(shot.critMax, defender.maxHP()) + "% on a crit</span>";
-				}
-				damageEl.html(esc(pct(shot.min, defender.maxHP()) + " - " +
+				// Range, then the shared row text: the row's own crit-aware KO
+				// chance from the same shot the 2v2 box sums, the raised-crit
+				// flag (how you notice a Super Luck + Scope Lens Night Slash
+				// crits every time) and the crit ceiling. The ceiling stays
+				// outside the range: a range spanning two crit states is one
+				// no move can roll. Wording lives in RRCritKO.rowExtras so the
+				// singles rows say exactly the same thing.
+				damageEl.html(esc(pct(shot.min, defender.maxHP()) + "-" +
 					pct(shot.max, defender.maxHP()) + "%" +
-					(shot.spread ? " (spread)" : "")) + crit + ceiling);
+					(shot.spread ? " (spread)" : "")) +
+					RRCritKO.rowExtras({
+						critChance: shot.critChance, critMax: shot.critMax, max: shot.max,
+						maxHP: defender.maxHP(),
+						chances: RRCritKO.koChancesMulti([shot], defender.curHP(), 6)
+					}, pct));
 			}
 
 			// One target button per living opponent.
@@ -571,6 +607,7 @@ var RRDoubles = (function () {
 			}
 			aimEl.html(html);
 		}
+		RRCritKO.fitRows();
 	}
 
 	/** "always crits", "50% crit", or "" at the ordinary 1/24 rate. */
@@ -748,13 +785,39 @@ var RRDoubles = (function () {
 			if (active) refresh();
 		});
 
-		// Upstream rewrites the result rows on every recalculation, so ours go
-		// back on afterwards.
+		// Neutralizing Gas switches off every other ability on the field, and
+		// the engine only knows the gas as "immune to Mold Breaker": Medicham
+		// kept Pure Power beside a Weezing-Galar, showed an OHKO, and did 60%.
+		// Every number on the page is built through createPokemon, so that is
+		// where the ability comes off. A blank ability would not survive the
+		// engine's own clone (the species default comes back), so it becomes a
+		// name no mechanic matches.
+		if (typeof window.createPokemon === "function") {
+			var build = window.createPokemon;
+			window.createPokemon = function (pokeInfo) {
+				var p = build.apply(this, arguments);
+				try {
+					var id = typeof pokeInfo === "string" ? "" : $(pokeInfo).attr("id");
+					if (p && id && gasOff(id)) p.ability = "(switched off)";
+				} catch (e) { /* never break the calculator */ }
+				return p;
+			};
+		}
+
+		// Upstream rewrites the result rows and headers on every
+		// recalculation, so ours go back on afterwards.
 		if (typeof window.performCalculations === "function") {
 			var original = window.performCalculations;
 			window.performCalculations = function () {
 				var out = original.apply(this, arguments);
-				try { refresh(); } catch (e) { /* never break the calculator */ }
+				try {
+					if (active) {
+						refresh();
+					} else {
+						$("#resultHeaderL").append(gasNote("p1"));
+						$("#resultHeaderR").append(gasNote("p2"));
+					}
+				} catch (e) { /* never break the calculator */ }
 				return out;
 			};
 		}
